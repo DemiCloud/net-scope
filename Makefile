@@ -12,31 +12,33 @@ RELEASE_LDFLAGS := -s -w
 # Windows GUI needs -H windowsgui to suppress the console window
 GUI_LDFLAGS := -H windowsgui $(RELEASE_LDFLAGS)
 
-.PHONY: build gui test vet release clean
+.PHONY: help build gui test vet release clean
 
-# Default: CLI for the current platform
-build:
+# Default target — list available commands
+help:
+	@echo "net-sweep $(VERSION)"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build CLI for the current platform → build/net-sweep
 	mkdir -p build
 	go mod tidy
 	go build -ldflags "$(LDFLAGS)" -o build/$(NAME) ./cmd/cli
 
-# Windows GUI (cross-compiled from any host)
-gui:
+gui: ## Cross-compile Windows GUI → build/net-sweep-win.exe
 	mkdir -p build
 	GOOS=windows GOARCH=amd64 go build \
 		-ldflags "$(GUI_LDFLAGS)" \
 		-o build/$(NAME)-win.exe ./cmd/gui-win
 
-# Run all tests
-test:
+test: ## Run all tests
 	go test ./...
 
-# Static analysis
-vet:
+vet: ## Run go vet (static analysis)
 	go vet ./...
 
-# Release: stripped CLI (linux/amd64, linux/arm64) + Windows GUI
-release: clean
+release: clean ## Build stripped multi-arch release tarballs → dist/
 	mkdir -p dist
 	go mod tidy
 	@set -e; for platform in linux/amd64 linux/arm64; do \
@@ -57,5 +59,5 @@ release: clean
 	rm dist/$(NAME)-win.exe
 	cd dist && sha256sum *.tar.gz > checksums.txt
 
-clean:
+clean: ## Remove build/ and dist/
 	rm -rf build dist
