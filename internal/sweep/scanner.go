@@ -1,0 +1,236 @@
+package sweep
+
+import (
+	"context"
+	"net"
+	"sync"
+	"time"
+)
+
+// Scanner orchestrates host discovery and port scanning across a target range.
+type Scanner struct {
+	Config Config
+}
+
+// Config holds tunable parameters for a scan.
+type Config struct {
+	Timeout         time.Duration
+	Concurrency     int
+	Ports           []int
+	PingFirst       bool   // fall back to ICMP if ARP misses a host
+	SNMPCommunity   string // "" disables SNMP
+	Interface       string // "" = auto-detect from routing table
+	BroadcastListen time.Duration // how long to listen for mDNS/SSDP; 0 = disabled
+}
+
+// DefaultConfig returns sensible defaults for a LAN sweep.
+func DefaultConfig() Config {
+	return Config{
+		Timeout:         1 * time.Second,
+		Concurrency:     256,
+		Ports:           []int{22, 80, 443, 445, 3389, 8080, 8443},
+		PingFirst:       true,
+		SNMPCommunity:   "public",
+		BroadcastListen: 5 * time.Second,
+	}
+}
+
+// NewScanner creates a Scanner with the given config.
+func NewScanner(cfg Config) *Scanner {
+	return &Scanner{Config: cfg}
+}
+
+// Scan runs discovery over the provided CIDR or single IP, streaming Result
+// values to the returned channel. The channel is closed when the scan
+// completes or the context is cancelled.
+//
+// Scan flow:
+//  1. Broadcast discovery (mDNS + SSDP) starts concurrently
+//  2. Batch ARP determines live hosts and their MACs
+//  3. Per-host probing (ICMP fallback, ports, SNMP, DNS) runs in parallel
+//  4. Broadcast data is merged into each host result
+//  5. Hosts seen only via broadcast are emitted at the end
+func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error) {
+	hosts, err := expandTarget(target)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(chan Result, len(hosts)+32)
+
+	go func() {
+		defer close(results)
+		s.runScan(ctx, hosts, results)
+	}()
+
+	return results, nil
+}
+
+func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result) {
+	// --- 1. Network interface ---
+	var iface *net.Interface
+	if s.Config.Interface != "" {
+		iface, _ = net.InterfaceByName(s.Config.Interface)
+	} else if len(hosts) > 0 {
+		iface, _ = findInterface(hosts[0])
+	}
+
+	// --- 2. Broadcast discovery (runs concurrently with ARP + host sweep) ---
+	broadcastMap := make(map[string][]ServiceInfo)
+	var broadcastMu sync.Mutex
+	var broadcastDone chan struct{}
+
+	if s.Config.BroadcastListen > 0 {
+		broadcastDone = make(chan struct{})
+		go func() {
+			defer close(broadcastDone)
+			bctx, cancel := context.WithTimeout(ctx, s.Config.BroadcastListen)
+			defer cancel()
+
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				for ip, svcs := range discoverMDNS(bctx, s.Config.BroadcastListen) {
+					broadcastMu.Lock()
+					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
+					broadcastMu.Unlock()
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				for ip, svcs := range discoverSSDP(bctx, s.Config.BroadcastListen) {
+					broadcastMu.Lock()
+					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
+					broadcastMu.Unlock()
+				}
+			}()
+			wg.Wait()
+		}()
+	}
+
+	// --- 3. Batch ARP (fast LAN MAC discovery) ---
+	var macMap map[string]net.HardwareAddr
+	if iface != nil {
+		macMap = batchARP(iface, hosts, s.Config.Timeout*2)
+	}
+
+	// --- 4. Per-host probing ---
+	sem := make(chan struct{}, s.Config.Concurrency)
+	var wg sync.WaitGroup
+
+	for _, host := range hosts {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(ip net.IP) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			r := s.probeHost(ctx, ip, macMap)
+
+			// Attach any broadcast data already collected for this IP.
+			broadcastMu.Lock()
+			r.Services = broadcastMap[ip.String()]
+			broadcastMu.Unlock()
+
+			select {
+			case out <- r:
+			case <-ctx.Done():
+			}
+		}(host)
+	}
+	wg.Wait()
+
+	// --- 5. Wait for broadcast, emit broadcast-only hosts ---
+	if broadcastDone != nil {
+		<-broadcastDone
+	}
+
+	swept := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		swept[h.String()] = true
+	}
+
+	broadcastMu.Lock()
+	defer broadcastMu.Unlock()
+	for ipStr, svcs := range broadcastMap {
+		if swept[ipStr] {
+			continue
+		}
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		select {
+		case out <- Result{IP: ip.To4(), Alive: true, Services: svcs}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// probeHost runs all per-host probes and returns a populated Result.
+func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]net.HardwareAddr) Result {
+	r := Result{IP: ip}
+
+	// ARP result → alive + MAC + vendor
+	if mac, ok := macMap[ip.String()]; ok {
+		r.Alive = true
+		r.MAC = mac
+		r.Vendor = lookupVendor(mac)
+	}
+
+	// ICMP fallback if ARP missed the host.
+	if !r.Alive && s.Config.PingFirst {
+		latency, alive := ping(ctx, ip, s.Config.Timeout)
+		if alive {
+			r.Alive = true
+			r.Latency = latency
+			// The ICMP probe causes the kernel to ARP for the host, so the
+			// neighbor cache is now populated. Read it to fill in the MAC
+			// (handles the common case of Windows running without admin where
+			// batchARP is unavailable).
+			if r.MAC == nil {
+				if mac := lookupARPCache(ip); mac != nil {
+					r.MAC = mac
+					r.Vendor = lookupVendor(mac)
+				}
+			}
+		}
+	}
+
+	if !r.Alive {
+		return r
+	}
+
+	// Reverse DNS, ports, SNMP run in parallel.
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r.Hostname = reverseDNS(ip, s.Config.Timeout)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if len(s.Config.Ports) > 0 {
+			r.OpenPorts = scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
+		}
+	}()
+
+	if s.Config.SNMPCommunity != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.SNMP = probeSNMP(ctx, ip, s.Config.SNMPCommunity, s.Config.Timeout)
+		}()
+	}
+
+	wg.Wait()
+	return r
+}
