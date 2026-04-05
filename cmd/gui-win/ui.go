@@ -335,10 +335,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				} else {
 					cd.ClrTextBk = 0x00F5F5F5 // very light gray
 				}
-				// Dim confirmed-dead rows so pending/alive rows stand out.
-				if r, ok := rowResultMap[row]; ok && !r.Alive {
-					cd.ClrText = 0x00A0A0A0
-				}
 				// Request per-subitem notifications to colour the status column.
 				return CDRF_NOTIFYITEMDRAW | CDRF_NEWFONT
 			case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
