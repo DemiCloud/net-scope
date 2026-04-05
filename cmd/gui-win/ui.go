@@ -296,11 +296,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		// Right-click on mDNS list → copy menu.
 		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP) && hdr.Code == NM_RCLICK {
-			hwndSrc := hwndListMDNS
-			numCols := int32(8)
-			if hdr.IdFrom == IDC_LIST_SSDP {
-				hwndSrc = hwndListSSDP
-				numCols = 5
+			isMDNS := hdr.IdFrom == IDC_LIST_MDNS
+			hwndSrc := hwndListSSDP
+			numCols := int32(5)
+			if isMDNS {
+				hwndSrc = hwndListMDNS
+				numCols = 6
 			}
 			pt := getCursorPos()
 			cpt := POINT{X: pt.X, Y: pt.Y}
@@ -310,7 +311,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if row >= 0 {
 				menu := createPopupMenu()
 				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_IP, "Copy IP")
-				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_ROW, "Copy full row (tab-separated)")
+				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_ROW, "Copy row (tab-separated)")
+				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_RAW, "Copy raw data")
 				cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
 				destroyMenu(menu)
 				switch cmd {
@@ -318,6 +320,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					copyToClipboard(HWND(hwnd), listViewGetCellText(hwndSrc, row, 0))
 				case IDM_BCAST_COPY_ROW:
 					copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndSrc, row, numCols))
+				case IDM_BCAST_COPY_RAW:
+					if isMDNS {
+						copyToClipboard(HWND(hwnd), getMDNSRawText(row))
+					} else {
+						ip := listViewGetCellText(hwndSrc, row, 0)
+						copyToClipboard(HWND(hwnd), getSSDPRawText(ip))
+					}
 				}
 			}
 			return 0
@@ -590,14 +599,12 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListMDNS, 0, "IP",            scale(120))
-	listViewAddColumn(hwndListMDNS, 1, "Name",          scale(200))
-	listViewAddColumn(hwndListMDNS, 2, "Service Type",  scale(180))
-	listViewAddColumn(hwndListMDNS, 3, "Friendly Name", scale(170))
-	listViewAddColumn(hwndListMDNS, 4, "Model",         scale(140))
-	listViewAddColumn(hwndListMDNS, 5, "Ver",           scale(55))
-	listViewAddColumn(hwndListMDNS, 6, "Status",        scale(60))
-	listViewAddColumn(hwndListMDNS, 7, "Extra",         scale(220))
+	listViewAddColumn(hwndListMDNS, 0, "IP",           scale(120))
+	listViewAddColumn(hwndListMDNS, 1, "Name",         scale(210))
+	listViewAddColumn(hwndListMDNS, 2, "Service",      scale(130))
+	listViewAddColumn(hwndListMDNS, 3, "Device/Model", scale(180))
+	listViewAddColumn(hwndListMDNS, 4, "Capabilities", scale(170))
+	listViewAddColumn(hwndListMDNS, 5, "Notes",        scale(300))
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -605,11 +612,11 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListSSDP, 0, "IP",          scale(120))
-	listViewAddColumn(hwndListSSDP, 1, "Name",        scale(220))
-	listViewAddColumn(hwndListSSDP, 2, "Device Type", scale(250))
-	listViewAddColumn(hwndListSSDP, 3, "Location",    scale(260))
-	listViewAddColumn(hwndListSSDP, 4, "Server",      scale(250))
+	listViewAddColumn(hwndListSSDP, 0, "IP",       scale(120))
+	listViewAddColumn(hwndListSSDP, 1, "Server",   scale(220))
+	listViewAddColumn(hwndListSSDP, 2, "Type",     scale(160))
+	listViewAddColumn(hwndListSSDP, 3, "Services", scale(280))
+	listViewAddColumn(hwndListSSDP, 4, "Location", scale(300))
 
 	// ---- DHCP pane (hidden initially) ----
 	// When not elevated: shows an elevation notice. When elevated: ready for

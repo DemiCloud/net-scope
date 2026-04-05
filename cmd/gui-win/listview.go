@@ -151,8 +151,34 @@ func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
 	setSubItem(hwnd, row, colServices, svcStr)
 }
 
+// ---------------------------------------------------------------------------
+// mDNS / SSDP display-layer state
+// ---------------------------------------------------------------------------
+
+var (
+	// mdnsRaw stores the original TXT records for each mDNS row so the
+	// right-click "Copy raw data" option can reproduce the full record.
+	mdnsRaw = map[int32][]string{}
+
+	// ssdpIPRow maps an IP address to the row index in the SSDP listview.
+	// Used to deduplicate: one row per physical device.
+	ssdpIPRow = map[string]int32{}
+
+	// ssdpBestST tracks the highest-scoring ST (service type) seen per IP so
+	// we only overwrite the Type column when we find something more descriptive.
+	ssdpBestST = map[string]string{}
+
+	// ssdpRawData accumulates every raw ServiceInfo received for each IP,
+	// used to build the Services column and for "Copy raw data".
+	ssdpRawData = map[string][]sweep.ServiceInfo{}
+)
+
+// ---------------------------------------------------------------------------
+// mDNS row rendering
+// ---------------------------------------------------------------------------
+
 // listViewAddMDNSRow appends a single mDNS service entry.
-// Columns: IP | Name | Service Type | Friendly Name | Model | Ver | Status | Extra
+// Columns: IP | Name | Service | Device/Model | Capabilities | Notes
 func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	ipPtr := utf16(ip)
 	item := LVITEM{
@@ -164,32 +190,138 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	if row < 0 {
 		return
 	}
+	mdnsRaw[row] = svc.Details // store for "copy raw data"
+
 	txt := parseTXTMap(svc.Details)
-	setSubItem(hwnd, row, 1, svc.Name)
-	setSubItem(hwnd, row, 2, svc.Type)
-	setSubItem(hwnd, row, 3, txtOr(txt, "fn", ""))
-	setSubItem(hwnd, row, 4, txtOr(txt, "md", txtOr(txt, "model", "")))
-	setSubItem(hwnd, row, 5, txtOr(txt, "ve", txtOr(txt, "srcvers", "")))
-	setSubItem(hwnd, row, 6, txtOr(txt, "st", ""))
-	setSubItem(hwnd, row, 7, extraTXT(txt, "fn", "md", "model", "ve", "srcvers", "st",
-		"id", "cd", "rm", "nf", "pk", "pi", "psi", "ic", "ca", "bs"))
+
+	// col 1: instance name with DNS label escapes removed
+	setSubItem(hwnd, row, 1, mdnsUnescapeName(svc.Name))
+
+	// col 2: service type prettified ("_ipp._tcp" → "IPP Printer")
+	setSubItem(hwnd, row, 2, mdnsPrettyType(svc.Type))
+
+	// col 3: best device/model label: fn → ty → md/model
+	device := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "md", txtOr(txt, "model", "—"))))
+	setSubItem(hwnd, row, 3, device)
+
+	// col 4: decoded capabilities (Color · Scan · Duplex · …)
+	setSubItem(hwnd, row, 4, mdnsCapabilities(txt))
+
+	// col 5: remaining useful key:value pairs
+	setSubItem(hwnd, row, 5, mdnsNotes(txt))
 }
 
-// listViewAddSSDPRow appends a single SSDP entry.
-// Columns: IP | Name | Device Type | Location | Server
+// mdnsUnescapeName removes DNS label backslash escapes so "EPSON\ ET-2850"
+// renders as "EPSON ET-2850".
+func mdnsUnescapeName(s string) string {
+	if !strings.ContainsRune(s, '\\') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++ // skip backslash, write next byte literally
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+var mdnsPrettyTypes = map[string]string{
+	"_http._tcp":        "Web UI",
+	"_https._tcp":       "Web UI (HTTPS)",
+	"_ssh._tcp":         "SSH",
+	"_workstation._tcp": "Workstation",
+	"_device-info._tcp": "Device Info",
+	"_googlecast._tcp":  "Chromecast",
+	"_airplay._tcp":     "AirPlay",
+	"_raop._tcp":        "AirPlay Audio",
+	"_printer._tcp":     "Printer",
+	"_ipp._tcp":         "IPP Printer",
+	"_smb._tcp":         "SMB Share",
+	"_afp._tcp":         "AFP Share",
+	"_nfs._tcp":         "NFS Share",
+	"_hap._tcp":         "HomeKit",
+}
+
+// mdnsPrettyType returns a human-readable label for a mDNS service type string.
+func mdnsPrettyType(serviceType string) string {
+	if v, ok := mdnsPrettyTypes[serviceType]; ok {
+		return v
+	}
+	// Generic cleanup: strip leading _ and trailing ._tcp / ._udp.
+	s := strings.TrimPrefix(serviceType, "_")
+	s = strings.TrimSuffix(s, "._tcp")
+	s = strings.TrimSuffix(s, "._udp")
+	return s
+}
+
+// mdnsCapabilities decodes boolean TXT flags into a human-readable string.
+// Returns "—" when no known capabilities are set.
+func mdnsCapabilities(txt map[string]string) string {
+	var caps []string
+	boolOn := func(key, label string) {
+		v := strings.ToLower(txt[key])
+		if v == "t" || v == "true" || v == "1" || v == "yes" {
+			caps = append(caps, label)
+		}
+	}
+	boolOn("color", "Color")
+	boolOn("scan", "Scan")
+	boolOn("duplex", "Duplex")
+	boolOn("fax", "Fax")
+	boolOn("print_wfds", "WSD Print")
+	if m := txt["mopria-certified"]; m != "" {
+		caps = append(caps, "Mopria "+m)
+	}
+	if len(caps) == 0 {
+		return "—"
+	}
+	return strings.Join(caps, " · ")
+}
+
+// mdnsNotes returns the remaining useful TXT key:value pairs that aren't
+// already decoded into other columns, skipping opaque/binary values.
+func mdnsNotes(txt map[string]string) string {
+	return extraTXT(txt,
+		// decoded into Device/Model column
+		"fn", "ty", "md", "model",
+		// decoded into Capabilities column
+		"color", "scan", "duplex", "fax", "print_wfds", "mopria-certified",
+		// version / protocol boilerplate
+		"ve", "srcvers", "txtvers",
+		// opaque identifiers / binary blobs
+		"pdl", "urf", "uuid", "pk", "psi", "ic", "ca", "bs",
+		"id", "cd", "rm", "nf", "pi", "st",
+	)
+}
+
+// getMDNSRawText returns a human-readable dump of the raw TXT records stored
+// for row, for use in "Copy raw data".
+func getMDNSRawText(row int32) string {
+	records, ok := mdnsRaw[row]
+	if !ok || len(records) == 0 {
+		return "(no TXT records)"
+	}
+	return strings.Join(records, "\n")
+}
+
+// ---------------------------------------------------------------------------
+// SSDP row rendering (one row per physical device / IP address)
+// ---------------------------------------------------------------------------
+
+// listViewAddSSDPRow merges an incoming SSDP service announcement into the
+// SSDP listview.  Repeated announcements from the same IP are collapsed into
+// a single row; the Type and Services columns are updated as more information
+// arrives.  Columns: IP | Server | Type | Services | Location
 func listViewAddSSDPRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
-	ipPtr := utf16(ip)
-	item := LVITEM{
-		Mask:    LVIF_TEXT,
-		IItem:   0x7fffffff,
-		PszText: ipPtr,
-	}
-	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-	if row < 0 {
-		return
-	}
-	loc := ""
-	server := ""
+	// Always accumulate raw data so "copy raw data" is complete.
+	ssdpRawData[ip] = append(ssdpRawData[ip], svc)
+
+	loc, server := "", ""
 	for _, d := range svc.Details {
 		if strings.HasPrefix(d, "location:") {
 			loc = strings.TrimPrefix(d, "location:")
@@ -197,11 +329,161 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 			server = strings.TrimPrefix(d, "server:")
 		}
 	}
-	setSubItem(hwnd, row, 1, svc.Name)
-	setSubItem(hwnd, row, 2, svc.Type)
-	setSubItem(hwnd, row, 3, loc)
-	setSubItem(hwnd, row, 4, server)
+
+	if existingRow, ok := ssdpIPRow[ip]; ok {
+		// Row already exists — update Type column if this entry is more descriptive.
+		if ssdpDeviceScore(svc.Type) > ssdpDeviceScore(ssdpBestST[ip]) {
+			ssdpBestST[ip] = svc.Type
+			setSubItem(hwnd, existingRow, 2, ssdpPrettyType(svc.Type))
+		}
+		// Always rebuild Services column from accumulated data.
+		ssdpUpdateServices(hwnd, existingRow, ip)
+		return
+	}
+
+	// New device — insert row.
+	ipPtr := utf16(ip)
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: ipPtr}
+	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return
+	}
+	ssdpIPRow[ip] = row
+	ssdpBestST[ip] = svc.Type
+
+	// Server string: trim verbose OS bits after first comma/slash group.
+	// "Samsung-Linux/4.1, UPnP/1.0, SmartTV2013" → "Samsung-Linux/4.1 · UPnP/1.0"
+	serverDisplay := ssdpCleanServer(server)
+	setSubItem(hwnd, row, 1, serverDisplay)
+	setSubItem(hwnd, row, 2, ssdpPrettyType(svc.Type))
+	ssdpUpdateServices(hwnd, row, ip)
+	setSubItem(hwnd, row, 4, loc)
 }
+
+// ssdpUpdateServices rebuilds the Services column for a row from accumulated data.
+func ssdpUpdateServices(hwnd HWND, row int32, ip string) {
+	seen := map[string]bool{}
+	var names []string
+	for _, s := range ssdpRawData[ip] {
+		if name := ssdpServiceName(s.Type); name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	switch {
+	case len(names) == 0:
+		setSubItem(hwnd, row, 3, "—")
+	case len(names) <= 3:
+		setSubItem(hwnd, row, 3, strings.Join(names, ", "))
+	default:
+		setSubItem(hwnd, row, 3, strings.Join(names[:3], ", ")+fmt.Sprintf(" (+%d)", len(names)-3))
+	}
+}
+
+// ssdpCleanServer formats a UPnP Server header for display.
+// "Samsung-Linux/4.1, UPnP/1.0, SmartTV2013" → "Samsung-Linux/4.1 · UPnP/1.0"
+func ssdpCleanServer(s string) string {
+	parts := strings.SplitN(s, ", ", 3)
+	if len(parts) >= 2 {
+		return parts[0] + " · " + parts[1]
+	}
+	return s
+}
+
+// ssdpPrettyType converts a UPnP ST header value to a human-readable label.
+// Service types (urn:…:service:…) return empty string — they are listed in
+// the Services column instead.
+func ssdpPrettyType(st string) string {
+	switch st {
+	case "upnp:rootdevice":
+		return "UPnP Device"
+	case "ssdp:all", "":
+		return "—"
+	}
+	if strings.HasPrefix(st, "uuid:") {
+		return "—"
+	}
+	if strings.Contains(st, ":device:") {
+		parts := strings.Split(st, ":")
+		for i, p := range parts {
+			if p == "device" && i+1 < len(parts) {
+				return camelToWords(parts[i+1])
+			}
+		}
+	}
+	if strings.Contains(st, ":service:") {
+		return "" // service URNs go in the Services column, not Type
+	}
+	return st
+}
+
+// ssdpServiceName extracts the service name from a UPnP service URN.
+// Returns "" for non-service ST values.
+func ssdpServiceName(st string) string {
+	if !strings.Contains(st, ":service:") {
+		return ""
+	}
+	parts := strings.Split(st, ":")
+	for i, p := range parts {
+		if p == "service" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+// ssdpDeviceScore returns a priority score for an ST value.
+// Higher = more descriptive; used to pick the best entry for the Type column.
+func ssdpDeviceScore(st string) int {
+	switch {
+	case st == "" || strings.HasPrefix(st, "uuid:") || st == "ssdp:all":
+		return 0
+	case strings.Contains(st, ":service:"):
+		return 1
+	case st == "upnp:rootdevice":
+		return 2
+	case strings.Contains(st, ":device:"):
+		return 3
+	default:
+		return 1
+	}
+}
+
+// camelToWords inserts spaces before uppercase letters in a CamelCase string.
+func camelToWords(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for i, c := range s {
+		if i > 0 && c >= 'A' && c <= 'Z' {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
+// getSSDPRawText formats all accumulated raw SSDP entries for ip as a
+// multi-line string suitable for clipboard copy.
+func getSSDPRawText(ip string) string {
+	svcs, ok := ssdpRawData[ip]
+	if !ok || len(svcs) == 0 {
+		return "(no data)"
+	}
+	var b strings.Builder
+	for _, s := range svcs {
+		b.WriteString("ST: ")
+		b.WriteString(s.Type)
+		b.WriteByte('\n')
+		for _, d := range s.Details {
+			b.WriteString(d)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+
 
 // parseTXTMap converts a slice of "key=value" TXT records into a lowercase-keyed map.
 func parseTXTMap(records []string) map[string]string {

@@ -139,6 +139,7 @@ const (
 	IDM_CTX_COPY_ROW     = 3023
 	IDM_BCAST_COPY_ROW   = 3030
 	IDM_BCAST_COPY_IP    = 3031
+	IDM_BCAST_COPY_RAW   = 3032
 
 	// Detect-subnet popup menu item base (up to 16 interfaces supported)
 	IDM_DETECT_BASE = 3100
