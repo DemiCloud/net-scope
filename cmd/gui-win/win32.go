@@ -107,6 +107,7 @@ const (
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status label
 	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button
+	IDC_LIST_NETWORK = 114 // Network tab — live broadcast stats text pane
 
 	// Menu command IDs
 	IDM_FILE_EXIT        = 201

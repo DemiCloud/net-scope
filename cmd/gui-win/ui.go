@@ -44,7 +44,8 @@ var (
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
 	hwndListDHCP   HWND // DHCP tab
-	hwndListHealth HWND // Health tab
+	hwndListNetwork HWND // Network tab — live broadcast stats
+	hwndListHealth HWND // Scan Report tab
 	hwndTabCtrl    HWND
 	hwndStatus     HWND
 )
@@ -78,6 +79,8 @@ var (
 	bcastCancel    context.CancelFunc
 	bcastMu        sync.Mutex
 	bcastCount     int // total services received since app start
+	bcastMDNS      int // mDNS entries
+	bcastSSDP      int // SSDP entries
 	pendingBcast   []bcastEntry
 	pendingBcastMu sync.Mutex
 )
@@ -163,6 +166,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setWindowText(hwndListDHCP, "DHCP passive capture is not yet implemented.\n\nThis tab will show DHCP requests and leases observed on the network.")
 			enableWindow(hwndServiceBtn, false)
 		}
+		updateNetworkTab()
 		return 0
 
 	case WM_SERVICE_DOWN:
@@ -195,6 +199,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWindow(hwndListMDNS, SW_HIDE)
 			showWindow(hwndListSSDP, SW_HIDE)
 			showWindow(hwndListDHCP, SW_HIDE)
+			showWindow(hwndListNetwork, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
 			// Show/hide scan bar and reposition Hosts listview accordingly.
 			// On Hosts tab the scan bar is visible and the list sits below it;
@@ -228,6 +233,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				case 3:
 					showWindow(hwndListDHCP, SW_SHOW)
 				case 4:
+					showWindow(hwndListNetwork, SW_SHOW)
+				case 5:
 					showWindow(hwndListHealth, SW_SHOW)
 				}
 			}
@@ -351,11 +358,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if e.ip != "" {
 			if e.svc.Source == "ssdp" {
 				listViewAddSSDPRow(hwndListSSDP, e.ip, e.svc)
+				bcastSSDP++
 			} else {
 				listViewAddMDNSRow(hwndListMDNS, e.ip, e.svc)
+				bcastMDNS++
 			}
 			bcastCount++
 			setStatusPart(1, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
+			updateNetworkTab()
 		}
 		return 0
 
@@ -451,7 +461,8 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
 	insertTab(hwndTabCtrl, 3, "DHCP")
-	insertTab(hwndTabCtrl, 4, "Health")
+	insertTab(hwndTabCtrl, 4, "Network")
+	insertTab(hwndTabCtrl, 5, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	scanBarY := scale(elevBarH + tabCtrlH)
@@ -529,7 +540,13 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 
-	// ---- health text area (hidden initially) ----
+	// ---- network text area (hidden initially) ----
+	hwndListNetwork, _ = createWindowEx(
+		WS_EX_CLIENTEDGE, "EDIT", "Waiting for broadcast traffic…",
+		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_NETWORK, inst)
+
+	// ---- scan report text area (hidden initially) ----
 	hwndListHealth, _ = createWindowEx(
 		WS_EX_CLIENTEDGE, "EDIT", healthPlaceholder,
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
@@ -601,6 +618,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndListMDNS, 0, otherTop, width, otherH)
 	moveWindow(hwndListSSDP, 0, otherTop, width, otherH)
 	moveWindow(hwndListDHCP, 0, otherTop, width, otherH)
+	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
 }
 
@@ -799,30 +817,59 @@ func setStatusPart(part uintptr, s string) {
 // setStatus is a convenience wrapper that updates the rightmost (state) part.
 func setStatus(s string) { setStatusPart(2, s) }
 
-// updateHealthTab fills the Health text area with stats from the last scan.
-func updateHealthTab(stats sweep.ScanStats) {
+// updateNetworkTab refreshes the Network tab with live broadcast stats.
+// Called on the UI thread whenever a broadcast entry arrives or service state changes.
+func updateNetworkTab() {
 	text := fmt.Sprintf(
-		"net-sweep — Scan Health Report\r\n"+
+		"net-sweep — Live Network Activity\r\n"+
 			"══════════════════════════════════════════\r\n\r\n"+
-			"  Packets sent         : %d\r\n"+
-			"  Replies received     : %d\r\n"+
-			"  Timeouts             : %d\r\n"+
-			"  Average latency      : %.2f ms\r\n\r\n"+
-			"  ARP cache anomalies  : %d\r\n"+
-			"  DNS lookup failures  : %d\r\n\r\n"+
+			"  Sweep service          : %s\r\n\r\n"+
+			"  Broadcast listeners    : mDNS + SSDP (running since app start)\r\n"+
+			"  mDNS services seen     : %d\r\n"+
+			"  SSDP devices seen      : %d\r\n"+
+			"  Total broadcast events : %d\r\n\r\n"+
 			"══════════════════════════════════════════\r\n"+
 			"Notes:\r\n"+
-			"  • ARP anomalies indicate an IP seen with different MACs\r\n"+
-			"    in the ARP cache vs. the scan — possible duplicate IP or\r\n"+
-			"    partial network change. Investigate with 'arp -a'.\r\n"+
-			"  • DNS failures are normal on flat home/SMB networks that\r\n"+
-			"    lack reverse PTR records.\r\n",
+			"  • mDNS and SSDP rows are listed in detail on their respective tabs.\r\n"+
+			"  • Counts accumulate continuously; they are not reset between scans.\r\n"+
+			"  • Elevating the service enables ARP + ICMP for richer scan results.\r\n",
+		statusForService(),
+		bcastMDNS,
+		bcastSSDP,
+		bcastCount,
+	)
+	setWindowText(hwndListNetwork, text)
+}
+
+// updateHealthTab fills the Scan Report tab with stats from the last scan.
+func updateHealthTab(stats sweep.ScanStats) {
+	arpLine := "None detected."
+	if stats.ARPAnomalies > 0 {
+		arpLine = fmt.Sprintf("%d — same IP seen with different MACs (possible duplicate IP or ARP spoofing). Investigate with 'arp -a'.", stats.ARPAnomalies)
+	}
+
+	text := fmt.Sprintf(
+		"net-sweep — Scan Report\r\n"+
+			"══════════════════════════════════════════\r\n\r\n"+
+			"  Hosts found            : %d\r\n"+
+			"  Packets sent           : %d\r\n"+
+			"  Replies received       : %d\r\n"+
+			"  Timeouts               : %d\r\n"+
+			"  Average latency        : %.2f ms\r\n\r\n"+
+			"  Hosts without PTR      : %d\r\n"+
+			"  ARP anomalies          : %s\r\n\r\n"+
+			"══════════════════════════════════════════\r\n"+
+			"Notes:\r\n"+
+			"  • Hosts without PTR: many networks have no reverse DNS. This is\r\n"+
+			"    normal and does not indicate a problem with the host.\r\n"+
+			"  • ARP anomalies are genuinely unusual and worth investigating.\r\n",
+		liveCount,
 		stats.PacketsSent,
 		stats.RepliesReceived,
 		stats.Timeouts,
 		stats.AvgLatencyMS(),
-		stats.ARPAnomalies,
 		stats.DNSFailures,
+		arpLine,
 	)
 	setWindowText(hwndListHealth, text)
 }
