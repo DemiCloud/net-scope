@@ -180,7 +180,7 @@ const (
 	LVIF_TEXT = 0x0001
 
 	// StatusBar messages
-	SB_SETTEXT  = 0x0401
+	SB_SETTEXT  = 0x040B // SB_SETTEXTW — Unicode; lParam = *uint16
 	SB_SETPARTS = 0x0404
 
 	// Button notification
