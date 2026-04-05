@@ -89,6 +89,11 @@ func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error
 
 	go func() {
 		defer close(results)
+		defer func() {
+			// Recover panics (e.g. permission denied on raw socket) so the
+			// channel is always closed and the caller's range loop terminates.
+			_ = recover()
+		}()
 		s.runScan(ctx, hosts, results)
 	}()
 
@@ -118,6 +123,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		broadcastDone = make(chan struct{})
 		go func() {
 			defer close(broadcastDone)
+			defer func() { _ = recover() }()
 			bctx, cancel := context.WithTimeout(ctx, s.Config.BroadcastListen)
 			defer cancel()
 
@@ -125,6 +131,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
+				defer func() { _ = recover() }()
 				for ip, svcs := range discoverMDNS(bctx, s.Config.BroadcastListen) {
 					broadcastMu.Lock()
 					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
@@ -133,6 +140,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			}()
 			go func() {
 				defer wg.Done()
+				defer func() { _ = recover() }()
 				for ip, svcs := range discoverSSDP(bctx, s.Config.BroadcastListen) {
 					broadcastMu.Lock()
 					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
@@ -173,6 +181,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		go func(ip net.IP) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() { _ = recover() }() // raw-socket panics must not kill the process
 
 			r := s.probeHost(ctx, ip, macMap)
 

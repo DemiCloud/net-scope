@@ -97,6 +97,7 @@ const (
 	IDM_HELP_ABOUT       = 203
 	IDM_HELP_FAQ         = 204
 	IDM_HELP_VERSION     = 207
+	IDM_HELP_CRASHLOG    = 208 // Help > View Crash Log
 
 	// Context menu command ID range (right-click actions)
 	IDM_CTX_OPEN_HTTP    = 3001
@@ -115,8 +116,9 @@ const (
 	// MessageBox flags and return values
 	MB_OK          = 0x00000000
 	MB_YESNO       = 0x00000004
-	MB_ICONWARNING = 0x00000030
+	MB_ICONWARNING  = 0x00000030
 	MB_ICONQUESTION = 0x00000020
+	MB_ICONERROR    = 0x00000010
 
 	IDYES = 6
 	IDNO  = 7

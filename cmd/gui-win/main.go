@@ -31,6 +31,12 @@ func Run(v, target string) {
 	// same OS thread that created the window.
 	runtime.LockOSThread()
 
+	defer func() {
+		if p := recover(); p != nil {
+			writeCrashLog(hwndMain, p)
+		}
+	}()
+
 	// Hide the console window that Windows allocated when the binary was
 	// launched by double-clicking (SUBSYSTEM:CONSOLE binaries always get one).
 	if hwndConsole := getConsoleWindow(); hwndConsole != 0 {
@@ -101,6 +107,8 @@ func Run(v, target string) {
 	appendMenu(hHelp, MF_SEPARATOR, 0, "")
 	appendMenu(hHelp, MF_STRING, IDM_HELP_VERSION, "&Version Info")
 	appendMenu(hHelp, MF_STRING, IDM_HELP_ABOUT, "&About")
+	appendMenu(hHelp, MF_SEPARATOR, 0, "")
+	appendMenu(hHelp, MF_STRING, IDM_HELP_CRASHLOG, "View &Crash Log…")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHelp), "&Help")
 
 	setMenu(hwnd, hMenu)

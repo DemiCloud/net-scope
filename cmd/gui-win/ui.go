@@ -150,6 +150,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			messageBox(HWND(hwnd),
 				"net-sweep\nFast LAN scanner.\n\nhttps://github.com/demicloud/net-sweep",
 				"About net-sweep", 0)
+		case IDM_HELP_CRASHLOG:
+			path := crashLogPath()
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				messageBox(HWND(hwnd), "No crash log found.\n\nIf the app closes unexpectedly, a log will be written to:\n"+path, "Crash Log", 0)
+			} else {
+				shellExecute(HWND(hwnd), "open", "notepad.exe", path, "", SW_SHOW)
+			}
 		}
 		return 0
 
