@@ -109,6 +109,10 @@ const (
 	IDM_CTX_OPEN_SMB     = 3007
 	IDM_CTX_PING         = 3010
 	IDM_CTX_PING_CONT    = 3011
+	IDM_CTX_COPY_IP      = 3020
+	IDM_CTX_COPY_MAC     = 3021
+	IDM_CTX_COPY_HOST    = 3022
+	IDM_CTX_COPY_ROW     = 3023
 
 	// Null message (used to wake up a modal message loop)
 	WM_NULL = 0x0000
@@ -217,8 +221,8 @@ const (
 	TPM_TOPALIGN     = 0x0000
 	TPM_RETURNCMD    = 0x0100
 
-	// NM_RCLICK notification
-	NM_RCLICK = ^uint32(5) // NM_FIRST - 5 = 0xFFFFFFFB
+	// NM_RCLICK notification: NM_FIRST(0) - 5 = -5 = 0xFFFFFFFB
+	NM_RCLICK = uint32(0xFFFFFFFB)
 
 	// Window styles (popup dialogs)
 	WS_POPUP        = 0x80000000
@@ -406,6 +410,16 @@ var (
 	// Comdlg32 (save file dialog)
 	modComdlg32             = syscall.NewLazyDLL("comdlg32.dll")
 	procGetSaveFileNameW    = modComdlg32.NewProc("GetSaveFileNameW")
+
+	// Clipboard
+	procOpenClipboard    = modUser32.NewProc("OpenClipboard")
+	procCloseClipboard   = modUser32.NewProc("CloseClipboard")
+	procEmptyClipboard   = modUser32.NewProc("EmptyClipboard")
+	procSetClipboardData = modUser32.NewProc("SetClipboardData")
+	procGlobalAlloc      = modKernel32.NewProc("GlobalAlloc")
+	procGlobalLock       = modKernel32.NewProc("GlobalLock")
+	procGlobalUnlock     = modKernel32.NewProc("GlobalUnlock")
+	procRtlMoveMemory    = modKernel32.NewProc("RtlMoveMemory")
 
 	// Advapi32 (token/elevation)
 	modAdvapi32             = syscall.NewLazyDLL("advapi32.dll")

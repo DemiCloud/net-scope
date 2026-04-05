@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -442,6 +443,9 @@ func startScan(hwnd HWND) {
 
 	appCfg, _, _ := config.Load()
 	scanCfg := appCfg.ToSweepConfig()
+	// The GUI has a persistent background broadcast listener (startBroadcastListener);
+	// disable the per-scan mDNS/SSDP goroutines to avoid a 5-second wait.
+	scanCfg.BroadcastListen = 0
 
 	if !wantAdmin {
 		// Non-admin mode: TCP connect as liveness probe; no raw sockets needed.
@@ -657,6 +661,32 @@ func menuItem(menu HMENU, id uintptr, label string, enabled bool) {
 	appendMenu(menu, flags, id, label)
 }
 
+// copyToClipboard places text on the Windows clipboard as CF_UNICODETEXT.
+func copyToClipboard(hwnd HWND, text string) {
+	utf16, err := syscall.UTF16FromString(text)
+	if err != nil {
+		return
+	}
+	// Allocate global memory: len(utf16) * 2 bytes (each uint16 = 2 bytes).
+	const GMEM_MOVEABLE = 0x0002
+	const CF_UNICODETEXT = 13
+	hMem, _, _ := procGlobalAlloc.Call(GMEM_MOVEABLE, uintptr(len(utf16)*2))
+	if hMem == 0 {
+		return
+	}
+	ptr, _, _ := procGlobalLock.Call(hMem)
+	if ptr == 0 {
+		return
+	}
+	procRtlMoveMemory.Call(ptr, uintptr(unsafe.Pointer(&utf16[0])), uintptr(len(utf16)*2))
+	procGlobalUnlock.Call(hMem)
+
+	procOpenClipboard.Call(uintptr(hwnd))
+	procEmptyClipboard.Call()
+	procSetClipboardData.Call(CF_UNICODETEXT, hMem)
+	procCloseClipboard.Call()
+}
+
 // showHostContextMenu builds and tracks a context menu for the given Result at
 // screen coordinates (x, y).
 func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
@@ -683,6 +713,15 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	// ── Ping ─────────────────────────────────────────────────────────────────
 	menuItem(menu, IDM_CTX_PING,      "Ping once",     true)
 	menuItem(menu, IDM_CTX_PING_CONT, "Ping -t (continuous)", true)
+	appendMenu(menu, MF_SEPARATOR, 0, "")
+
+	// ── Copy ─────────────────────────────────────────────────────────────────
+	hCopy := createPopupMenu()
+	menuItem(hCopy, IDM_CTX_COPY_IP,   "IP address",       r.IP != nil)
+	menuItem(hCopy, IDM_CTX_COPY_MAC,  "MAC address",      r.MAC != nil)
+	menuItem(hCopy, IDM_CTX_COPY_HOST, "Hostname",         r.Hostname != "")
+	menuItem(hCopy, IDM_CTX_COPY_ROW,  "Full row (tab-separated)", true)
+	appendMenu(menu, MF_POPUP, uintptr(hCopy), "Copy")
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
 	switch cmd {
@@ -706,6 +745,29 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	case IDM_CTX_PING_CONT:
 		shellExecute(parent, "open", "cmd.exe",
 			"/k ping -t "+ip, "", SW_SHOW)
+	case IDM_CTX_COPY_IP:
+		copyToClipboard(parent, ip)
+	case IDM_CTX_COPY_MAC:
+		if r.MAC != nil {
+			copyToClipboard(parent, r.MAC.String())
+		}
+	case IDM_CTX_COPY_HOST:
+		copyToClipboard(parent, r.Hostname)
+	case IDM_CTX_COPY_ROW:
+		ports := ""
+		for i, p := range r.OpenPorts {
+			if i > 0 {
+				ports += ","
+			}
+			ports += fmt.Sprintf("%d", p)
+		}
+		mac := ""
+		if r.MAC != nil {
+			mac = r.MAC.String()
+		}
+		copyToClipboard(parent, strings.Join([]string{
+			ip, r.Hostname, mac, r.Vendor, string(r.OS), ports,
+		}, "\t"))
 	}
 }
 

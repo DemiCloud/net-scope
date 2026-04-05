@@ -280,10 +280,10 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}
 	}
 
-	// TCP liveness fallback — used when raw sockets are unavailable (TCPFirst
-	// mode, e.g. non-elevated on Windows). Try all configured ports in parallel;
-	// if any connect the host is alive and we reuse the results below.
-	if !r.Alive && s.Config.TCPFirst && len(s.Config.Ports) > 0 {
+	// TCP liveness fallback — last resort when ARP/ICMP both failed (e.g. no
+	// npcap on Windows or ICMP blocked by firewall). Always attempted regardless
+	// of TCPFirst: if any configured port responds the host is alive.
+	if !r.Alive && len(s.Config.Ports) > 0 {
 		open := scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
 		if len(open) > 0 {
 			r.Alive = true
