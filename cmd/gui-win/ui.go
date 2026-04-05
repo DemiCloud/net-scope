@@ -34,7 +34,6 @@ var (
 	hwndMain       HWND
 	// Elevation bar (top strip)
 	hwndElevLabel  HWND // "Running as: User" / "Running as: Administrator"
-	hwndElevButton HWND // "Relaunch as Administrator" (hidden when already elevated)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget     HWND
 	hwndScan       HWND
@@ -281,17 +280,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_COMMAND:
 		switch loword(wParam) {
-		case IDC_ELEV_BUTTON:
-			// Relaunch the same binary with "runas" to get an elevated instance.
-			exe, err := os.Executable()
-			if err == nil {
-				target := getWindowText(hwndTarget)
-				args := "--gui"
-				if target != "" {
-					args = target
-				}
-				shellExecute(HWND(hwnd), "runas", exe, args, "", SW_SHOWNORMAL)
-			}
 		case IDC_SCAN:
 			startScan(HWND(hwnd))
 		case IDC_STOP:
@@ -426,18 +414,13 @@ func createControls(hwnd HWND) {
 
 	// ---- elevation status bar (top strip) ----
 	// Shows current privilege level; offers relaunch button when not elevated.
-	elevLabel := "⚠  Running as: User  —  Some features (ARP, ICMP, DHCP) require elevation."
+	elevLabel := "⚠  Running as: User  —  Check \"Admin / ARP\" and click Scan; elevation prompt will appear automatically."
 	if elevated {
 		elevLabel = "✔  Running as: Administrator  —  All features available."
 	}
 	hwndElevLabel, _ = createWindowEx(0, "STATIC", elevLabel,
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
-		scale(8), 0, scale(900), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
-	if !elevated {
-		hwndElevButton, _ = createWindowEx(0, "BUTTON", "Elevate sweep service",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			scale(916), scale(3), scale(220), scale(26), hwnd, IDC_ELEV_BUTTON, inst)
-	}
+		scale(8), 0, scale(1140), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
@@ -575,11 +558,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	p2 := p1 * 2
 	setStatusParts(p1, p2)
 
-	// Elevation bar and tab strip always stretch to full width.
-	moveWindow(hwndElevLabel, scale(8), 0, width-scale(240), scale(elevBarH))
-	if hwndElevButton != 0 {
-		moveWindow(hwndElevButton, width-scale(236), scale(3), scale(228), scale(26))
-	}
+	// Elevation bar stretches to full width.
+	moveWindow(hwndElevLabel, scale(8), 0, width-scale(16), scale(elevBarH))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
 	// Scan bar controls: target field stretches, buttons anchor right.
