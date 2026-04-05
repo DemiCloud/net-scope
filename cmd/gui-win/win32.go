@@ -69,13 +69,22 @@ const (
 	COLOR_WINDOW  = 5
 
 	// Messages
-	WM_CREATE   = 0x0001
-	WM_DESTROY  = 0x0002
-	WM_SIZE     = 0x0005
-	WM_CLOSE    = 0x0010
-	WM_KEYDOWN  = 0x0100
-	WM_COMMAND  = 0x0111
-	WM_APP      = 0x8000
+	WM_CREATE      = 0x0001
+	WM_DESTROY     = 0x0002
+	WM_SIZE        = 0x0005
+	WM_CLOSE       = 0x0010
+	WM_KEYDOWN     = 0x0100
+	WM_COMMAND     = 0x0111
+	WM_DPICHANGED  = 0x02E0 // sent when window moves to a different-DPI monitor
+	WM_APP         = 0x8000
+
+	// DPI awareness context value for Per-Monitor V2 (Windows 10 1703+)
+	// Passed to SetProcessDpiAwarenessContext as a pseudo-handle.
+	DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(3) // -4
+
+	// SetWindowPos flags
+	SWP_NOZORDER   = 0x0004
+	SWP_NOACTIVATE = 0x0010
 
 	// Custom messages
 	WM_SCAN_RESULT   = WM_APP + 1
@@ -394,6 +403,10 @@ var (
 	procEnableWindow            = modUser32.NewProc("EnableWindow")
 	procMessageBoxW             = modUser32.NewProc("MessageBoxW")
 	procGetKeyState             = modUser32.NewProc("GetKeyState")
+	procSetWindowPos            = modUser32.NewProc("SetWindowPos")
+	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
+	procGetDpiForWindow         = modUser32.NewProc("GetDpiForWindow")
+	procGetDpiForSystem         = modUser32.NewProc("GetDpiForSystem")
 
 	// Menu
 	procCreateMenu              = modUser32.NewProc("CreateMenu")
@@ -725,11 +738,40 @@ func shellExecute(hwnd HWND, op, file, params, dir string, show int32) {
 	)
 }
 
-// createUIFont creates a Segoe UI 9pt font suitable for all dialog controls.
-// height -12 = 9pt at 96 DPI (the Windows default scaling).
-func createUIFont() HFONT {
+// setProcessDpiAwarenessContext enables Per-Monitor V2 DPI awareness.
+// Must be called before any window is created.
+func setProcessDpiAwarenessContext(ctx uintptr) {
+	procSetProcessDpiAwarenessContext.Call(ctx)
+}
+
+// getDpiForWindow returns the DPI for the monitor containing hwnd (0 on error).
+func getDpiForWindow(hwnd HWND) uint32 {
+	r, _, _ := procGetDpiForWindow.Call(uintptr(hwnd))
+	return uint32(r)
+}
+
+// getDpiForSystem returns the system DPI (useful before any window is created).
+func getDpiForSystem() uint32 {
+	r, _, _ := procGetDpiForSystem.Call()
+	if r == 0 {
+		return 96
+	}
+	return uint32(r)
+}
+
+// setWindowPos repositions and resizes hwnd. Use SWP_NOZORDER|SWP_NOACTIVATE
+// for a non-intrusive move/resize (e.g. on WM_DPICHANGED).
+func setWindowPos(hwnd HWND, hwndInsertAfter uintptr, x, y, w, h int32, flags uint32) {
+	procSetWindowPos.Call(uintptr(hwnd), hwndInsertAfter,
+		uintptr(x), uintptr(y), uintptr(w), uintptr(h), uintptr(flags))
+}
+
+// createUIFont creates a Segoe UI font scaled to the given DPI.
+// 9pt at 96 DPI = -12px; at 144 DPI (150%) = -18px.
+func createUIFont(dpi uint32) HFONT {
 	face, _ := syscall.UTF16PtrFromString("Segoe UI")
-	height := int32(-12) // 9pt at 96 DPI; negative = character height, not cell height
+	// Negative height = character height (not cell height). Scale from 96 DPI base.
+	height := -int32(12 * dpi / 96)
 	r, _, _ := procCreateFontW.Call(
 		uintptr(height),
 		0,                           // average char width (0 = auto)

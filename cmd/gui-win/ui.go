@@ -20,6 +20,15 @@ import (
 // Global UI handles / resources
 // ---------------------------------------------------------------------------
 
+// currentDPI is the DPI of the monitor containing the main window.
+// Updated in WM_DPICHANGED; initialised from GetDpiForWindow in WM_CREATE.
+var currentDPI uint32 = 96
+
+// scale converts a 96-DPI logical pixel value to the current physical pixel value.
+func scale(n int32) int32 {
+	return int32(uint32(n) * currentDPI / 96)
+}
+
 var (
 	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
 	hwndMain       HWND
@@ -128,6 +137,26 @@ const (
 
 var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
+	case WM_DPICHANGED:
+		// wParam HIWORD = new DPI. lParam = suggested window rect at new DPI.
+		newDPI := uint32(hiword(wParam))
+		if newDPI == 0 {
+			newDPI = 96
+		}
+		currentDPI = newDPI
+		// Recreate the font at the new DPI and push it to all children.
+		if appFont != 0 {
+			deleteObject(uintptr(appFont))
+		}
+		appFont = createUIFont(currentDPI)
+		setFontAllChildren(HWND(hwnd), appFont)
+		// Move the window to the rect Windows suggests (avoids text blurriness).
+		rect := (*RECT)(unsafe.Pointer(lParam)) //nolint:govet
+		setWindowPos(HWND(hwnd), 0, rect.Left, rect.Top,
+			rect.Right-rect.Left, rect.Bottom-rect.Top,
+			SWP_NOZORDER|SWP_NOACTIVATE)
+		return 0
+
 	case WM_CREATE:
 		createControls(HWND(hwnd))
 		if noConfigFile {
@@ -165,7 +194,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				r := getClientRect(hwndMain)
 				statusR := getClientRect(hwndStatus)
 				statusH := statusR.Bottom - statusR.Top
-				hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 				listH := (r.Bottom - r.Top) - hostsTop - statusH
 				if listH < 0 {
 					listH = 0
@@ -389,6 +418,12 @@ func createControls(hwnd HWND) {
 	inst := getModuleHandle()
 	elevated := isElevated()
 
+	// Fetch the actual DPI for this window now that the HWND exists.
+	// This handles the case where the app starts on a non-96-DPI monitor.
+	if dpi := getDpiForWindow(hwnd); dpi > 0 {
+		currentDPI = dpi
+	}
+
 	// ---- elevation status bar (top strip) ----
 	// Shows current privilege level; offers relaunch button when not elevated.
 	elevLabel := "⚠  Running as: User  —  Some features (ARP, ICMP, DHCP) require elevation."
@@ -397,17 +432,17 @@ func createControls(hwnd HWND) {
 	}
 	hwndElevLabel, _ = createWindowEx(0, "STATIC", elevLabel,
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
-		8, 0, 900, elevBarH, hwnd, IDC_ELEV_LABEL, inst)
+		scale(8), 0, scale(900), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
 	if !elevated {
-		hwndElevButton, _ = createWindowEx(0, "BUTTON", "Relaunch as Administrator",
+		hwndElevButton, _ = createWindowEx(0, "BUTTON", "Elevate sweep service",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			916, 3, 220, 26, hwnd, IDC_ELEV_BUTTON, inst)
+			scale(916), scale(3), scale(220), scale(26), hwnd, IDC_ELEV_BUTTON, inst)
 	}
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		0, elevBarH, 1160, tabCtrlH, hwnd, IDC_TABS, inst)
+		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Hosts")
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
@@ -415,28 +450,28 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 4, "Health")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
-	scanBarY := int32(elevBarH + tabCtrlH)
+	scanBarY := scale(elevBarH + tabCtrlH)
 	// [Target label] [target input ──────────────] [Scan] [Stop] [☐ Admin / ARP]
-	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, 8, scanBarY+8, 48, 20, hwnd, 0, inst)
+	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
-		58, scanBarY+6, 620, 22, hwnd, IDC_TARGET, inst)
+		scale(58), scanBarY+scale(6), scale(620), scale(22), hwnd, IDC_TARGET, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 688, scanBarY+5, 80, 24, hwnd, IDC_SCAN, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(688), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_SCAN, inst)
 	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 776, scanBarY+5, 80, 24, hwnd, IDC_STOP, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(776), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_STOP, inst)
 	enableWindow(hwndStop, false)
 	hwndAdminCheck, _ = createWindowEx(0, "BUTTON", "Admin / ARP",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		868, scanBarY+7, 120, 20, hwnd, IDC_ADMIN, inst)
+		scale(868), scanBarY+scale(7), scale(120), scale(20), hwnd, IDC_ADMIN, inst)
 	if elevated {
 		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_CHECKED, 0)
 	}
 
 	// Hosts listview starts below the scan bar.
-	hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 	// All other panes start just below the tab strip (no scan bar).
-	otherTop := int32(elevBarH + tabCtrlH)
+	otherTop := scale(elevBarH + tabCtrlH)
 
 	// ---- hosts listview (visible) ----
 	hwndList, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -513,7 +548,8 @@ func createControls(hwnd HWND) {
 	setStatusPart(2, "Enter a target and click Scan")
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
-	appFont = createUIFont()
+	// Use the actual window DPI (set above) so the font is correct on all monitors.
+	appFont = createUIFont(currentDPI)
 	setFontAllChildren(hwnd, appFont)
 }
 
@@ -540,21 +576,21 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	setStatusParts(p1, p2)
 
 	// Elevation bar and tab strip always stretch to full width.
-	moveWindow(hwndElevLabel, 8, 0, width-240, elevBarH)
+	moveWindow(hwndElevLabel, scale(8), 0, width-scale(240), scale(elevBarH))
 	if hwndElevButton != 0 {
-		moveWindow(hwndElevButton, width-236, 3, 228, 26)
+		moveWindow(hwndElevButton, width-scale(236), scale(3), scale(228), scale(26))
 	}
-	moveWindow(hwndTabCtrl, 0, elevBarH, width, tabCtrlH)
+	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar controls are repositioned to match current width (target field stretches).
-	scanBarY := int32(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, 58, scanBarY+6, width-548, 22)
-	moveWindow(hwndScan, width-486, scanBarY+5, 80, 24)
-	moveWindow(hwndStop, width-398, scanBarY+5, 80, 24)
-	moveWindow(hwndAdminCheck, width-310, scanBarY+7, 120, 20)
+	// Scan bar controls: target field stretches, buttons anchor right.
+	scanBarY := scale(elevBarH + tabCtrlH)
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(548), scale(22))
+	moveWindow(hwndScan, width-scale(486), scanBarY+scale(5), scale(80), scale(24))
+	moveWindow(hwndStop, width-scale(398), scanBarY+scale(5), scale(80), scale(24))
+	moveWindow(hwndAdminCheck, width-scale(310), scanBarY+scale(7), scale(120), scale(20))
 
 	// Hosts tab: list sits below the scan bar.
-	hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 	hostsH := height - hostsTop - statusH
 	if hostsH < 0 {
 		hostsH = 0
@@ -562,7 +598,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndList, 0, hostsTop, width, hostsH)
 
 	// All other panes fill from just below the tab strip.
-	otherTop := int32(elevBarH + tabCtrlH)
+	otherTop := scale(elevBarH + tabCtrlH)
 	otherH := height - otherTop - statusH
 	if otherH < 0 {
 		otherH = 0

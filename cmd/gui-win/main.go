@@ -43,6 +43,11 @@ func Run(v, target string) {
 
 	sweep.InitVendorDB()
 
+	// Enable Per-Monitor V2 DPI awareness before any window is created.
+	// This ensures controls and fonts scale correctly on high-DPI monitors
+	// and when the window is moved between monitors with different scaling.
+	setProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+
 	var cfgPath string
 	var cfgErr error
 	appConfig, cfgPath, cfgErr = config.Load()
