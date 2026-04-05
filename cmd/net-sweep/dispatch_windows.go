@@ -16,8 +16,9 @@ import (
 var (
 	modKernel32Disp   = syscall.NewLazyDLL("kernel32.dll")
 	procAttachConsole = modKernel32Disp.NewProc("AttachConsole")
-	modUser32Disp     = syscall.NewLazyDLL("user32.dll")
+	procAllocConsole  = modKernel32Disp.NewProc("AllocConsole")
 	procGetConsoleWin = modKernel32Disp.NewProc("GetConsoleWindow")
+	modUser32Disp     = syscall.NewLazyDLL("user32.dll")
 	procShowWindow    = modUser32Disp.NewProc("ShowWindow")
 )
 
@@ -62,7 +63,22 @@ func run() {
 		return
 	}
 
-	// No parent console → GUI mode.
+	// No parent console (e.g. double-click, or a hosted terminal that doesn't
+	// expose a Win32 console). If any flag-style arg is present, allocate a
+	// fresh console and run CLI mode so --help / --version work correctly.
+	// Only a bare target (no leading dash) is passed on to the GUI.
+	for _, arg := range os.Args[1:] {
+		if arg == "--gui" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			procAllocConsole.Call()
+			reopenConsoleHandles()
+			runCLI()
+			return
+		}
+	}
+
 	target := ""
 	if len(os.Args) > 1 && os.Args[1] != "--gui" {
 		target = os.Args[1]

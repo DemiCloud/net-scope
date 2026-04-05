@@ -1,6 +1,6 @@
 # Project metadata
 NAME    := net-sweep
-VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
 # Linker flags
 DEV_LDFLAGS     := -X main.version=$(VERSION)
