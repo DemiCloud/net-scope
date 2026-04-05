@@ -1,9 +1,8 @@
 //go:build windows
 
-package main
+package guiwin
 
 import (
-	"os"
 	"runtime"
 	"unsafe"
 
@@ -11,24 +10,31 @@ import (
 	"github.com/demicloud/net-sweep/internal/sweep"
 )
 
-func init() {
-	// Win32 windows have thread affinity: the message loop must run on the
-	// same OS thread that created the window. Without this, the Go scheduler
-	// can silently move the goroutine to a different thread between CreateWindowEx
-	// and GetMessage, leaving the window permanently unresponsive.
-	runtime.LockOSThread()
-}
+// version and initialTarget are set by Run() before any window is created.
+var version string
+var initialTarget string
 
 // appConfig is loaded once at startup and used to populate UI defaults.
 var appConfig config.Config
 
-// initialTarget is the default text for the Target input box.
-// Overridden by os.Args[1] when relaunching elevated.
-var initialTarget = "192.168.1.0/24"
+// Run starts the GUI. v is the version string; target is the initial scan target.
+// Must be called from the main goroutine (LockOSThread is called internally).
+func Run(v, target string) {
+	version = v
+	if target != "" {
+		initialTarget = target
+	} else {
+		initialTarget = "192.168.1.0/24"
+	}
 
-func main() {
-	if len(os.Args) > 1 {
-		initialTarget = os.Args[1]
+	// Win32 windows have thread affinity: the message loop must run on the
+	// same OS thread that created the window.
+	runtime.LockOSThread()
+
+	// Hide the console window that Windows allocated when the binary was
+	// launched by double-clicking (SUBSYSTEM:CONSOLE binaries always get one).
+	if hwndConsole := getConsoleWindow(); hwndConsole != 0 {
+		showWindow(hwndConsole, SW_HIDE)
 	}
 
 	sweep.InitVendorDB()
@@ -80,6 +86,9 @@ func main() {
 	hMenu := createMenu()
 
 	hFile := createPopupMenu()
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_JSON, "Export as &JSON…")
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_CSV, "Export as &CSV…")
+	appendMenu(hFile, MF_SEPARATOR, 0, "")
 	appendMenu(hFile, MF_STRING, IDM_FILE_EXIT, "E&xit")
 	appendMenu(hMenu, MF_POPUP, uintptr(hFile), "&File")
 
@@ -88,8 +97,9 @@ func main() {
 	appendMenu(hMenu, MF_POPUP, uintptr(hOptions), "&Options")
 
 	hHelp := createPopupMenu()
-	appendMenu(hHelp, MF_STRING, IDM_HELP_FAQ, "&FAQ")
+	appendMenu(hHelp, MF_STRING, IDM_HELP_FAQ, "&Help / FAQ…")
 	appendMenu(hHelp, MF_SEPARATOR, 0, "")
+	appendMenu(hHelp, MF_STRING, IDM_HELP_VERSION, "&Version Info")
 	appendMenu(hHelp, MF_STRING, IDM_HELP_ABOUT, "&About")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHelp), "&Help")
 

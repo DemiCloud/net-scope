@@ -1,8 +1,9 @@
 //go:build windows
 
-package main
+package guiwin
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +36,7 @@ func runModal(dlg, parent HWND) {
 	enableWindow(parent, false)
 	showWindow(dlg, SW_SHOW)
 	updateWindow(dlg)
+	setForegroundWindow(dlg)
 
 	var msg MSG
 	for modalActive && getMessage(&msg) {
@@ -42,6 +44,8 @@ func runModal(dlg, parent HWND) {
 		dispatchMessage(&msg)
 	}
 
+	// closeModal already re-enabled the parent and set focus;
+	// clear state here in case we exited the loop another way.
 	enableWindow(parent, true)
 	modalActive = false
 	modalParent = 0
@@ -52,6 +56,11 @@ func closeModal(dlg HWND) {
 	parent := modalParent
 	modalActive = false
 	destroyWindow(dlg)
+	// Re-enable and bring the parent back to the foreground before posting
+	// WM_NULL, so it doesn't disappear behind other windows.
+	enableWindow(parent, true)
+	setForegroundWindow(parent)
+	setFocus(parent)
 	postMessage(parent, WM_NULL, 0, 0) // wake up getMessage
 }
 
@@ -60,9 +69,11 @@ func closeModal(dlg HWND) {
 // ---------------------------------------------------------------------------
 
 const (
-	idSettOK        = 501
-	idSettCancel    = 502
-	idSettPingFirst = 503
+	idSettOK         = 501
+	idSettCancel     = 502
+	idSettPingFirst  = 503
+	idSettBannerGrab = 504
+	idSettNetBIOS    = 505
 )
 
 var (
@@ -73,6 +84,8 @@ var (
 	hwndSettIface     HWND
 	hwndSettBcast     HWND
 	hwndSettPingFirst HWND
+	hwndSettBanner    HWND
+	hwndSettNetBIOS   HWND
 	hwndSettPath      HWND
 
 	registerSettingsOnce sync.Once
@@ -118,10 +131,24 @@ func ensureSettingsClass() {
 func showSettingsDialog(parent HWND) {
 	ensureSettingsClass()
 
-	const dlgW, dlgH int32 = 490, 320
+	// Populate fields from the current in-memory config (appConfig), which
+	// reflects any changes already made this session.
+	cfg, cfgPath, _ := config.Load()
+	_ = cfg // we'll use appConfig below if it's been modified
+
+	// Build a descriptive title: show the config file being edited, or
+	// indicate these are runtime-only settings if no file exists.
+	var titleSuffix string
+	if cfgPath != "" {
+		titleSuffix = "Editing: " + cfgPath
+	} else {
+		titleSuffix = "Runtime (no config file — changes apply this session only)"
+	}
+
+	const dlgW, dlgH int32 = 560, 400
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepSettings", "Settings",
+		"NetSweepSettings", "Settings — "+titleSuffix,
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -132,21 +159,27 @@ func showSettingsDialog(parent HWND) {
 	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	// Populate fields from the current config.
-	cfg, cfgPath, _ := config.Load()
-	setWindowText(hwndSettTimeout, cfg.Scan.Timeout)
-	setWindowText(hwndSettConcur, strconv.Itoa(cfg.Scan.Concurrency))
-	setWindowText(hwndSettPorts, joinInts(cfg.Scan.Ports))
-	setWindowText(hwndSettSNMP, cfg.Scan.SNMPCommunity)
-	setWindowText(hwndSettIface, cfg.Scan.Interface)
-	setWindowText(hwndSettBcast, cfg.Scan.BroadcastListen)
-	if cfg.Scan.PingFirst {
+	setWindowText(hwndSettTimeout, appConfig.Scan.Timeout)
+	setWindowText(hwndSettConcur, strconv.Itoa(appConfig.Scan.Concurrency))
+	setWindowText(hwndSettPorts, joinInts(appConfig.Scan.Ports))
+	setWindowText(hwndSettSNMP, appConfig.Scan.SNMPCommunity)
+	setWindowText(hwndSettIface, appConfig.Scan.Interface)
+	setWindowText(hwndSettBcast, appConfig.Scan.BroadcastListen)
+	if appConfig.Scan.PingFirst {
 		sendMessage(hwndSettPingFirst, BM_SETCHECK, BST_CHECKED, 0)
 	}
-	if cfgPath == "" {
-		cfgPath = config.ConfigPath()
+	if appConfig.Scan.BannerGrab {
+		sendMessage(hwndSettBanner, BM_SETCHECK, BST_CHECKED, 0)
 	}
+	if appConfig.Scan.NetBIOS {
+		sendMessage(hwndSettNetBIOS, BM_SETCHECK, BST_CHECKED, 0)
+	}
+
+	// Status line at the bottom of the dialog.
 	if cfgPath != "" {
-		setWindowText(hwndSettPath, "Saved to: "+cfgPath)
+		setWindowText(hwndSettPath, "Config file: "+cfgPath)
+	} else {
+		setWindowText(hwndSettPath, "No config file found — saving will prompt for a location.")
 	}
 
 	setFontAllChildren(dlg, appFont)
@@ -157,7 +190,7 @@ func createSettingsControls(hwnd HWND) {
 	inst := getModuleHandle()
 	const (
 		lx, lw int32 = 12, 150  // label: left x, width
-		ex, ew int32 = 166, 304 // edit:  left x, width
+		ex, ew int32 = 166, 374 // edit:  left x, width
 		rh     int32 = 30       // row pitch
 		y0     int32 = 12       // first row top
 	)
@@ -189,13 +222,23 @@ func createSettingsControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
 		lx, checkY, lw+ew, 22, hwnd, HMENU(idSettPingFirst), inst)
 
+	hwndSettBanner, _ = createWindowEx(0, "BUTTON",
+		"Banner Grab  (HTTP Server header, SSH version, FTP/SMTP greeting)",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		lx, checkY+28, lw+ew, 22, hwnd, HMENU(idSettBannerGrab), inst)
+
+	hwndSettNetBIOS, _ = createWindowEx(0, "BUTTON",
+		"NetBIOS Queries  (Windows computer names via UDP 137)",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		lx, checkY+56, lw+ew, 22, hwnd, HMENU(idSettNetBIOS), inst)
+
 	// Config file path (informational)
 	hwndSettPath, _ = createWindowEx(0, "STATIC", "",
 		WS_CHILD|WS_VISIBLE,
-		lx, checkY+28, lw+ew, 14, hwnd, 0, inst)
+		lx, checkY+84, lw+ew, 28, hwnd, 0, inst)
 
 	// OK / Cancel
-	btnY := checkY + 50
+	btnY := checkY + 110
 	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		306, btnY, 78, 26, hwnd, idSettOK, inst)
 	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
@@ -212,6 +255,8 @@ func applySettings(hwnd HWND) bool {
 	iface := strings.TrimSpace(getWindowText(hwndSettIface))
 	bcast := strings.TrimSpace(getWindowText(hwndSettBcast))
 	pingFirst := sendMessage(hwndSettPingFirst, BM_GETCHECK, 0, 0) == BST_CHECKED
+	bannerGrab := sendMessage(hwndSettBanner, BM_GETCHECK, 0, 0) == BST_CHECKED
+	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
 
 	if _, err := time.ParseDuration(timeout); err != nil {
 		messageBox(hwnd, `Timeout must be a Go duration string, e.g. "1s" or "500ms".`, "Invalid Input", 0)
@@ -254,13 +299,22 @@ func applySettings(hwnd HWND) bool {
 			BroadcastListen: bcast,
 			SNMPCommunity:   snmp,
 			Interface:       iface,
+			BannerGrab:      bannerGrab,
+			NetBIOS:         netBIOS,
 		},
 	}
 
-	if err := config.Save(cfg); err != nil {
+	savePath := chooseConfigSavePath(hwnd)
+	if savePath == "" {
+		// User chose "Neither" — don't save, but still apply in-memory.
+		appConfig = cfg
+		return true
+	}
+	if err := config.SaveTo(cfg, savePath); err != nil {
 		messageBox(hwnd, "Could not save settings:\n"+err.Error(), "Error", 0)
 		return false
 	}
+	appConfig = cfg
 	return true
 }
 
@@ -270,6 +324,153 @@ func joinInts(vals []int) string {
 		parts[i] = strconv.Itoa(v)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// chooseConfigSavePath returns the path to save the config to.
+// If a config file already exists at either known location, it uses that path
+// without prompting. On first save it shows a dialog with three options:
+//   - AppData  (e.g. %APPDATA%\demicloud\net-sweep\config.toml)
+//   - Beside exe (same directory as net-sweep.exe)
+//   - Neither  (keep in memory; returns "")
+func chooseConfigSavePath(hwnd HWND) string {
+	appDataPath := config.ConfigPath()
+	exePath := config.ExeLocalPath()
+
+	// If a config already exists, save back to the same place — no prompt.
+	if fileExists(appDataPath) {
+		return appDataPath
+	}
+	if fileExists(exePath) {
+		return exePath
+	}
+
+	// First save: ask the user.
+	return showConfigLocationDialog(hwnd, appDataPath, exePath)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ---------------------------------------------------------------------------
+// Config Location Dialog (first save)
+// ---------------------------------------------------------------------------
+
+const (
+	idCfgAppData = 701
+	idCfgExeDir  = 702
+	idCfgNeither = 703
+)
+
+var (
+	registerCfgLocOnce sync.Once
+	cfgLocResult       string // set by the dialog before closeModal
+)
+
+var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idCfgAppData:
+			cfgLocResult = "appdata"
+			closeModal(HWND(hwnd))
+		case idCfgExeDir:
+			cfgLocResult = "exedir"
+			closeModal(HWND(hwnd))
+		case idCfgNeither:
+			cfgLocResult = "neither"
+			closeModal(HWND(hwnd))
+		}
+		return 0
+	case WM_CLOSE:
+		cfgLocResult = "neither"
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+func ensureCfgLocClass() {
+	registerCfgLocOnce.Do(func() {
+		cn := utf16("NetSweepCfgLoc")
+		wc := WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
+			LpfnWndProc:   cfgLocWndProc,
+			HInstance:     getModuleHandle(),
+			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HCursor:       loadCursor(IDC_ARROW),
+			LpszClassName: cn,
+		}
+		registerClassEx(&wc)
+	})
+}
+
+func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
+	ensureCfgLocClass()
+	cfgLocResult = "neither"
+
+	const dlgW, dlgH int32 = 520, 260
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepCfgLoc", "Where should net-sweep save its config?",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return ""
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+
+	inst := getModuleHandle()
+	y := int32(14)
+
+	createCtrl("STATIC",
+		"Settings were changed. Choose where to save the config file.",
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 20, dlg, 0, inst)
+	y += 30
+
+	createCtrl("STATIC", "Option 1 — User profile (recommended):",
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
+	y += 18
+	createCtrl("STATIC", "  "+appDataPath,
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
+	y += 22
+	createCtrl("BUTTON", "Save to AppData",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		14, y, 160, 26, dlg, idCfgAppData, inst)
+	y += 38
+
+	createCtrl("STATIC", "Option 2 — Beside the executable (portable):",
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
+	y += 18
+	createCtrl("STATIC", "  "+exePath,
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
+	y += 22
+	createCtrl("BUTTON", "Save beside exe",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		14, y, 160, 26, dlg, idCfgExeDir, inst)
+	y += 38
+
+	createCtrl("STATIC", "Option 3 — Don't save (settings apply this session only):",
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
+	y += 22
+	createCtrl("BUTTON", "Don't save",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		14, y, 160, 26, dlg, idCfgNeither, inst)
+
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
+
+	switch cfgLocResult {
+	case "appdata":
+		return appDataPath
+	case "exedir":
+		return exePath
+	default:
+		return ""
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +484,9 @@ var registerFAQOnce sync.Once
 var faqWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_COMMAND:
-		closeModal(HWND(hwnd))
+		if loword(wParam) == idFAQClose {
+			closeModal(HWND(hwnd))
+		}
 		return 0
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
@@ -310,9 +513,9 @@ func ensureFAQClass() {
 func showFAQDialog(parent HWND) {
 	ensureFAQClass()
 
-	const dlgW, dlgH int32 = 580, 540
+	const dlgW, dlgH int32 = 600, 560
 	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
+		WS_EX_DLGMODALFRAME|WS_EX_TOPMOST,
 		"NetSweepFAQ", "Help — Frequently Asked Questions",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
@@ -325,18 +528,50 @@ func showFAQDialog(parent HWND) {
 
 	inst := getModuleHandle()
 
-	// Scrollable readonly text area fills the dialog body.
-	createWindowEx(
-		WS_EX_CLIENTEDGE, "EDIT", faqText,
+	// Win32 EDIT controls require \r\n for line breaks.
+	displayText := strings.ReplaceAll(faqText, "\n", "\r\n")
+
+	hwndEdit, _ := createWindowEx(
+		WS_EX_CLIENTEDGE, "EDIT", displayText,
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		8, 8, dlgW-24, dlgH-62, dlg, 0, inst,
 	)
+	monoFont := createMonoFont()
+	sendMessage(hwndEdit, WM_SETFONT, uintptr(monoFont), 1)
 
-	createCtrl("BUTTON", "Close", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		dlgW-100, dlgH-46, 82, 28, dlg, idFAQClose, inst)
+	_, _ = createWindowEx(0, "BUTTON", "Close",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		dlgW-100, dlgH-46, 82, 28, dlg, HMENU(idFAQClose), inst)
 
 	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
+	sendMessage(hwndEdit, WM_SETFONT, uintptr(monoFont), 1) // restore after setFontAllChildren
+
+	// Run a self-contained modal loop scoped to the dialog.
+	// We do NOT disable the parent — instead WS_EX_TOPMOST keeps the dialog
+	// above the main window without stealing its message pump, which avoids
+	// the "disappears behind other windows" bug.
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
+	setForegroundWindow(dlg)
+
+	var msg MSG
+	for {
+		if !getMessage(&msg) {
+			break
+		}
+		if msg.HWnd == dlg || isChild(dlg, msg.HWnd) {
+			translateMessage(&msg)
+			dispatchMessage(&msg)
+			if !isWindow(dlg) {
+				break // dialog was destroyed
+			}
+		} else {
+			// Let the main window handle its own messages normally.
+			translateMessage(&msg)
+			dispatchMessage(&msg)
+		}
+	}
+	setForegroundWindow(parent)
 }
 
 const faqText = `net-sweep — Frequently Asked Questions
@@ -372,4 +607,43 @@ Q: Why does scanning a /24 pre-populate 254 rows immediately?
 A: net-sweep inserts a placeholder row for every IP in the subnet before the scan starts. This keeps results in sorted IP order and gives you a live view of which addresses are still pending. Each row updates in place as the host is probed.
 
 Q: Settings were saved — when do they take effect?
-A: Settings take effect the next time you click Scan. Any scan already in progress continues with the configuration it started with.`
+A: Settings take effect the next time you click Scan. Any scan already in progress continues with the configuration it started with.
+
+Q: What is Admin Mode, and what features require it?
+A: "Admin Mode" means running net-sweep as a Windows Administrator (or with root privileges on Linux).
+
+   Features that REQUIRE elevation:
+     • MAC address discovery — raw Ethernet (ARP) sockets are restricted to administrators.
+     • Vendor lookup — depends on MAC, so also requires elevation.
+     • ICMP ping (traditional raw-socket ping) — requires a raw IP socket on many systems.
+
+   Features that work WITHOUT elevation:
+     • TCP port scanning
+     • Reverse DNS / hostname resolution
+     • NetBIOS name queries (UDP 137)
+     • SNMP queries
+     • mDNS / SSDP broadcast discovery
+     • Banner grabbing (SSH, HTTP, FTP, SMTP, Telnet)
+     • OS hint (inferred from banners, TTL, SNMP)
+
+   In short: you will always get port-level host discovery without elevation, but you won't
+   see MAC addresses or vendor names. For full results, right-click the net-sweep executable
+   and choose "Run as administrator".`
+
+// ---------------------------------------------------------------------------
+// Version Info Dialog
+// ---------------------------------------------------------------------------
+
+func showVersionDialog(parent HWND) {
+	body := "net-sweep " + version + "\n\n" +
+		"Build information\n" +
+		"─────────────────\n" +
+		"  Version : " + version + "\n" +
+		"  Source  : https://github.com/demicloud/net-sweep\n\n" +
+		"Command-line equivalent\n" +
+		"────────────────────────\n" +
+		"  net-sweep --version\n"
+
+	messageBox(parent, body, "Version — net-sweep", 0)
+}
+

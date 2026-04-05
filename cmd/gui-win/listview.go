@@ -1,13 +1,28 @@
 //go:build windows
 
-package main
+package guiwin
 
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/demicloud/net-sweep/internal/sweep"
+)
+
+// Column indices for the Hosts listview
+const (
+	colStatus   int32 = 0
+	colIP       int32 = 1
+	colHost     int32 = 2
+	colMAC      int32 = 3
+	colVendor   int32 = 4
+	colOS       int32 = 5
+	colLatency  int32 = 6
+	colPorts    int32 = 7
+	colBanner   int32 = 8
+	colServices int32 = 9
 )
 
 // listViewAddColumn inserts a left-aligned column at index idx.
@@ -34,37 +49,54 @@ func listViewInsertPendingRow(hwnd HWND, ip string) int32 {
 	if row < 0 {
 		return row
 	}
-	setSubItem(hwnd, row, 1, ip)
+	setSubItem(hwnd, row, colIP, ip)
 	return row
 }
 
 // listViewUpdateRow writes all result fields into an existing row.
-// Col 0 is the status indicator; col 1 is the IP (already set by InsertPendingRow).
 func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
 	status := "—"
 	if r.Alive {
-		status = "•"
+		status = "●"
 	}
-	setSubItem(hwnd, row, 0, status)
+	setSubItem(hwnd, row, colStatus, status)
 
 	if !r.Alive {
-		// Leave the remaining columns blank — host is down.
 		return
 	}
 
-	setSubItem(hwnd, row, 2, r.Hostname)
+	hostname := r.Hostname
+	if hostname == "" && r.NetBIOS != "" {
+		hostname = r.NetBIOS + " (NetBIOS)"
+	}
+	if hostname == "" {
+		hostname = "—"
+	}
+	setSubItem(hwnd, row, colHost, hostname)
 
 	mac := "—"
 	if r.MAC != nil {
 		mac = r.MAC.String()
 	}
-	setSubItem(hwnd, row, 3, mac)
+	setSubItem(hwnd, row, colMAC, mac)
 
 	vendor := r.Vendor
 	if vendor == "" {
 		vendor = "—"
 	}
-	setSubItem(hwnd, row, 4, vendor)
+	setSubItem(hwnd, row, colVendor, vendor)
+
+	osStr := string(r.OS)
+	if osStr == "" {
+		osStr = "—"
+	}
+	setSubItem(hwnd, row, colOS, osStr)
+
+	latency := "—"
+	if r.Latency > 0 {
+		latency = r.Latency.Round(time.Millisecond).String()
+	}
+	setSubItem(hwnd, row, colLatency, latency)
 
 	portStrs := make([]string, len(r.OpenPorts))
 	for i, p := range r.OpenPorts {
@@ -74,19 +106,32 @@ func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
 	if len(portStrs) > 0 {
 		portStr = strings.Join(portStrs, ", ")
 	}
-	setSubItem(hwnd, row, 5, portStr)
+	setSubItem(hwnd, row, colPorts, portStr)
 
-	snmp := ""
-	if r.SNMP != nil {
-		if r.SNMP.SysName != "" {
-			snmp = r.SNMP.SysName + ": "
+	// Banner column: SSH/HTTP/HTTPS/FTP/SMTP + SNMP identity
+	var bannerParts []string
+	for _, b := range []struct{ label, val string }{
+		{"SSH", r.Banner.SSH}, {"HTTP", r.Banner.HTTP}, {"HTTPS", r.Banner.HTTPS},
+		{"FTP", r.Banner.FTP}, {"SMTP", r.Banner.SMTP}, {"Telnet", r.Banner.Telnet},
+	} {
+		if b.val != "" {
+			bannerParts = append(bannerParts, b.label+": "+b.val)
 		}
-		snmp += r.SNMP.SysDescr
 	}
-	if snmp == "" {
-		snmp = "—"
+	if r.SNMP != nil {
+		snmpStr := r.SNMP.SysDescr
+		if r.SNMP.SysName != "" {
+			snmpStr = r.SNMP.SysName + ": " + snmpStr
+		}
+		if snmpStr != "" {
+			bannerParts = append(bannerParts, "SNMP: "+snmpStr)
+		}
 	}
-	setSubItem(hwnd, row, 6, snmp)
+	bannerStr := "—"
+	if len(bannerParts) > 0 {
+		bannerStr = strings.Join(bannerParts, "  |  ")
+	}
+	setSubItem(hwnd, row, colBanner, bannerStr)
 
 	var svcs []string
 	for _, s := range r.Services {
@@ -100,7 +145,7 @@ func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
 	if len(svcs) > 0 {
 		svcStr = strings.Join(svcs, "; ")
 	}
-	setSubItem(hwnd, row, 7, svcStr)
+	setSubItem(hwnd, row, colServices, svcStr)
 }
 
 // listViewAddBroadcastRow appends a single service entry to the Broadcast listview.

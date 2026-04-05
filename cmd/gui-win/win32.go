@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package guiwin
 
 import (
 	"syscall"
@@ -76,6 +76,7 @@ const (
 	// Custom messages
 	WM_SCAN_RESULT   = WM_APP + 1
 	WM_SCAN_COMPLETE = WM_APP + 2
+	WM_SCAN_STATS    = WM_APP + 3
 
 	// Control IDs
 	IDC_TARGET    = 101
@@ -87,10 +88,24 @@ const (
 	IDC_LIST_BCAST = 108
 
 	// Menu command IDs
-	IDM_FILE_EXIT    = 201
-	IDM_OPT_SETTINGS = 202
-	IDM_HELP_ABOUT   = 203
-	IDM_HELP_FAQ     = 204
+	IDM_FILE_EXIT        = 201
+	IDM_FILE_EXPORT_JSON = 205
+	IDM_FILE_EXPORT_CSV  = 206
+	IDM_OPT_SETTINGS     = 202
+	IDM_HELP_ABOUT       = 203
+	IDM_HELP_FAQ         = 204
+	IDM_HELP_VERSION     = 207
+
+	// Context menu command ID range (right-click actions)
+	IDM_CTX_OPEN_HTTP    = 3001
+	IDM_CTX_OPEN_HTTPS   = 3002
+	IDM_CTX_OPEN_SSH     = 3003
+	IDM_CTX_OPEN_RDP     = 3004
+	IDM_CTX_OPEN_FTP     = 3005
+	IDM_CTX_OPEN_TELNET  = 3006
+	IDM_CTX_OPEN_SMB     = 3007
+	IDM_CTX_PING         = 3010
+	IDM_CTX_PING_CONT    = 3011
 
 	// Null message (used to wake up a modal message loop)
 	WM_NULL = 0x0000
@@ -99,9 +114,27 @@ const (
 	MB_OK          = 0x00000000
 	MB_YESNO       = 0x00000004
 	MB_ICONWARNING = 0x00000030
+	MB_ICONQUESTION = 0x00000020
 
 	IDYES = 6
 	IDNO  = 7
+
+	// Owner-draw / custom-draw
+	NM_CUSTOMDRAW    = ^uint32(12) // -12 as uint32, matches NM_FIRST-12
+	CDDS_PREPAINT    = 0x00000001
+	CDDS_ITEMPREPAINT = 0x00010001
+	CDRF_DODEFAULT   = 0x00000000
+	CDRF_NOTIFYITEMDRAW = 0x00000020
+	CDRF_NEWFONT     = 0x00000002
+
+	// GDI
+	SRCCOPY      = 0x00CC0020
+	TRANSPARENT  = 1
+	OPAQUE       = 2
+
+	// File open dialog (GetSaveFileName)
+	OFN_OVERWRITEPROMPT = 0x00000002
+	OFN_PATHMUSTEXIST   = 0x00000800
 
 	// Token access
 	TOKEN_QUERY = 0x0008
@@ -132,7 +165,7 @@ const (
 	LVM_SETITEM                  = LVM_FIRST + 76 // LVM_SETITEMW     (NOT +6 which is ANSI)
 	LVM_DELETEALLITEMS           = LVM_FIRST + 9  // no ANSI/W split
 	LVM_SETEXTENDEDLISTVIEWSTYLE = LVM_FIRST + 54 // no ANSI/W split
-
+	LVM_HITTEST                  = LVM_FIRST + 18 // hit-test (no ANSI/W split)
 	// LVCOLUMN flags
 	LVCF_FMT   = 0x0001
 	LVCF_WIDTH = 0x0002
@@ -172,6 +205,16 @@ const (
 	MF_STRING    = 0x00000000
 	MF_POPUP     = 0x00000010
 	MF_SEPARATOR = 0x00000800
+	MF_GRAYED    = 0x00000001
+	MF_ENABLED   = 0x00000000
+
+	// Track popup menu flags
+	TPM_LEFTALIGN    = 0x0000
+	TPM_TOPALIGN     = 0x0000
+	TPM_RETURNCMD    = 0x0100
+
+	// NM_RCLICK notification
+	NM_RCLICK = ^uint32(5) // NM_FIRST - 5 = 0xFFFFFFFB
 
 	// Window styles (popup dialogs)
 	WS_POPUP        = 0x80000000
@@ -180,6 +223,7 @@ const (
 	// Extended window styles
 	WS_EX_DLGMODALFRAME = 0x00000001
 	WS_EX_CLIENTEDGE    = 0x00000200
+	WS_EX_TOPMOST       = 0x00000008
 
 	// ShowWindow extras
 	SW_SHOW = 5
@@ -282,6 +326,23 @@ type LVITEM struct {
 	LParam     uintptr
 }
 
+// NMLVCUSTOMDRAW is the structure sent with NM_CUSTOMDRAW for list views.
+// Layout: NMHDR (20 bytes) + NMCUSTOMDRAW fields + clrText + clrTextBk + iSubItem + dwItemType + clrFace + ...
+// We only need the parts up to clrTextBk.
+type NMLVCUSTOMDRAW struct {
+	Hdr         NMHDR
+	DwDrawStage uint32
+	Hdc         uintptr
+	Rc          RECT
+	DwItemSpec  uintptr
+	UItemState  uint32
+	_           [4]byte // pad
+	LItemlParam uintptr
+	ClrText     uint32
+	ClrTextBk   uint32
+	ISubItem    int32
+}
+
 // ---------------------------------------------------------------------------
 // DLL references
 // ---------------------------------------------------------------------------
@@ -323,9 +384,24 @@ var (
 	modShell32          = syscall.NewLazyDLL("shell32.dll")
 	procShellExecuteW   = modShell32.NewProc("ShellExecuteW")
 
+	// Context / tracked popup menus
+	procTrackPopupMenu  = modUser32.NewProc("TrackPopupMenu")
+	procGetCursorPos    = modUser32.NewProc("GetCursorPos")
+	procDestroyMenu     = modUser32.NewProc("DestroyMenu")
+	procScreenToClient  = modUser32.NewProc("ScreenToClient")
+
 	// GDI32
-	modGdi32          = syscall.NewLazyDLL("gdi32.dll")
-	procCreateFontW   = modGdi32.NewProc("CreateFontW")
+	modGdi32               = syscall.NewLazyDLL("gdi32.dll")
+	procCreateFontW        = modGdi32.NewProc("CreateFontW")
+	procCreateSolidBrush   = modGdi32.NewProc("CreateSolidBrush")
+	procDeleteObject       = modGdi32.NewProc("DeleteObject")
+	procSetBkColor         = modGdi32.NewProc("SetBkColor")
+	procSetTextColor       = modGdi32.NewProc("SetTextColor")
+	procSetBkMode          = modGdi32.NewProc("SetBkMode")
+
+	// Comdlg32 (save file dialog)
+	modComdlg32             = syscall.NewLazyDLL("comdlg32.dll")
+	procGetSaveFileNameW    = modComdlg32.NewProc("GetSaveFileNameW")
 
 	// Advapi32 (token/elevation)
 	modAdvapi32             = syscall.NewLazyDLL("advapi32.dll")
@@ -341,6 +417,11 @@ var (
 	procCreateIconFromResourceEx = modUser32.NewProc("CreateIconFromResourceEx")
 	procGetWindowRect            = modUser32.NewProc("GetWindowRect")
 	procDestroyWindow            = modUser32.NewProc("DestroyWindow")
+	procSetForegroundWindow      = modUser32.NewProc("SetForegroundWindow")
+	procSetFocus                 = modUser32.NewProc("SetFocus")
+	procIsWindow                 = modUser32.NewProc("IsWindow")
+	procIsChild                  = modUser32.NewProc("IsChild")
+	procGetConsoleWindow         = modKernel32.NewProc("GetConsoleWindow")
 
 	procInitCommonControlsEx    = modComctl32.NewProc("InitCommonControlsEx")
 	procCreateStatusWindowW     = modComctl32.NewProc("CreateStatusWindowW")
@@ -567,6 +648,29 @@ func drawMenuBar(hwnd HWND) {
 	procDrawMenuBar.Call(uintptr(hwnd))
 }
 
+// trackPopupMenu displays a context menu at (x,y) in screen coordinates.
+// If TPM_RETURNCMD is set, returns the selected command ID (0 = cancelled).
+func trackPopupMenu(menu HMENU, flags uint32, x, y int32, hwnd HWND) int32 {
+	r, _, _ := procTrackPopupMenu.Call(
+		uintptr(menu), uintptr(flags),
+		uintptr(x), uintptr(y),
+		0, uintptr(hwnd), 0,
+	)
+	return int32(r)
+}
+
+// getCursorPos fills pt with the current cursor screen position.
+func getCursorPos() POINT {
+	var pt POINT
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+	return pt
+}
+
+// destroyMenu frees a menu created with createPopupMenu.
+func destroyMenu(menu HMENU) {
+	procDestroyMenu.Call(uintptr(menu))
+}
+
 // shellExecute opens a file or URL using the shell. Use op="open", SW_SHOW for show.
 func shellExecute(hwnd HWND, op, file, params, dir string, show int32) {
 	opPtr, _ := syscall.UTF16PtrFromString(op)
@@ -637,4 +741,137 @@ func insertTab(hwnd HWND, idx int32, text string) {
 	}
 	sendMessage(hwnd, TCM_INSERTITEM, uintptr(idx), uintptr(unsafe.Pointer(&item)))
 	_ = textPtr // keep alive through syscall
+}
+
+// createSolidBrush creates a GDI brush for the given COLORREF (0x00BBGGRR).
+func createSolidBrush(color uint32) HBRUSH {
+	r, _, _ := procCreateSolidBrush.Call(uintptr(color))
+	return HBRUSH(r)
+}
+
+// deleteObject releases a GDI object (brush, pen, font, bitmap, …).
+func deleteObject(obj uintptr) {
+	procDeleteObject.Call(obj)
+}
+
+// setTextColor sets the foreground colour for text on hdc. Returns old value.
+func setTextColor(hdc uintptr, color uint32) uint32 {
+	r, _, _ := procSetTextColor.Call(hdc, uintptr(color))
+	return uint32(r)
+}
+
+// setBkColor sets the background colour for text on hdc. Returns old value.
+func setBkColor(hdc uintptr, color uint32) uint32 {
+	r, _, _ := procSetBkColor.Call(hdc, uintptr(color))
+	return uint32(r)
+}
+
+// setBkMode sets the background mix mode (TRANSPARENT=1, OPAQUE=2).
+func setBkMode(hdc uintptr, mode int32) {
+	procSetBkMode.Call(hdc, uintptr(mode))
+}
+
+// LVHITTESTINFO is passed to LVM_HITTEST to find which item is at a given point
+// (in list-view client coordinates).
+type LVHITTESTINFO struct {
+	Pt       POINT
+	Flags    uint32
+	IItem    int32
+	ISubItem int32
+	IGroup   int32
+}
+
+// OPENFILENAME is the structure passed to GetSaveFileNameW.
+// Only the fields we use are populated; the rest stay zero.
+type OPENFILENAME struct {
+	LStructSize     uint32
+	HwndOwner       HWND
+	_               uintptr // hInstance
+	LpstrFilter     *uint16
+	LpstrCustomFilter *uint16
+	NMaxCustFilter  uint32
+	NFilterIndex    uint32
+	LpstrFile       *uint16
+	NMaxFile        uint32
+	LpstrFileTitle  *uint16
+	NMaxFileTitle   uint32
+	LpstrInitialDir *uint16
+	LpstrTitle      *uint16
+	Flags           uint32
+	NFileOffset     uint16
+	NFileExtension  uint16
+	LpstrDefExt     *uint16
+	LCustData       uintptr
+	LpfnHook        uintptr
+	LpTemplateName  *uint16
+	PvReserved      uintptr
+	DwReserved      uint32
+	FlagsEx         uint32
+}
+
+// getSaveFileName shows a "Save As" dialog. Returns the chosen path or "".
+func getSaveFileName(owner HWND, title, defExt, filter string) string {
+	buf := make([]uint16, 1024)
+	titlePtr, _ := syscall.UTF16PtrFromString(title)
+	extPtr, _ := syscall.UTF16PtrFromString(defExt)
+	// filter is double-null-terminated: "JSON files\0*.json\0\0"
+	filterRunes := syscall.StringToUTF16(filter)
+	// Replace | with null byte (caller uses | as separator)
+	for i, c := range filterRunes {
+		if c == '|' {
+			filterRunes[i] = 0
+		}
+	}
+
+	ofn := OPENFILENAME{
+		LStructSize: uint32(unsafe.Sizeof(OPENFILENAME{})),
+		HwndOwner:   owner,
+		LpstrFilter: &filterRunes[0],
+		LpstrFile:   &buf[0],
+		NMaxFile:    uint32(len(buf)),
+		LpstrTitle:  titlePtr,
+		LpstrDefExt: extPtr,
+		Flags:       OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+	}
+	r, _, _ := procGetSaveFileNameW.Call(uintptr(unsafe.Pointer(&ofn)))
+	if r == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf)
+}
+
+func setForegroundWindow(hwnd HWND) {
+	procSetForegroundWindow.Call(uintptr(hwnd))
+}
+
+func setFocus(hwnd HWND) {
+	procSetFocus.Call(uintptr(hwnd))
+}
+
+func isWindow(hwnd HWND) bool {
+	r, _, _ := procIsWindow.Call(uintptr(hwnd))
+	return r != 0
+}
+
+func isChild(parent, hwnd HWND) bool {
+	r, _, _ := procIsChild.Call(uintptr(parent), uintptr(hwnd))
+	return r != 0
+}
+
+func getConsoleWindow() HWND {
+	r, _, _ := procGetConsoleWindow.Call()
+	return HWND(r)
+}
+
+// createMonoFont creates a Consolas 9pt font for fixed-width text areas.
+func createMonoFont() HFONT {
+	face, _ := syscall.UTF16PtrFromString("Consolas")
+	height := int32(-12) // 9pt at 96 DPI
+	r, _, _ := procCreateFontW.Call(
+		uintptr(height),
+		0, 0, 0, FW_NORMAL, 0, 0, 0, 0, 0, 0,
+		CLEARTYPE_QUALITY, 0,
+		uintptr(unsafe.Pointer(face)),
+	)
+	return HFONT(r)
 }
