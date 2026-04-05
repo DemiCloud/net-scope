@@ -78,6 +78,7 @@ const (
 	WM_SCAN_COMPLETE = WM_APP + 2
 	WM_SCAN_STATS    = WM_APP + 3
 	WM_BCAST_SVC     = WM_APP + 4 // background broadcast: single ServiceInfo arrived
+	WM_FIRST_RUN     = WM_APP + 5 // posted to trigger first-run settings dialog
 
 	// Control IDs
 	IDC_TARGET    = 101
@@ -113,6 +114,8 @@ const (
 	IDM_CTX_COPY_MAC     = 3021
 	IDM_CTX_COPY_HOST    = 3022
 	IDM_CTX_COPY_ROW     = 3023
+	IDM_BCAST_COPY_ROW   = 3030
+	IDM_BCAST_COPY_IP    = 3031
 
 	// Null message (used to wake up a modal message loop)
 	WM_NULL = 0x0000
@@ -175,6 +178,7 @@ const (
 	LVM_DELETEALLITEMS           = LVM_FIRST + 9  // no ANSI/W split
 	LVM_SETEXTENDEDLISTVIEWSTYLE = LVM_FIRST + 54 // no ANSI/W split
 	LVM_HITTEST                  = LVM_FIRST + 18 // hit-test (no ANSI/W split)
+	LVM_GETITEMTEXT              = LVM_FIRST + 115 // LVM_GETITEMTEXTW
 	// LVCOLUMN flags
 	LVCF_FMT   = 0x0001
 	LVCF_WIDTH = 0x0002

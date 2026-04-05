@@ -121,6 +121,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	switch uint32(msg) {
 	case WM_CREATE:
 		createControls(HWND(hwnd))
+		if noConfigFile {
+			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
+		}
 		startBroadcastListener()
 		return 0
 
@@ -158,6 +161,28 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if row >= 0 {
 				if r, ok := rowResultMap[row]; ok {
 					showHostContextMenu(HWND(hwnd), r, pt.X, pt.Y)
+				}
+			}
+			return 0
+		}
+		// Right-click on broadcast list → simple copy menu.
+		if hdr.IdFrom == IDC_LIST_BCAST && hdr.Code == NM_RCLICK {
+			pt := getCursorPos()
+			cpt := POINT{X: pt.X, Y: pt.Y}
+			procScreenToClient.Call(uintptr(hwndListBroadcast), uintptr(unsafe.Pointer(&cpt)))
+			htInfo := LVHITTESTINFO{Pt: cpt}
+			row := int32(sendMessage(hwndListBroadcast, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo))))
+			if row >= 0 {
+				menu := createPopupMenu()
+				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_IP, "Copy IP")
+				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_ROW, "Copy full row (tab-separated)")
+				cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
+				destroyMenu(menu)
+				switch cmd {
+				case IDM_BCAST_COPY_IP:
+					copyToClipboard(HWND(hwnd), listViewGetCellText(hwndListBroadcast, row, 0))
+				case IDM_BCAST_COPY_ROW:
+					copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndListBroadcast, row, 5))
 				}
 			}
 			return 0
@@ -211,6 +236,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				shellExecute(HWND(hwnd), "open", "notepad.exe", path, "", SW_SHOW)
 			}
 		}
+		return 0
+
+	case WM_FIRST_RUN:
+		// No config file was found at startup — show settings so the user
+		// can review defaults and optionally save a config file.
+		showSettingsDialog(HWND(hwnd))
 		return 0
 
 	case WM_BCAST_SVC:

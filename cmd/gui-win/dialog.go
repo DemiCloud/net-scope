@@ -142,7 +142,7 @@ func showSettingsDialog(parent HWND) {
 	if cfgPath != "" {
 		titleSuffix = "Editing: " + cfgPath
 	} else {
-		titleSuffix = "Runtime (no config file — changes apply this session only)"
+		titleSuffix = "First Run — settings apply this session; use OK to save"
 	}
 
 	const dlgW, dlgH int32 = 560, 400
@@ -245,8 +245,9 @@ func createSettingsControls(hwnd HWND) {
 		392, btnY, 78, 26, hwnd, idSettCancel, inst)
 }
 
-// applySettings reads, validates, and saves the dialog values.
-// Returns true on success (dialog may close), false on validation error.
+// applySettings reads and validates the dialog values, applies them to memory,
+// and saves to the config file if one was loaded at startup.
+// Returns true if values were valid (dialog should close).
 func applySettings(hwnd HWND) bool {
 	timeout := strings.TrimSpace(getWindowText(hwndSettTimeout))
 	concurStr := strings.TrimSpace(getWindowText(hwndSettConcur))
@@ -304,17 +305,16 @@ func applySettings(hwnd HWND) bool {
 		},
 	}
 
-	savePath := chooseConfigSavePath(hwnd)
-	if savePath == "" {
-		// User chose "Neither" — don't save, but still apply in-memory.
-		appConfig = cfg
-		return true
+	appConfig = cfg // always apply in-memory
+
+	// Save back to the same file if one was loaded; otherwise memory-only.
+	_, cfgPath, _ := config.Load()
+	if cfgPath != "" {
+		if err := config.SaveTo(cfg, cfgPath); err != nil {
+			messageBox(hwnd, "Could not save settings:\n"+err.Error(), "Error", 0)
+			return false
+		}
 	}
-	if err := config.SaveTo(cfg, savePath); err != nil {
-		messageBox(hwnd, "Could not save settings:\n"+err.Error(), "Error", 0)
-		return false
-	}
-	appConfig = cfg
 	return true
 }
 

@@ -58,6 +58,10 @@ type ScanConfig struct {
 
 	// NetBIOS enables NetBIOS Name Service queries (UDP 137) for Windows host names.
 	NetBIOS bool `toml:"netbios"`
+
+	// DefaultTarget is pre-filled in the GUI target box on startup.
+	// Example: "192.168.1.0/24"
+	DefaultTarget string `toml:"default_target"`
 }
 
 // Default returns the built-in defaults. Used when no config file exists

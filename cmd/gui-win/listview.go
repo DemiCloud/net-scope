@@ -5,6 +5,7 @@ package guiwin
 import (
 	"fmt"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -176,4 +177,25 @@ func setSubItem(hwnd HWND, row, col int32, text string) {
 		PszText:  t,
 	}
 	sendMessage(hwnd, LVM_SETITEM, 0, uintptr(unsafe.Pointer(&item)))
+}
+
+// listViewGetCellText reads the text of a single cell via LVM_GETITEMTEXT.
+func listViewGetCellText(hwnd HWND, row, col int32) string {
+	buf := make([]uint16, 512)
+	item := LVITEM{
+		ISubItem: col,
+		PszText:  &buf[0],
+		CchTextMax: int32(len(buf)),
+	}
+	sendMessage(hwnd, LVM_GETITEMTEXT, uintptr(row), uintptr(unsafe.Pointer(&item)))
+	return syscall.UTF16ToString(buf)
+}
+
+// listViewGetRowTSV returns all visible columns of a row as a tab-separated string.
+func listViewGetRowTSV(hwnd HWND, row, numCols int32) string {
+	parts := make([]string, numCols)
+	for c := int32(0); c < numCols; c++ {
+		parts[c] = listViewGetCellText(hwnd, row, c)
+	}
+	return strings.Join(parts, "\t")
 }

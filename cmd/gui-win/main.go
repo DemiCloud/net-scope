@@ -17,15 +17,13 @@ var initialTarget string
 // appConfig is loaded once at startup and used to populate UI defaults.
 var appConfig config.Config
 
+// noConfigFile is true when no config file was found at startup.
+var noConfigFile bool
+
 // Run starts the GUI. v is the version string; target is the initial scan target.
 // Must be called from the main goroutine (LockOSThread is called internally).
 func Run(v, target string) {
 	version = v
-	if target != "" {
-		initialTarget = target
-	} else {
-		initialTarget = "192.168.1.0/24"
-	}
 
 	// Win32 windows have thread affinity: the message loop must run on the
 	// same OS thread that created the window.
@@ -45,12 +43,22 @@ func Run(v, target string) {
 
 	sweep.InitVendorDB()
 
-	var err error
-	appConfig, _, err = config.Load()
-	if err != nil {
-		// Non-fatal — defaults will be used.
-		_ = err
+	var cfgPath string
+	var cfgErr error
+	appConfig, cfgPath, cfgErr = config.Load()
+	if cfgErr != nil {
+		_ = cfgErr // non-fatal, defaults used
 	}
+	noConfigFile = (cfgPath == "")
+
+	if target != "" {
+		initialTarget = target
+	} else if appConfig.Scan.DefaultTarget != "" {
+		initialTarget = appConfig.Scan.DefaultTarget
+	} else {
+		initialTarget = "192.168.1.0/24"
+	}
+	_ = cfgPath // used later in settings dialog
 
 	initCommonControls()
 
