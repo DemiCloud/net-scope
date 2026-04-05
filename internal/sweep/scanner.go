@@ -340,7 +340,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.NetBIOS = probeNetBIOS(ip, s.Config.Timeout)
+			r.NetBIOS = ProbeNetBIOS(ip, s.Config.Timeout)
 		}()
 	}
 

@@ -97,6 +97,7 @@ const (
 	WM_SERVICE_UP    = WM_APP + 6 // sweep service connected and ready
 	WM_SERVICE_DOWN  = WM_APP + 7 // sweep service disconnected
 	WM_DHCP_EVENT    = WM_APP + 8 // DHCP packet observed by elevated service
+	WM_HOST_ENRICH   = WM_APP + 9 // background enrichment: NetBIOS name or ARP MAC arrived
 
 	// Control IDs
 	IDC_TARGET       = 101

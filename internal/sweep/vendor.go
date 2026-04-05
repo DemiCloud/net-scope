@@ -117,8 +117,13 @@ func DownloadOUIDB(dataDir string) (string, error) {
 	return dest, nil
 }
 
-// lookupVendor returns the IEEE OUI vendor name for a MAC address.
+// LookupVendor returns the IEEE OUI vendor name for a MAC address.
 // Returns "" immediately if the DB isn't loaded yet — it never blocks.
+func LookupVendor(mac net.HardwareAddr) string {
+	return lookupVendor(mac)
+}
+
+// lookupVendor is the unexported implementation called from within the package.
 func lookupVendor(mac net.HardwareAddr) string {
 	if len(mac) < 3 {
 		return ""

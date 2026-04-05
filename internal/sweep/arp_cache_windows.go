@@ -106,3 +106,47 @@ func sendARPRequest(target uint32) net.HardwareAddr {
 	copy(mac, (*[8]byte)(unsafe.Pointer(&macBuf[0]))[:6])
 	return mac
 }
+
+// ReadARPTable returns a snapshot of the Windows ARP neighbour table as
+// IPv4-string → MAC. Only valid (type 3 dynamic, type 4 static) Ethernet
+// entries are included. Returns nil on any error.
+func ReadARPTable() map[string]net.HardwareAddr {
+	var size uint32
+	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
+	const errInsufficientBuffer = 122
+	if r != 0 && r != errInsufficientBuffer {
+		return nil
+	}
+	if size == 0 {
+		return nil
+	}
+	buf := make([]byte, size)
+	r, _, _ = procGetIpNetTable.Call(
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+	)
+	if r != 0 {
+		return nil
+	}
+	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
+	rowSize := unsafe.Sizeof(mibIPNetRow{})
+	out := make(map[string]net.HardwareAddr, numEntries)
+	for i := uint32(0); i < numEntries; i++ {
+		off := uintptr(4) + uintptr(i)*rowSize
+		if off+rowSize > uintptr(len(buf)) {
+			break
+		}
+		row := (*mibIPNetRow)(unsafe.Pointer(&buf[off]))
+		// Skip invalid entries and non-Ethernet MACs.
+		if row.Type == 2 || row.PhysAddrLen != 6 {
+			continue
+		}
+		// Addr is in LE uint32: bytes in memory are network order.
+		ip := net.IP{byte(row.Addr), byte(row.Addr >> 8), byte(row.Addr >> 16), byte(row.Addr >> 24)}
+		mac := make(net.HardwareAddr, 6)
+		copy(mac, row.PhysAddr[:6])
+		out[ip.String()] = mac
+	}
+	return out
+}

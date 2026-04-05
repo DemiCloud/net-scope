@@ -12,10 +12,10 @@ const (
 	netbiosTimeout = 2 * time.Second
 )
 
-// probeNetBIOS queries a host's NetBIOS Name Service (UDP 137) and returns
+// ProbeNetBIOS queries a host's NetBIOS Name Service (UDP 137) and returns
 // the workstation or server name, or "" if the host doesn't respond.
 // This is a read-only query — equivalent to the `nbtstat -A` command.
-func probeNetBIOS(ip net.IP, timeout time.Duration) string {
+func ProbeNetBIOS(ip net.IP, timeout time.Duration) string {
 	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip, Port: netbiosPort})
 	if err != nil {
 		return ""

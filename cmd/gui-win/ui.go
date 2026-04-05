@@ -5,6 +5,7 @@ package guiwin
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -99,7 +100,22 @@ var (
 	// DHCP event queue: service goroutine appends, UI thread reads via WM_DHCP_EVENT.
 	pendingDHCP   []sweep.DHCPEvent
 	pendingDHCPMu sync.Mutex
+
+	// Host enrichment queue: background goroutines append NetBIOS names / ARP MACs
+	// for existing Hosts rows; UI thread processes via WM_HOST_ENRICH.
+	pendingEnriches []enrichEvent
+	pendingEnrichMu sync.Mutex
+
+	// arpPollCancel cancels the periodic ARP table polling goroutine.
+	arpPollCancel context.CancelFunc
 )
+
+// enrichEvent carries a NetBIOS name and/or MAC for an existing Hosts row.
+type enrichEvent struct {
+	ip      string
+	netbios string
+	mac     net.HardwareAddr
+}
 
 type bcastEntry struct {
 	ip  string
@@ -135,6 +151,61 @@ func stopBroadcastListener() {
 	if bcastCancel != nil {
 		bcastCancel()
 		bcastCancel = nil
+	}
+}
+
+// kickNetBIOSProbe sends a unicast NetBIOS NAME_STATUS query to ip in the
+// background. On success, WM_HOST_ENRICH is posted to update the Hosts row.
+func kickNetBIOSProbe(hwnd HWND, ip string) {
+	go func() {
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			return
+		}
+		name := sweep.ProbeNetBIOS(parsed, 2*time.Second)
+		if name == "" {
+			return
+		}
+		pendingEnrichMu.Lock()
+		idx := len(pendingEnriches)
+		pendingEnriches = append(pendingEnriches, enrichEvent{ip: ip, netbios: name})
+		pendingEnrichMu.Unlock()
+		postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+	}()
+}
+
+// startARPPoll begins a background goroutine that reads the Windows ARP table
+// every 5 s and posts WM_HOST_ENRICH for each entry. The UI thread skips
+// entries for unknown IPs and rows that already have a MAC.
+func startARPPoll(hwnd HWND) {
+	stopARPPoll()
+	ctx, cancel := context.WithCancel(context.Background())
+	arpPollCancel = cancel
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				for ip, mac := range sweep.ReadARPTable() {
+					macCopy := mac
+					pendingEnrichMu.Lock()
+					idx := len(pendingEnriches)
+					pendingEnriches = append(pendingEnriches, enrichEvent{ip: ip, mac: macCopy})
+					pendingEnrichMu.Unlock()
+					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+				}
+			}
+		}
+	}()
+}
+
+func stopARPPoll() {
+	if arpPollCancel != nil {
+		arpPollCancel()
+		arpPollCancel = nil
 	}
 }
 
@@ -224,6 +295,34 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingDHCPMu.Unlock()
 		listViewAddDHCPRow(hwndListDHCP, evt)
+		// Cross-enrich the Hosts tab: if the DHCP IP matches a scanned row,
+		// fill in hostname (opt 12) and/or MAC (chaddr) if currently blank.
+		enrichIP := evt.OfferedIP
+		if enrichIP == "" || enrichIP == "0.0.0.0" {
+			enrichIP = evt.ClientIP
+		}
+		if enrichIP != "" && enrichIP != "0.0.0.0" {
+			if _, inHosts := ipRowMap[enrichIP]; inHosts {
+				var parsedMAC net.HardwareAddr
+				if evt.ClientMAC != "" {
+					parsedMAC, _ = net.ParseMAC(evt.ClientMAC)
+				}
+				if evt.Hostname != "" || parsedMAC != nil {
+					pendingEnrichMu.Lock()
+					idx := len(pendingEnriches)
+					pendingEnriches = append(pendingEnriches, enrichEvent{
+						ip:      enrichIP,
+						netbios: evt.Hostname,
+						mac:     parsedMAC,
+					})
+					pendingEnrichMu.Unlock()
+					postMessage(HWND(hwnd), WM_HOST_ENRICH, uintptr(idx), 0)
+				}
+				if evt.Hostname == "" {
+					kickNetBIOSProbe(HWND(hwnd), enrichIP)
+				}
+			}
+		}
 		return 0
 
 	case WM_CREATE:
@@ -495,6 +594,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndListPlaceholder, SW_HIDE)
 			}
 			setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
+			// Broadcast-only hosts skip per-host probing; request enrichment.
+			if r.Hostname == "" && r.NetBIOS == "" {
+				kickNetBIOSProbe(HWND(hwnd), ipStr)
+			}
 		}
 
 		// Mirror any services to the appropriate broadcast tab.
@@ -527,12 +630,58 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		stats := lastStats
 		pendingMu.Unlock()
 		updateHealthTab(stats)
+		startARPPoll(HWND(hwnd))
+		return 0
+
+	case WM_HOST_ENRICH:
+		pendingEnrichMu.Lock()
+		var e enrichEvent
+		if int(wParam) < len(pendingEnriches) {
+			e = pendingEnriches[int(wParam)]
+		}
+		pendingEnrichMu.Unlock()
+		if e.ip == "" {
+			return 0
+		}
+		row, ok := ipRowMap[e.ip]
+		if !ok {
+			return 0
+		}
+		if e.netbios != "" {
+			cur := listViewGetCellText(hwndList, row, colHost)
+			if cur == "\u2014" || cur == "" {
+				setSubItem(hwndList, row, colHost, e.netbios+" (NetBIOS)")
+				if r, ok2 := rowResultMap[row]; ok2 {
+					r.NetBIOS = e.netbios
+					rowResultMap[row] = r
+				}
+			}
+		}
+		if e.mac != nil {
+			cur := listViewGetCellText(hwndList, row, colMAC)
+			if cur == "\u2014" || cur == "" {
+				setSubItem(hwndList, row, colMAC, e.mac.String())
+				if vendor := sweep.LookupVendor(e.mac); vendor != "" {
+					if vc := listViewGetCellText(hwndList, row, colVendor); vc == "\u2014" || vc == "" {
+						setSubItem(hwndList, row, colVendor, vendor)
+					}
+				}
+				if r, ok2 := rowResultMap[row]; ok2 {
+					r.MAC = e.mac
+					if r.Vendor == "" {
+						r.Vendor = sweep.LookupVendor(e.mac)
+					}
+					rowResultMap[row] = r
+				}
+			}
+		}
 		return 0
 
 	case WM_DESTROY:
 		stopScan()
 		stopService()
 		stopBroadcastListener()
+		stopARPPoll()
 		postQuitMessage(0)
 		return 0
 	}
