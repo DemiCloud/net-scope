@@ -1,6 +1,7 @@
 # Project metadata
 NAME    := net-sweep
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+OUI_URL := https://maclookup.app/downloads/json-database/get-db?version=latest
 
 # Linker flags
 DEV_LDFLAGS     := -X main.version=$(VERSION)
@@ -21,15 +22,25 @@ help: ## Show this help
 
 ## ── Platform targets (dev builds, unstripped) ────────────────────────────────
 
-linux: ## Build unified binary for linux/amd64 → build/
+linux: fetch-oui ## Build unified binary for linux/amd64 → build/
 	mkdir -p build
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
 		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-sweep
 
-windows: gen-resources ## Cross-compile unified binary for windows/amd64 → build/
+windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd64 → build/
 	mkdir -p build
 	GOOS=windows GOARCH=amd64 go build \
 		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-sweep
+
+fetch-oui: ## Download OUI JSON database for embedding (requires internet)
+	@if [ ! -f internal/sweep/oui.json ]; then \
+		echo "Fetching OUI database…"; \
+		curl -fsSL --max-time 60 '$(OUI_URL)' -o internal/sweep/oui.json \
+			&& echo "OUI: $$(wc -c < internal/sweep/oui.json) bytes" \
+			|| (echo "OUI download failed — build will use stale/missing data"; exit 1); \
+	else \
+		echo "OUI: using cached internal/sweep/oui.json"; \
+	fi
 
 gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
 	go run ./cmd/gen-ico/ -o cmd/gui-win/icon.ico
@@ -76,3 +87,7 @@ release: clean ## Build all platforms stripped → dist/ + checksums.txt
 
 clean: ## Remove build/ and dist/
 	rm -rf build dist
+
+refresh-oui: ## Force re-download of OUI database (ignores cached file)
+	rm -f internal/sweep/oui.json
+	$(MAKE) fetch-oui

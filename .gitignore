@@ -2,6 +2,9 @@
 /build/
 /bin/
 
+# Downloaded data files (fetched at build time, not tracked)
+internal/sweep/oui.json
+
 # Claude Code local settings
 .claude/
 

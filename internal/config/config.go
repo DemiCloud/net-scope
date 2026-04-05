@@ -150,6 +150,17 @@ func userConfigPath() (string, error) {
 	return filepath.Join(dir, "demicloud", "net-sweep", File), nil
 }
 
+// DataDir returns the directory where per-user data files (e.g. oui.json) are
+// stored — the same directory as the config file. Returns "" if the directory
+// cannot be determined.
+func DataDir() string {
+	p, err := userConfigPath()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(p)
+}
+
 func loadFile(path string) (Config, error) {
 	cfg := Default()
 	_, err := toml.DecodeFile(path, &cfg)

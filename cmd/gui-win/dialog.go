@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/demicloud/net-sweep/internal/config"
+	"github.com/demicloud/net-sweep/internal/sweep"
 )
 
 // ---------------------------------------------------------------------------
@@ -654,5 +655,143 @@ func showVersionDialog(parent HWND) {
 		"  net-sweep --version\n"
 
 	messageBox(parent, body, "Version — net-sweep", 0)
+}
+
+// ---------------------------------------------------------------------------
+// Databases Dialog  (Options > Databases…)
+// ---------------------------------------------------------------------------
+
+const (
+	idDBClose      = 701
+	idDBDownload   = 702
+	idDBStatusText = 703
+)
+
+var (
+	hwndDBStatus    HWND
+	hwndDBDownload  HWND
+	registerDatabasesOnce sync.Once
+)
+
+var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		createDatabasesControls(HWND(hwnd))
+		return 0
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idDBDownload:
+			setWindowText(hwndDBStatus, "Downloading… this may take up to 60 seconds.")
+			enableWindow(hwndDBDownload, false)
+			parent := HWND(hwnd)
+			go func() {
+				dataDir := config.DataDir()
+				_, err := sweep.DownloadOUIDB(dataDir)
+				if err != nil {
+					postMessage(parent, WM_APP+20, 0, 0) // failure
+				} else {
+					postMessage(parent, WM_APP+21, 0, 0) // success
+				}
+			}()
+		case idDBClose:
+			closeModal(HWND(hwnd))
+		}
+		return 0
+	case WM_APP + 20: // download failed
+		setWindowText(hwndDBStatus, "Download failed — check your internet connection and try again.")
+		return 0
+	case WM_APP + 21: // download succeeded
+		dataDir := config.DataDir()
+		setWindowText(hwndDBStatus, sweep.OUIStatus(dataDir))
+		return 0
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+func ensureDatabasesClass() {
+	registerDatabasesOnce.Do(func() {
+		cn := utf16("NetSweepDatabases")
+		wc := WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
+			LpfnWndProc:   databasesWndProc,
+			HInstance:     getModuleHandle(),
+			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HCursor:       loadCursor(IDC_ARROW),
+			LpszClassName: cn,
+		}
+		registerClassEx(&wc)
+	})
+}
+
+func showDatabasesDialog(parent HWND) {
+	ensureDatabasesClass()
+	const dlgW, dlgH int32 = 540, 260
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepDatabases", "Databases",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+
+	// Populate the OUI status now that the HWND exists.
+	dataDir := config.DataDir()
+	setWindowText(hwndDBStatus, sweep.OUIStatus(dataDir))
+
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
+}
+
+func createDatabasesControls(hwnd HWND) {
+	inst := getModuleHandle()
+	const lx int32 = 14
+	const cw int32 = 512
+
+	y := int32(14)
+
+	// ── Section: MAC Vendor (OUI) Database ──────────────────────────────────
+	createCtrl("STATIC", "MAC Vendor (OUI) Database",
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 18, hwnd, 0, inst)
+	y += 22
+
+	createCtrl("STATIC",
+		"Maps MAC address prefixes to manufacturer names. Used in the Hosts tab Vendor column.",
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 18, hwnd, 0, inst)
+	y += 24
+
+	// Status line
+	hwndDBStatus, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "Checking…",
+		WS_CHILD|WS_VISIBLE|ES_READONLY|ES_AUTOHSCROLL,
+		lx, y, cw, 22, hwnd, idDBStatusText, inst)
+	y += 32
+
+	// Data directory info
+	dataDir := config.DataDir()
+	dirLabel := "Data directory: " + dataDir
+	createCtrl("STATIC", dirLabel,
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 18, hwnd, 0, inst)
+	y += 28
+
+	createCtrl("STATIC",
+		"Download a fresh copy from maclookup.app (~7 MB). If the file exists it\r\n"+
+			"is used instead of the built-in data; delete it to revert to the built-in copy.",
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 34, hwnd, 0, inst)
+	y += 44
+
+	hwndDBDownload, _ = createWindowEx(0, "BUTTON", "Download updated database",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		lx, y, 200, 26, hwnd, idDBDownload, inst)
+
+	// ── Close button ────────────────────────────────────────────────────────
+	createCtrl("BUTTON", "Close",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		440, 220, 80, 26, hwnd, idDBClose, inst)
 }
 

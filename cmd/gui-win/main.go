@@ -41,7 +41,7 @@ func Run(v, target string) {
 		showWindow(hwndConsole, SW_HIDE)
 	}
 
-	sweep.InitVendorDB()
+	sweep.InitVendorDB(config.DataDir())
 
 	// Enable Per-Monitor V2 DPI awareness before any window is created.
 	// This ensures controls and fonts scale correctly on high-DPI monitors
@@ -113,6 +113,7 @@ func Run(v, target string) {
 
 	hOptions := createPopupMenu()
 	appendMenu(hOptions, MF_STRING, IDM_OPT_SETTINGS, "&Settings…")
+	appendMenu(hOptions, MF_STRING, IDM_OPT_DATABASES, "&Databases…")
 	appendMenu(hMenu, MF_POPUP, uintptr(hOptions), "&Options")
 
 	hHelp := createPopupMenu()

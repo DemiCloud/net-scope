@@ -318,6 +318,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			exportResults(HWND(hwnd), "csv")
 		case IDM_OPT_SETTINGS:
 			showSettingsDialog(HWND(hwnd))
+		case IDM_OPT_DATABASES:
+			showDatabasesDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_VERSION:

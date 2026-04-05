@@ -2,6 +2,7 @@ package sweep
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -14,8 +15,11 @@ import (
 )
 
 const (
-	ouiURL    = "https://standards-oui.ieee.org/oui/oui.txt"
-	ouiMaxAge = 30 * 24 * time.Hour
+	// OUIFileName is the name of the user-downloaded OUI file stored in DataDir.
+	OUIFileName = "oui.json"
+
+	// OUISourceURL is the default download source.
+	OUISourceURL = "https://maclookup.app/downloads/json-database/get-db?version=latest"
 )
 
 var (
@@ -23,21 +27,94 @@ var (
 	ouiMu    sync.RWMutex
 	ouiReady = make(chan struct{}) // closed when DB is loaded (or load has failed)
 	ouiOnce  sync.Once
+	ouiFrom  string // "embedded" or absolute path of the file used
 )
 
 // InitVendorDB starts loading the OUI database in the background.
-// Call this once at program startup. lookupVendor works without it
-// but will return "" until the DB is ready.
-func InitVendorDB() {
+// dataDir is the directory where a user-downloaded oui.json may exist.
+// Pass "" to use only the embedded data.
+func InitVendorDB(dataDir string) {
 	ouiOnce.Do(func() {
 		go func() {
 			defer close(ouiReady)
-			db := loadOUI()
+			db, from := loadOUI(dataDir)
 			ouiMu.Lock()
 			ouiDB = db
+			ouiFrom = from
 			ouiMu.Unlock()
 		}()
 	})
+}
+
+// OUIStatus returns a human-readable description of the loaded OUI database.
+// Blocks briefly if called before the DB has finished loading; returns immediately
+// if called after.
+func OUIStatus(dataDir string) string {
+	select {
+	case <-ouiReady:
+	case <-time.After(200 * time.Millisecond):
+		return "Loading…"
+	}
+	ouiMu.RLock()
+	n := len(ouiDB)
+	from := ouiFrom
+	ouiMu.RUnlock()
+
+	if n == 0 {
+		return "Not loaded"
+	}
+	if from == "embedded" {
+		return fmt.Sprintf("Embedded data — %d entries (built-in)", n)
+	}
+	// Show mod time of the user file.
+	info, err := os.Stat(from)
+	if err != nil {
+		return fmt.Sprintf("File: %s — %d entries", filepath.Base(from), n)
+	}
+	return fmt.Sprintf("File: %s — %d entries (updated %s)", filepath.Base(from), n, info.ModTime().Format("2006-01-02"))
+}
+
+// DownloadOUIDB downloads a fresh OUI database to dataDir/oui.json.
+// Returns the path written and any error.
+func DownloadOUIDB(dataDir string) (string, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return "", fmt.Errorf("create data dir: %w", err)
+	}
+	dest := filepath.Join(dataDir, OUIFileName)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(OUISourceURL)
+	if err != nil {
+		return "", fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("download: HTTP %d", resp.StatusCode)
+	}
+
+	tmp, err := os.CreateTemp(dataDir, "oui-*.json.tmp")
+	if err != nil {
+		return "", fmt.Errorf("temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write: %w", err)
+	}
+	tmp.Close()
+
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return "", fmt.Errorf("rename: %w", err)
+	}
+
+	// Reload the database from the new file.
+	ouiMu.Lock()
+	ouiDB, ouiFrom = parseOUIJSON(dest)
+	ouiMu.Unlock()
+
+	return dest, nil
 }
 
 // lookupVendor returns the IEEE OUI vendor name for a MAC address.
@@ -46,76 +123,66 @@ func lookupVendor(mac net.HardwareAddr) string {
 	if len(mac) < 3 {
 		return ""
 	}
-	// Non-blocking check: is the DB ready?
 	select {
 	case <-ouiReady:
 	default:
 		return ""
 	}
-	prefix := fmt.Sprintf("%02X-%02X-%02X", mac[0], mac[1], mac[2])
+	prefix := fmt.Sprintf("%02X:%02X:%02X", mac[0], mac[1], mac[2])
 	ouiMu.RLock()
 	v := ouiDB[prefix]
 	ouiMu.RUnlock()
 	return v
 }
 
-func loadOUI() map[string]string {
-	path := ouiCachePath()
-
-	// Fresh cache — parse and return immediately.
-	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < ouiMaxAge {
-		if db, err := parseOUIFile(path); err == nil {
-			return db
+func loadOUI(dataDir string) (map[string]string, string) {
+	// Prefer user-downloaded file if it exists.
+	if dataDir != "" {
+		p := filepath.Join(dataDir, OUIFileName)
+		if _, err := os.Stat(p); err == nil {
+			if db, from := parseOUIJSON(p); len(db) > 0 {
+				return db, from
+			}
 		}
 	}
+	// Fall back to embedded data.
+	return parseOUIJSONReader(strings.NewReader(string(embeddedOUI))), "embedded"
+}
 
-	// Download fresh copy.
-	if err := downloadOUI(path); err == nil {
-		if db, err := parseOUIFile(path); err == nil {
-			return db
+// ouiEntry matches the maclookup.app JSON schema.
+type ouiEntry struct {
+	MacPrefix  string `json:"macPrefix"`
+	VendorName string `json:"vendorName"`
+}
+
+func parseOUIJSON(path string) (map[string]string, string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, ""
+	}
+	defer f.Close()
+	return parseOUIJSONReader(f), path
+}
+
+func parseOUIJSONReader(r io.Reader) map[string]string {
+	var entries []ouiEntry
+	if err := json.NewDecoder(r).Decode(&entries); err != nil {
+		return nil
+	}
+	db := make(map[string]string, len(entries))
+	for _, e := range entries {
+		prefix := strings.ToUpper(e.MacPrefix)
+		if e.VendorName != "" {
+			db[prefix] = e.VendorName
 		}
 	}
-
-	// Fall back to stale cache if download failed.
-	db, _ := parseOUIFile(path)
 	return db
 }
 
-func ouiCachePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cache", "net-sweep", "oui.txt")
-}
+// ---------------------------------------------------------------------------
+// Legacy oui.txt parser — kept for user-supplied files in the old IEEE format.
+// ---------------------------------------------------------------------------
 
-func downloadOUI(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(ouiURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	tmp, err := os.CreateTemp(filepath.Dir(path), "oui-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		tmp.Close()
-		return err
-	}
-	tmp.Close()
-
-	return os.Rename(tmpPath, path)
-}
-
-// parseOUIFile parses the IEEE oui.txt format.
-// Relevant lines look like: "00-00-00   (hex)\t\tVENDOR NAME"
 func parseOUIFile(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -134,11 +201,14 @@ func parseOUIFile(path string) (map[string]string, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		prefix := strings.ToUpper(strings.TrimSpace(strings.Fields(parts[0])[0]))
+		// Convert XX-XX-XX → XX:XX:XX for uniform key format.
+		raw := strings.ToUpper(strings.TrimSpace(strings.Fields(parts[0])[0]))
+		prefix := strings.ReplaceAll(raw, "-", ":")
 		vendor := strings.TrimSpace(parts[1])
-		if len(prefix) == 8 { // XX-XX-XX
+		if len(prefix) == 8 {
 			db[prefix] = vendor
 		}
 	}
 	return db, scanner.Err()
 }
+
