@@ -140,6 +140,17 @@ func Run(v, target string) {
 			// Don't dispatch — we've handled it.
 			continue
 		}
+		// Enter in the target box → trigger Scan (or Stop if scanning).
+		if msg.Message == WM_KEYDOWN && msg.WParam == VK_RETURN &&
+			getFocus() == hwndTarget {
+			postMessage(hwndMain, WM_COMMAND, IDC_SCAN, 0)
+			continue
+		}
+		// Escape → stop an active scan.
+		if msg.Message == WM_KEYDOWN && msg.WParam == VK_ESCAPE && isScanning {
+			postMessage(hwndMain, WM_COMMAND, IDC_SCAN, 0)
+			continue
+		}
 		translateMessage(&msg)
 		dispatchMessage(&msg)
 	}
