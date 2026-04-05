@@ -25,15 +25,19 @@ type ServiceInfo struct {
 
 // Result holds everything discovered about a single host.
 type Result struct {
-	IP        net.IP
-	Alive     bool
-	MAC       net.HardwareAddr
-	Vendor    string // OUI vendor from MAC
-	OpenPorts []int
-	Hostname  string
-	Latency   time.Duration
-	SNMP      *SNMPInfo
-	Services  []ServiceInfo // mDNS, SSDP discoveries
+	IP          net.IP
+	Alive       bool
+	MAC         net.HardwareAddr
+	Vendor      string // OUI vendor from MAC
+	OpenPorts   []int
+	Hostname    string
+	NetBIOS     string    // NetBIOS workstation name (Windows hosts)
+	Latency     time.Duration
+	TTL         uint8     // ICMP TTL as received (0 = unknown)
+	OS          OSHint    // best-guess OS
+	Banner      BannerInfo // per-port service banners
+	SNMP        *SNMPInfo
+	Services    []ServiceInfo // mDNS, SSDP discoveries
 }
 
 // String returns a human-readable summary of the result.
@@ -51,6 +55,9 @@ func (r Result) String() string {
 		vendor = "-"
 	}
 	hostname := r.Hostname
+	if hostname == "" && r.NetBIOS != "" {
+		hostname = r.NetBIOS
+	}
 	if hostname == "" {
 		hostname = "-"
 	}
@@ -64,12 +71,28 @@ func (r Result) String() string {
 		portStr = strings.Join(ports, ",")
 	}
 
-	line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
-		r.IP, hostname, mac, vendor, portStr,
+	osStr := string(r.OS)
+	if osStr == "" {
+		osStr = "-"
+	}
+
+	line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s",
+		r.IP, hostname, mac, vendor, portStr, osStr,
 		r.Latency.Round(time.Millisecond))
 
 	if r.SNMP != nil && r.SNMP.SysDescr != "" {
 		line += "\t" + r.SNMP.SysDescr
+	}
+
+	// Append banner info if available
+	for _, b := range []struct{ label, val string }{
+		{"SSH", r.Banner.SSH}, {"FTP", r.Banner.FTP},
+		{"HTTP", r.Banner.HTTP}, {"HTTPS", r.Banner.HTTPS},
+		{"SMTP", r.Banner.SMTP}, {"Telnet", r.Banner.Telnet},
+	} {
+		if b.val != "" {
+			line += fmt.Sprintf("\t[%s] %s", b.label, b.val)
+		}
 	}
 
 	for _, svc := range r.Services {

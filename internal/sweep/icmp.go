@@ -13,17 +13,18 @@ import (
 
 const icmpv4Proto = 1
 
-// ping sends an ICMP echo request and returns latency + whether the host replied.
+// ping sends an ICMP echo request and returns (latency, ttl, alive).
+// ttl is 0 when using the unprivileged UDP fallback (TTL not accessible).
 // Tries privileged raw socket first; falls back to unprivileged UDP (requires
 // net.ipv4.ping_group_range sysctl on Linux, or run as root).
-func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration, bool) {
+func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration, uint8, bool) {
 	network := "ip4:icmp"
 	conn, err := icmp.ListenPacket(network, "0.0.0.0")
 	if err != nil {
 		network = "udp4"
 		conn, err = icmp.ListenPacket(network, "0.0.0.0")
 		if err != nil {
-			return 0, false
+			return 0, 0, false
 		}
 	}
 	defer conn.Close()
@@ -42,7 +43,7 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 	}
 	b, err := msg.Marshal(nil)
 	if err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -58,16 +59,40 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 		dst = &net.IPAddr{IP: ip}
 	}
 
+	// For the raw ip4:icmp socket, enable TTL reading via IPv4 control messages.
+	var p4 *ipv4.PacketConn
+	if network == "ip4:icmp" {
+		p4 = ipv4.NewPacketConn(conn)
+		_ = p4.SetControlMessage(ipv4.FlagTTL, true)
+	}
+
 	start := time.Now()
 	if _, err := conn.WriteTo(b, dst); err != nil {
-		return 0, false
+		return 0, 0, false
 	}
 
 	rb := make([]byte, 1500)
 	for {
-		n, peer, err := conn.ReadFrom(rb)
-		if err != nil {
-			return 0, false
+		var (
+			n    int
+			peer net.Addr
+			ttl  uint8
+		)
+
+		if p4 != nil {
+			var cm *ipv4.ControlMessage
+			n, cm, peer, err = p4.ReadFrom(rb)
+			if err != nil {
+				return 0, 0, false
+			}
+			if cm != nil {
+				ttl = uint8(cm.TTL)
+			}
+		} else {
+			n, peer, err = conn.ReadFrom(rb)
+			if err != nil {
+				return 0, 0, false
+			}
 		}
 
 		rm, err := icmp.ParseMessage(icmpv4Proto, rb[:n])
@@ -90,7 +115,8 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 			peerIP = a.IP
 		}
 		if peerIP != nil && peerIP.Equal(ip) {
-			return time.Since(start), true
+			return time.Since(start), ttl, true
 		}
 	}
 }
+

@@ -4,12 +4,37 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Scanner orchestrates host discovery and port scanning across a target range.
 type Scanner struct {
 	Config Config
+	// Stats accumulates probe counters during the scan; safe to read after
+	// the result channel is closed.
+	Stats ScanStats
+}
+
+// ScanStats tracks diagnostic counters for a single scan run.
+type ScanStats struct {
+	PacketsSent     int64
+	RepliesReceived int64
+	Timeouts        int64
+	LatencySum      int64 // nanoseconds, divide by RepliesReceived for average
+	// ARPAnomalies counts cases where the same IP appeared with different MACs
+	// in the ARP table during a single scan (possible duplicate or spoofing).
+	ARPAnomalies int64
+	// DNSFailures counts reverse-DNS lookup failures.
+	DNSFailures int64
+}
+
+// AvgLatencyMS returns the average probe round-trip in milliseconds, or 0.
+func (s *ScanStats) AvgLatencyMS() float64 {
+	if s.RepliesReceived == 0 {
+		return 0
+	}
+	return float64(s.LatencySum) / float64(s.RepliesReceived) / 1e6
 }
 
 // Config holds tunable parameters for a scan.
@@ -21,6 +46,8 @@ type Config struct {
 	SNMPCommunity   string // "" disables SNMP
 	Interface       string // "" = auto-detect from routing table
 	BroadcastListen time.Duration // how long to listen for mDNS/SSDP; 0 = disabled
+	BannerGrab      bool          // grab service banners from open ports
+	NetBIOS         bool          // query NetBIOS names (UDP 137)
 }
 
 // DefaultConfig returns sensible defaults for a LAN sweep.
@@ -32,6 +59,8 @@ func DefaultConfig() Config {
 		PingFirst:       true,
 		SNMPCommunity:   "public",
 		BroadcastListen: 5 * time.Second,
+		BannerGrab:      true,
+		NetBIOS:         true,
 	}
 }
 
@@ -70,7 +99,12 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	// --- 1. Network interface ---
 	var iface *net.Interface
 	if s.Config.Interface != "" {
-		iface, _ = net.InterfaceByName(s.Config.Interface)
+		var err error
+		iface, err = net.InterfaceByName(s.Config.Interface)
+		if err != nil {
+			// Named interface not found — proceed without ARP.
+			iface = nil
+		}
 	} else if len(hosts) > 0 {
 		iface, _ = findInterface(hosts[0])
 	}
@@ -113,6 +147,17 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	var macMap map[string]net.HardwareAddr
 	if iface != nil {
 		macMap = batchARP(iface, hosts, s.Config.Timeout*2)
+		// Detect ARP anomalies: compare with kernel ARP cache.
+		for ipStr, batchMAC := range macMap {
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				continue
+			}
+			cacheMAC := lookupARPCache(ip)
+			if cacheMAC != nil && cacheMAC.String() != batchMAC.String() {
+				atomic.AddInt64(&s.Stats.ARPAnomalies, 1)
+			}
+		}
 	}
 
 	// --- 4. Per-host probing ---
@@ -135,6 +180,9 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			broadcastMu.Lock()
 			r.Services = broadcastMap[ip.String()]
 			broadcastMu.Unlock()
+
+			// OS hint runs after services are merged.
+			r.OS = guessOS(r.TTL, r.Banner, r.Services, r.SNMP)
 
 			select {
 			case out <- r:
@@ -185,10 +233,14 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 
 	// ICMP fallback if ARP missed the host.
 	if !r.Alive && s.Config.PingFirst {
-		latency, alive := ping(ctx, ip, s.Config.Timeout)
+		atomic.AddInt64(&s.Stats.PacketsSent, 1)
+		latency, ttl, alive := ping(ctx, ip, s.Config.Timeout)
 		if alive {
+			atomic.AddInt64(&s.Stats.RepliesReceived, 1)
+			atomic.AddInt64(&s.Stats.LatencySum, latency.Nanoseconds())
 			r.Alive = true
 			r.Latency = latency
+			r.TTL = ttl
 			// The ICMP probe causes the kernel to ARP for the host, so the
 			// neighbor cache is now populated. Read it to fill in the MAC
 			// (handles the common case of Windows running without admin where
@@ -199,6 +251,22 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 					r.Vendor = lookupVendor(mac)
 				}
 			}
+		} else {
+			atomic.AddInt64(&s.Stats.Timeouts, 1)
+		}
+	} else if r.Alive && s.Config.PingFirst {
+		// We got MAC via ARP but still want latency + TTL — ping if no latency yet.
+		if r.Latency == 0 {
+			atomic.AddInt64(&s.Stats.PacketsSent, 1)
+			latency, ttl, ok := ping(ctx, ip, s.Config.Timeout)
+			if ok {
+				atomic.AddInt64(&s.Stats.RepliesReceived, 1)
+				atomic.AddInt64(&s.Stats.LatencySum, latency.Nanoseconds())
+				r.Latency = latency
+				r.TTL = ttl
+			} else {
+				atomic.AddInt64(&s.Stats.Timeouts, 1)
+			}
 		}
 	}
 
@@ -206,13 +274,16 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		return r
 	}
 
-	// Reverse DNS, ports, SNMP run in parallel.
+	// Reverse DNS, ports, SNMP, NetBIOS run in parallel.
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		r.Hostname = reverseDNS(ip, s.Config.Timeout)
+		if r.Hostname == "" {
+			atomic.AddInt64(&s.Stats.DNSFailures, 1)
+		}
 	}()
 
 	wg.Add(1)
@@ -231,6 +302,20 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}()
 	}
 
+	if s.Config.NetBIOS {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.NetBIOS = probeNetBIOS(ip, s.Config.Timeout)
+		}()
+	}
+
 	wg.Wait()
+
+	// Banner grab runs after port scan (needs openPorts list).
+	if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
+		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout)
+	}
+
 	return r
 }
