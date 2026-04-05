@@ -32,21 +32,19 @@ func hideOwnConsole() {
 }
 
 func run() {
-	// Elevated probe-server mode: spawned by the GUI with --probe=addr.
-	// Argument is a single token (no space) so Windows command-line parsing
-	// can never accidentally merge or re-quote it.
+	// Service mode: spawned by the GUI with --service=addr.
+	// The service handles all scanning (elevated or not) for the GUI.
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--probe=") {
-			addr := strings.TrimPrefix(arg, "--probe=")
+		if strings.HasPrefix(arg, "--service=") {
+			addr := strings.TrimPrefix(arg, "--service=")
 			hideOwnConsole()
-			// The GUI already holds the listener; we connect to it.
 			conn, err := net.Dial("tcp", addr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "probe dial: %v\n", err)
+				fmt.Fprintf(os.Stderr, "service dial: %v\n", err)
 				os.Exit(1)
 			}
-			if err := sweep.RunProbeConn(conn); err != nil {
-				fmt.Fprintf(os.Stderr, "probe server: %v\n", err)
+			if err := sweep.RunServiceConn(conn); err != nil {
+				fmt.Fprintf(os.Stderr, "service: %v\n", err)
 				os.Exit(1)
 			}
 			return

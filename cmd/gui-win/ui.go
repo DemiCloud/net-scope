@@ -33,17 +33,17 @@ var (
 	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
 	hwndMain       HWND
 	// Elevation bar (top strip)
-	hwndElevLabel  HWND // "Running as: User" / "Running as: Administrator"
+	hwndElevLabel  HWND // service status label
+	hwndServiceBtn HWND // "Elevate sweep service" button (hidden when already elevated)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget     HWND
 	hwndScan       HWND
 	hwndStop       HWND
-	hwndAdminCheck HWND // "Admin / ARP" checkbox
 	// Content panes
 	hwndList       HWND
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
-	hwndListDHCP   HWND // DHCP tab (placeholder — elevation notice when not elevated)
+	hwndListDHCP   HWND // DHCP tab
 	hwndListHealth HWND // Health tab
 	hwndTabCtrl    HWND
 	hwndStatus     HWND
@@ -156,12 +156,27 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			SWP_NOZORDER|SWP_NOACTIVATE)
 		return 0
 
+	case WM_SERVICE_UP:
+		setWindowText(hwndElevLabel, statusForService())
+		// Update DHCP notice text now that we know the service elevation level.
+		if serviceElevated {
+			setWindowText(hwndListDHCP, "DHCP passive capture is not yet implemented.\n\nThis tab will show DHCP requests and leases observed on the network.")
+			enableWindow(hwndServiceBtn, false)
+		}
+		return 0
+
+	case WM_SERVICE_DOWN:
+		setWindowText(hwndElevLabel, "Service: not running")
+		return 0
+
 	case WM_CREATE:
 		createControls(HWND(hwnd))
 		if noConfigFile {
 			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
 		}
 		startBroadcastListener()
+		// Start the sweep service immediately (user-level, no UAC).
+		go startService(HWND(hwnd))
 		return 0
 
 	case WM_SIZE:
@@ -188,7 +203,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndTarget, SW_SHOW)
 				showWindow(hwndScan, SW_SHOW)
 				showWindow(hwndStop, SW_SHOW)
-				showWindow(hwndAdminCheck, SW_SHOW)
+
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
 				statusR := getClientRect(hwndStatus)
@@ -204,7 +219,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndTarget, SW_HIDE)
 				showWindow(hwndScan, SW_HIDE)
 				showWindow(hwndStop, SW_HIDE)
-				showWindow(hwndAdminCheck, SW_HIDE)
+
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -280,6 +295,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_COMMAND:
 		switch loword(wParam) {
+		case IDC_SERVICE_BTN:
+			// Spawn elevated service via UAC. Existing service is stopped first.
+			go elevateService(HWND(hwnd))
 		case IDC_SCAN:
 			startScan(HWND(hwnd))
 		case IDC_STOP:
@@ -413,14 +431,16 @@ func createControls(hwnd HWND) {
 	}
 
 	// ---- elevation status bar (top strip) ----
-	// Shows current privilege level; offers relaunch button when not elevated.
-	elevLabel := "⚠  Running as: User  —  Check \"Admin / ARP\" and click Scan; elevation prompt will appear automatically."
-	if elevated {
-		elevLabel = "✔  Running as: Administrator  —  All features available."
-	}
-	hwndElevLabel, _ = createWindowEx(0, "STATIC", elevLabel,
+	hwndElevLabel, _ = createWindowEx(0, "STATIC", "Service: starting…",
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
-		scale(8), 0, scale(1140), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
+		scale(8), 0, scale(740), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
+	// "Elevate sweep service" button — disabled once service reports it is elevated.
+	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate sweep service",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		scale(756), scale(3), scale(200), scale(26), hwnd, IDC_SERVICE_BTN, inst)
+	if elevated {
+		enableWindow(hwndServiceBtn, false)
+	}
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
@@ -434,22 +454,16 @@ func createControls(hwnd HWND) {
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	// [Target label] [target input ──────────────] [Scan] [Stop] [☐ Admin / ARP]
+	// [Target label] [target input ──────────────────] [Scan] [Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
-		scale(58), scanBarY+scale(6), scale(620), scale(22), hwnd, IDC_TARGET, inst)
+		scale(58), scanBarY+scale(6), scale(740), scale(22), hwnd, IDC_TARGET, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(688), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_SCAN, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_SCAN, inst)
 	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(776), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_STOP, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(896), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_STOP, inst)
 	enableWindow(hwndStop, false)
-	hwndAdminCheck, _ = createWindowEx(0, "BUTTON", "Admin / ARP",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		scale(868), scanBarY+scale(7), scale(120), scale(20), hwnd, IDC_ADMIN, inst)
-	if elevated {
-		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_CHECKED, 0)
-	}
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -559,15 +573,15 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	setStatusParts(p1, p2)
 
 	// Elevation bar stretches to full width.
-	moveWindow(hwndElevLabel, scale(8), 0, width-scale(16), scale(elevBarH))
+	moveWindow(hwndElevLabel, scale(8), 0, width-scale(220), scale(elevBarH))
+	moveWindow(hwndServiceBtn, width-scale(212), scale(3), scale(204), scale(26))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
 	// Scan bar controls: target field stretches, buttons anchor right.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(548), scale(22))
-	moveWindow(hwndScan, width-scale(486), scanBarY+scale(5), scale(80), scale(24))
-	moveWindow(hwndStop, width-scale(398), scanBarY+scale(5), scale(80), scale(24))
-	moveWindow(hwndAdminCheck, width-scale(310), scanBarY+scale(7), scale(120), scale(20))
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(310), scale(22))
+	moveWindow(hwndScan, width-scale(244), scanBarY+scale(5), scale(80), scale(24))
+	moveWindow(hwndStop, width-scale(156), scanBarY+scale(5), scale(80), scale(24))
 
 	// Hosts tab: list sits below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -620,21 +634,10 @@ func startScan(hwnd HWND) {
 		}
 	}
 
-	// Read the Admin / ARP checkbox — tells us whether to use raw sockets.
-	wantAdmin := sendMessage(hwndAdminCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
-	elevated := isElevated()
-
 	appCfg, _, _ := config.Load()
 	scanCfg := appCfg.ToSweepConfig()
-	// The GUI has a persistent background broadcast listener (startBroadcastListener);
-	// disable the per-scan mDNS/SSDP goroutines to avoid a 5-second wait.
+	// Disable per-scan mDNS/SSDP; background listener handles those continuously.
 	scanCfg.BroadcastListen = 0
-
-	if !wantAdmin {
-		// Non-admin mode: TCP connect as liveness probe; no raw sockets needed.
-		scanCfg.Interface = ""
-		scanCfg.TCPFirst = true
-	}
 
 	// Expand target first so we can pre-populate the list.
 	hosts, err := sweep.ExpandTarget(target)
@@ -648,7 +651,7 @@ func startScan(hwnd HWND) {
 		scanMu.Unlock()
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
 	scanCancel = cancel
 	scanMu.Unlock()
 
@@ -659,8 +662,6 @@ func startScan(hwnd HWND) {
 	pendingMu.Unlock()
 
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
-	// Do NOT clear hwndListBroadcast — the background listener populates it
-	// continuously; scan-discovered services are appended, not a fresh set.
 	ipRowMap = make(map[string]int32, len(hosts))
 	rowResultMap = make(map[int32]sweep.Result, len(hosts))
 
@@ -673,15 +674,19 @@ func startScan(hwnd HWND) {
 
 	enableWindow(hwndScan, false)
 	enableWindow(hwndStop, true)
-	setStatusPart(2, statusForMode(wantAdmin, elevated))
+	setStatusPart(2, statusForService()+" — scanning")
 
-	// If admin probes are requested but we're not elevated, delegate to an
-	// elevated subprocess rather than relaunching the whole GUI.
-	if wantAdmin && !elevated {
-		startElevatedScan(hwnd, target, scanCfg)
+	// Route all scans through the persistent sweep service.
+	if serviceRunning() {
+		sendScanViaService(hwnd, target, scanCfg)
 		return
 	}
 
+	// Fallback: service not ready yet; run scan in-process.
+	ctx, cancel2 := context.WithCancel(context.Background())
+	scanMu.Lock()
+	scanCancel = cancel2
+	scanMu.Unlock()
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
@@ -702,7 +707,6 @@ func startScan(hwnd HWND) {
 			pendingMu.Unlock()
 			postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), 0)
 		}
-		// Store stats pointer for the completion handler.
 		pendingMu.Lock()
 		lastStats = sc.Stats
 		pendingMu.Unlock()
@@ -711,6 +715,7 @@ func startScan(hwnd HWND) {
 }
 
 func stopScan() {
+	stopServiceScan() // send stop command to service if running
 	scanMu.Lock()
 	defer scanMu.Unlock()
 	if scanCancel != nil {

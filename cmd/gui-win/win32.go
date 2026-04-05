@@ -92,6 +92,8 @@ const (
 	WM_SCAN_STATS    = WM_APP + 3
 	WM_BCAST_SVC     = WM_APP + 4 // background broadcast: single ServiceInfo arrived
 	WM_FIRST_RUN     = WM_APP + 5 // posted to trigger first-run settings dialog
+	WM_SERVICE_UP    = WM_APP + 6 // sweep service connected and ready
+	WM_SERVICE_DOWN  = WM_APP + 7 // sweep service disconnected
 
 	// Control IDs
 	IDC_TARGET    = 101
@@ -100,12 +102,11 @@ const (
 	IDC_LIST      = 105
 	IDC_STATUS    = 106
 	IDC_TABS      = 107
-	IDC_LIST_MDNS   = 108
-	IDC_LIST_SSDP   = 110
-	IDC_LIST_DHCP   = 111
-	IDC_ELEV_LABEL  = 112 // "Running as: User / Administrator"
-	IDC_ELEV_BUTTON = 113 // "Relaunch as Administrator"
-	IDC_ADMIN       = 109 // "Admin / ARP" checkbox
+	IDC_LIST_MDNS    = 108
+	IDC_LIST_SSDP    = 110
+	IDC_LIST_DHCP    = 111
+	IDC_ELEV_LABEL   = 112 // service status label
+	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button
 
 	// Menu command IDs
 	IDM_FILE_EXIT        = 201
@@ -116,7 +117,6 @@ const (
 	IDM_HELP_FAQ         = 204
 	IDM_HELP_VERSION     = 207
 	IDM_HELP_CRASHLOG    = 208 // Help > View Crash Log
-	IDM_RELAUNCH_ADMIN   = 209 // Elevation bar: relaunch as administrator
 
 	// Context menu command ID range (right-click actions)
 	IDM_CTX_OPEN_HTTP    = 3001

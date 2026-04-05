@@ -13,34 +13,127 @@ import (
 	"github.com/demicloud/net-sweep/internal/sweep"
 )
 
-// startElevatedScan spawns an elevated copy of the binary with --probe <addr>,
-// connects over TCP localhost, sends a ProbeRequest, and streams results back
-// through the normal WM_SCAN_RESULT / WM_SCAN_COMPLETE pipeline.
-//
-// The original window stays open and responsive throughout. No second GUI
-// window appears because the helper process has no window procedure.
-func startElevatedScan(hwnd HWND, target string, cfg sweep.Config) {
+// ---------------------------------------------------------------------------
+// Persistent sweep service state
+// ---------------------------------------------------------------------------
+
+var (
+	serviceMu      sync.Mutex
+	serviceConn    net.Conn
+	serviceEnc     *json.Encoder
+	serviceDec     *json.Decoder
+	serviceElevated bool // true if the running service process is admin
+)
+
+// serviceRunning returns true if there is a live service connection.
+func serviceRunning() bool {
+	serviceMu.Lock()
+	defer serviceMu.Unlock()
+	return serviceConn != nil
+}
+
+// startService spawns a new service subprocess (user-level, no UAC).
+// Must be called from the UI thread; the goroutine handles the connection.
+func startService(hwnd HWND) {
+	spawnService(hwnd, false)
+}
+
+// elevateService spawns a new service subprocess via UAC (admin).
+// Stops any existing service first.
+func elevateService(hwnd HWND) {
+	stopService()
+	spawnService(hwnd, true)
+}
+
+// stopService tears down the current service connection if any.
+func stopService() {
+	serviceMu.Lock()
+	defer serviceMu.Unlock()
+	if serviceConn != nil {
+		enc := serviceEnc
+		serviceConn = nil
+		serviceEnc = nil
+		serviceDec = nil
+		serviceElevated = false
+		// Best-effort graceful shutdown.
+		_ = enc.Encode(sweep.ServiceCmd{Cmd: "shutdown"})
+	}
+}
+
+func spawnService(hwnd HWND, elevated bool) {
 	exe, err := os.Executable()
 	if err != nil {
 		messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "net-sweep", MB_ICONERROR)
-		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 		return
 	}
 
-	// Listen on a random localhost port — used as the rendezvous point.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		messageBox(hwnd, "Cannot open probe listener:\n"+err.Error(), "net-sweep", MB_ICONERROR)
-		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+		messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "net-sweep", MB_ICONERROR)
 		return
 	}
 	addr := ln.Addr().String()
 
-	// Spawn elevated helper: net-sweep.exe --probe=127.0.0.1:<port>
-	// Single --probe=addr token avoids any Windows command-line quoting
-	// ambiguity. ShellExecute runas triggers one UAC prompt; no second GUI
-	// window appears because the helper detects --probe= and runs headless.
-	shellExecute(0, "runas", exe, "--probe="+addr, "", SW_HIDE)
+	if elevated {
+		shellExecute(0, "runas", exe, "--service="+addr, "", SW_HIDE)
+	} else {
+		shellExecute(0, "open", exe, "--service="+addr, "", SW_HIDE)
+	}
+
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				writeCrashLog(hwnd, p)
+			}
+		}()
+
+		ln.(*net.TCPListener).SetDeadline(time.Now().Add(60 * time.Second))
+		conn, err := ln.Accept()
+		ln.Close()
+		if err != nil {
+			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			return
+		}
+
+		dec := json.NewDecoder(conn)
+		enc := json.NewEncoder(conn)
+
+		// First message must be the ready handshake.
+		var msg sweep.ServiceMsg
+		if err := dec.Decode(&msg); err != nil || !msg.Ready {
+			conn.Close()
+			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			return
+		}
+
+		serviceMu.Lock()
+		// Close any previous connection.
+		if serviceConn != nil {
+			serviceConn.Close()
+		}
+		serviceConn = conn
+		serviceEnc = enc
+		serviceDec = dec
+		serviceElevated = msg.Elevated
+		serviceMu.Unlock()
+
+		postMessage(hwnd, WM_SERVICE_UP, 0, 0)
+	}()
+}
+
+// sendScanViaService sends a scan command to the running service and pumps
+// results back through the normal WM_SCAN_RESULT / WM_SCAN_COMPLETE pipeline.
+func sendScanViaService(hwnd HWND, target string, cfg sweep.Config) {
+	serviceMu.Lock()
+	enc := serviceEnc
+	dec := serviceDec
+	conn := serviceConn
+	serviceMu.Unlock()
+
+	if enc == nil {
+		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+		return
+	}
 
 	go func() {
 		defer func() {
@@ -50,46 +143,42 @@ func startElevatedScan(hwnd HWND, target string, cfg sweep.Config) {
 			}
 		}()
 
-		// Give the user up to 60s to approve the UAC prompt.
-		ln.(*net.TCPListener).SetDeadline(time.Now().Add(60 * time.Second))
-
-		// Accept the single connection from the elevated helper.
-		conn, err := ln.Accept()
-		ln.Close()
-		if err != nil {
-			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
-			return
-		}
-		defer conn.Close()
-
-		// Send the scan request.
-		enc := json.NewEncoder(conn)
-		if err := enc.Encode(sweep.ProbeRequest{Target: target, Config: cfg}); err != nil {
+		if err := enc.Encode(sweep.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg}); err != nil {
 			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 			return
 		}
 
-		// Stream results back into the normal WM_SCAN_RESULT pipeline.
-		dec := json.NewDecoder(conn)
-		var mu sync.Mutex
-		_ = mu
 		for {
-			var pr sweep.ProbeResult
-			if err := dec.Decode(&pr); err != nil {
+			var msg sweep.ServiceMsg
+			if err := dec.Decode(&msg); err != nil {
+				// Connection lost mid-scan.
+				serviceMu.Lock()
+				if serviceConn == conn {
+					serviceConn = nil
+					serviceEnc = nil
+					serviceDec = nil
+					serviceElevated = false
+					conn.Close()
+				}
+				serviceMu.Unlock()
+				postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
 				break
 			}
-			if pr.Done {
-				if pr.Stats != nil {
+			if msg.Err != "" {
+				break
+			}
+			if msg.Done {
+				if msg.Stats != nil {
 					pendingMu.Lock()
-					lastStats = *pr.Stats
+					lastStats = *msg.Stats
 					pendingMu.Unlock()
 				}
 				break
 			}
-			if pr.Result != nil {
+			if msg.Result != nil {
 				pendingMu.Lock()
 				idx := len(pendingResults)
-				pendingResults = append(pendingResults, *pr.Result)
+				pendingResults = append(pendingResults, *msg.Result)
 				pendingMu.Unlock()
 				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), 0)
 			}
@@ -98,14 +187,26 @@ func startElevatedScan(hwnd HWND, target string, cfg sweep.Config) {
 	}()
 }
 
-// statusForMode returns a toolbar annotation describing the current scan mode.
-func statusForMode(wantAdmin, elevated bool) string {
-	switch {
-	case elevated:
-		return fmt.Sprintf("Scanning (elevated — ARP+ICMP active)")
-	case wantAdmin:
-		return "Scanning (elevated helper — ARP+ICMP via subprocess)"
-	default:
-		return "Scanning (TCP only — check Admin/ARP for full results)"
+// stopServiceScan sends a stop command to the running service, if any.
+// Safe to call when no service is running.
+func stopServiceScan() {
+	serviceMu.Lock()
+	enc := serviceEnc
+	serviceMu.Unlock()
+	if enc != nil {
+		_ = enc.Encode(sweep.ServiceCmd{Cmd: "stop"})
 	}
+}
+
+// statusForService returns a status bar string describing the service state.
+func statusForService() string {
+	serviceMu.Lock()
+	defer serviceMu.Unlock()
+	if serviceConn == nil {
+		return "Service: starting…"
+	}
+	if serviceElevated {
+		return fmt.Sprintf("Service: ✔ elevated (ARP + ICMP active)")
+	}
+	return "Service: running (user mode — TCP only)"
 }
