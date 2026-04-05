@@ -60,6 +60,8 @@ func Run(v, target string) {
 		initialTarget = target
 	} else if appConfig.Scan.DefaultTarget != "" {
 		initialTarget = appConfig.Scan.DefaultTarget
+	} else if detected := sweep.DetectLocalSubnets(); len(detected) > 0 {
+		initialTarget = detected[0] // best guess; user can click ⟲ to see all
 	} else {
 		initialTarget = "192.168.1.0/24"
 	}

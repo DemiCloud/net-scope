@@ -98,18 +98,19 @@ const (
 	WM_SERVICE_DOWN  = WM_APP + 7 // sweep service disconnected
 
 	// Control IDs
-	IDC_TARGET    = 101
-	IDC_SCAN      = 103
-	IDC_STOP      = 104
-	IDC_LIST      = 105
-	IDC_STATUS    = 106
-	IDC_TABS      = 107
+	IDC_TARGET       = 101
+	IDC_SCAN         = 103
+	IDC_STOP         = 104 // kept for compat; no longer a visible button
+	IDC_LIST         = 105
+	IDC_STATUS       = 106
+	IDC_TABS         = 107
 	IDC_LIST_MDNS    = 108
 	IDC_LIST_SSDP    = 110
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status label
 	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button
 	IDC_LIST_NETWORK = 114 // Network tab — live broadcast stats text pane
+	IDC_DETECT       = 115 // "⟲" detect local subnet button
 
 	// Menu command IDs
 	IDM_FILE_EXIT        = 201
@@ -138,6 +139,9 @@ const (
 	IDM_CTX_COPY_ROW     = 3023
 	IDM_BCAST_COPY_ROW   = 3030
 	IDM_BCAST_COPY_IP    = 3031
+
+	// Detect-subnet popup menu item base (up to 16 interfaces supported)
+	IDM_DETECT_BASE = 3100
 
 	// Null message (used to wake up a modal message loop)
 	WM_NULL = 0x0000

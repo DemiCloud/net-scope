@@ -45,6 +45,7 @@ var (
 	hwndServiceBtn HWND // "Elevate sweep service" button (hidden when already elevated)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
+	hwndDetect          HWND // "⟲" detect local subnet button
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
 	// Content panes
 	hwndList            HWND
@@ -244,7 +245,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// on all other tabs the list fills from just below the tab strip.
 			if tab == 0 {
 				showWindow(hwndTarget, SW_SHOW)
-				showWindow(hwndScan, SW_SHOW)
+			showWindow(hwndDetect, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
@@ -263,8 +264,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			} else {
 				showWindow(hwndTarget, SW_HIDE)
-				showWindow(hwndScan, SW_HIDE)
-
+			showWindow(hwndDetect, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -365,6 +365,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_SERVICE_BTN:
 			// Spawn elevated service via UAC. Existing service is stopped first.
 			go elevateService(HWND(hwnd))
+		case IDC_DETECT:
+			detectSubnet(HWND(hwnd))
 		case IDC_SCAN:
 			if isScanning {
 				stopScan()
@@ -548,11 +550,13 @@ func createControls(hwnd HWND) {
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	// [Target label] [target input ────────────────────────] [Scan/Stop]
+	// [Target label] [target input ────────────────────────] [⟲] [Scan/Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
-		scale(58), scanBarY+scale(6), scale(740), scale(22), hwnd, IDC_TARGET, inst)
+		scale(58), scanBarY+scale(6), scale(700), scale(22), hwnd, IDC_TARGET, inst)
+	hwndDetect, _ = createWindowEx(0, "BUTTON", "⟲",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(766), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
@@ -685,10 +689,11 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndServiceBtn, width-scale(212), scale(3), scale(204), scale(26))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar: target stretches, single Scan/Stop button anchors to right.
+	// Scan bar: target stretches, detect + scan/stop buttons anchor to right.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(178), scale(22))
-	moveWindow(hwndScan, width-scale(112), scanBarY+scale(5), scale(100), scale(24))
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(228), scale(22))
+	moveWindow(hwndDetect, width-scale(162), scanBarY+scale(5), scale(34), scale(24))
+	moveWindow(hwndScan, width-scale(120), scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts tab: list sits below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -824,6 +829,40 @@ func startScan(hwnd HWND) {
 		pendingMu.Unlock()
 		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 	}()
+}
+
+// detectSubnet fills the target box with the detected local subnet.
+// If a single private subnet is found, it is filled silently.
+// If multiple are found, a popup menu lets the user pick one.
+// Called from the UI thread only.
+func detectSubnet(hwnd HWND) {
+	subnets := sweep.DetectLocalSubnets()
+	switch len(subnets) {
+	case 0:
+		messageBox(hwnd, "No private IPv4 interface detected.\n\nConnect to a network and try again.",
+			"Detect Local Subnet", 0)
+	case 1:
+		setWindowText(hwndTarget, subnets[0])
+	default:
+		// Multiple interfaces — offer a popup menu.
+		menu := createPopupMenu()
+		for i, s := range subnets {
+			appendMenu(menu, MF_STRING, uintptr(IDM_DETECT_BASE+i), s)
+		}
+		pt := getClientPtBelowControl(hwndDetect)
+		cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, hwnd)
+		destroyMenu(menu)
+		if cmd >= IDM_DETECT_BASE && int(cmd-IDM_DETECT_BASE) < len(subnets) {
+			setWindowText(hwndTarget, subnets[cmd-IDM_DETECT_BASE])
+		}
+	}
+}
+
+// getClientPtBelowControl returns the screen position just below a control,
+// suitable for placing a popup menu flush with the button.
+func getClientPtBelowControl(ctrl HWND) POINT {
+	r := getWindowRect(ctrl)
+	return POINT{X: r.Left, Y: r.Bottom}
 }
 
 func stopScan() {
