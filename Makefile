@@ -1,63 +1,78 @@
 # Project metadata
-NAME     := net-sweep
-VERSION  := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
-BUILT_BY ?= DemiCloud
+NAME    := net-sweep
+VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 
-# Base linker flags (dev builds)
-LDFLAGS :=
+# Linker flags
+DEV_LDFLAGS     := -X main.version=$(VERSION)
+RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
 
-# Release linker flags (strip + trim)
-RELEASE_LDFLAGS := -s -w
+# Output naming convention: net-sweep_<os>_<arch>[.exe]
+cli_out  = build/$(NAME)_$(1)_$(2)$(if $(filter windows,$(1)),.exe,)
 
-# Windows GUI needs -H windowsgui to suppress the console window
-GUI_LDFLAGS := -H windowsgui $(RELEASE_LDFLAGS)
+.PHONY: help linux windows bsd all test vet release clean
 
-.PHONY: help build gui test vet release clean
+## ── Dev shortcuts ────────────────────────────────────────────────────────────
 
-# Default target — list available commands
-help:
+help: ## Show this help
 	@echo "net-sweep $(VERSION)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build CLI for the current platform → build/net-sweep
-	mkdir -p build
-	go mod tidy
-	go build -ldflags "$(LDFLAGS)" -o build/$(NAME) ./cmd/cli
+## ── Platform targets (dev builds, unstripped) ────────────────────────────────
 
-gui: ## Cross-compile Windows GUI → build/net-sweep-win.exe
+linux: ## Build unified binary for linux/amd64 → build/
+	mkdir -p build
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-sweep
+
+windows: gen-resources ## Cross-compile unified binary for windows/amd64 → build/
 	mkdir -p build
 	GOOS=windows GOARCH=amd64 go build \
-		-ldflags "$(GUI_LDFLAGS)" \
-		-o build/$(NAME)-win.exe ./cmd/gui-win
+		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-sweep
+
+gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
+	go run ./cmd/gen-ico/ -o cmd/gui-win/icon.ico
+	go run ./cmd/gen-rsrc/ -dir cmd/gui-win
+
+bsd: ## Cross-compile unified binary for freebsd/amd64 (OPNsense) → build/
+	mkdir -p build
+	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
+		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,freebsd,amd64) ./cmd/cli
+
+all: linux windows bsd ## Build all platforms → build/
+
+## ── Tests ────────────────────────────────────────────────────────────────────
 
 test: ## Run all tests
 	go test ./...
 
-vet: ## Run go vet (static analysis)
+vet: ## Run go vet
 	go vet ./...
 
-release: clean ## Build stripped multi-arch release tarballs → dist/
+## ── Release (stripped, trimpath, sha256 manifest) ───────────────────────────
+
+release: clean ## Build all platforms stripped → dist/ + checksums.txt
 	mkdir -p dist
 	go mod tidy
-	@set -e; for platform in linux/amd64 linux/arm64; do \
-		OS=$$(echo $$platform | cut -d/ -f1); \
-		ARCH=$$(echo $$platform | cut -d/ -f2); \
-		echo "building $$OS/$$ARCH"; \
-		GOOS=$$OS GOARCH=$$ARCH CGO_ENABLED=0 go build -trimpath \
-			-ldflags "$(RELEASE_LDFLAGS)" \
-			-o dist/$(NAME) ./cmd/cli; \
-		tar -czf dist/$(NAME)_$(VERSION)_$${OS}_$${ARCH}.tar.gz -C dist $(NAME); \
-		rm dist/$(NAME); \
-	done
-	@echo "building windows/amd64 (gui)"
-	GOOS=windows GOARCH=amd64 go build -trimpath \
-		-ldflags "$(GUI_LDFLAGS)" \
-		-o dist/$(NAME)-win.exe ./cmd/gui-win
-	tar -czf dist/$(NAME)_$(VERSION)_windows_amd64.tar.gz -C dist $(NAME)-win.exe
-	rm dist/$(NAME)-win.exe
-	cd dist && sha256sum *.tar.gz > checksums.txt
+	@set -e; \
+	build_cli() { \
+		os=$$1 arch=$$2; \
+		ext=$$([ "$$os" = "windows" ] && echo ".exe" || echo ""); \
+		out=dist/$(NAME)_$${os}_$${arch}$${ext}; \
+		echo "  cli  $$os/$$arch → $$out"; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath \
+			-ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/net-sweep; \
+	}; \
+	echo "==> Linux"; \
+	build_cli linux amd64; \
+	build_cli linux arm64; \
+	echo "==> Windows"; \
+	build_cli windows amd64; \
+	echo "==> FreeBSD (OPNsense)"; \
+	build_cli freebsd amd64
+	@echo "==> Checksums"
+	cd dist && sha256sum * > checksums.txt && cat checksums.txt
 
 clean: ## Remove build/ and dist/
 	rm -rf build dist
