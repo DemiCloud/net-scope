@@ -77,6 +77,7 @@ const (
 	WM_SCAN_RESULT   = WM_APP + 1
 	WM_SCAN_COMPLETE = WM_APP + 2
 	WM_SCAN_STATS    = WM_APP + 3
+	WM_BCAST_SVC     = WM_APP + 4 // background broadcast: single ServiceInfo arrived
 
 	// Control IDs
 	IDC_TARGET    = 101
@@ -86,6 +87,7 @@ const (
 	IDC_STATUS    = 106
 	IDC_TABS      = 107
 	IDC_LIST_BCAST = 108
+	IDC_ADMIN     = 109 // "Admin / ARP" checkbox
 
 	// Menu command IDs
 	IDM_FILE_EXIT        = 201

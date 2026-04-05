@@ -66,7 +66,7 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		}
 		lower := strings.ToLower(hdr)
 		switch {
-		case strings.Contains(lower, "microsoft-iis"), strings.Contains(lower, "microsoft httpapi"):
+		case strings.Contains(lower, "microsoft-iis"), strings.Contains(lower, "microsoft-httpapi"), strings.Contains(lower, "microsoft httpapi"):
 			return OSWindows
 		case strings.Contains(lower, "apache"), strings.Contains(lower, "nginx"),
 			strings.Contains(lower, "lighttpd"), strings.Contains(lower, "caddy"):

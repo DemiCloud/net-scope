@@ -54,6 +54,40 @@ func discoverMDNS(ctx context.Context, timeout time.Duration) map[string][]Servi
 	return results
 }
 
+// ListenBroadcast runs mDNS and SSDP discovery indefinitely (or until ctx is
+// cancelled), calling cb for each service as it arrives. Safe to call in a
+// goroutine; cb is invoked from that same goroutine — callers must not block.
+func ListenBroadcast(ctx context.Context, timeout time.Duration, cb func(ip string, svc ServiceInfo)) {
+	var wg sync.WaitGroup
+
+	// mDNS — browse all known service types continuously.
+	for _, svcType := range mdnsServiceTypes {
+		wg.Add(1)
+		go func(st string) {
+			defer wg.Done()
+			browseMDNS(ctx, st, func(ip net.IP, svc ServiceInfo) {
+				cb(ip.String(), svc)
+			})
+		}(svcType)
+	}
+
+	// SSDP — send M-SEARCH and collect responses for up to timeout,
+	// then repeat until ctx is done.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			for ip, svcs := range discoverSSDP(ctx, timeout) {
+				for _, svc := range svcs {
+					cb(ip, svc)
+				}
+			}
+		}
+	}()
+
+	wg.Wait()
+}
+
 func browseMDNS(ctx context.Context, serviceType string, cb func(net.IP, ServiceInfo)) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
