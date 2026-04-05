@@ -148,7 +148,7 @@ func showSettingsDialog(parent HWND) {
 		titleSuffix = "First Run — settings apply this session; use OK to save"
 	}
 
-	const dlgW, dlgH int32 = 560, 400
+	const dlgW, dlgH int32 = 560, 440
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepSettings", "Settings — "+titleSuffix,
@@ -237,13 +237,13 @@ func createSettingsControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
 		lx, checkY+56, lw+ew, 22, hwnd, HMENU(idSettNetBIOS), inst)
 
-	// Config file path (informational)
+	// Config file path (informational) — allow 3 lines for long paths
 	hwndSettPath, _ = createWindowEx(0, "STATIC", "",
 		WS_CHILD|WS_VISIBLE,
-		lx, checkY+84, lw+ew, 28, hwnd, 0, inst)
+		lx, checkY+84, lw+ew, 40, hwnd, 0, inst)
 
-	// OK / Cancel
-	btnY := checkY + 110
+	// OK / Cancel — below path label (checkY+84+40) + 8px gap
+	btnY := checkY + 132
 	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		306, btnY, 78, 26, hwnd, idSettOK, inst)
 	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
@@ -420,7 +420,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	ensureCfgLocClass()
 	cfgLocResult = "neither"
 
-	const dlgW, dlgH int32 = 520, 310
+	const dlgW, dlgH int32 = 520, 360
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepCfgLoc", "Where should net-sweep save its config?",
@@ -443,10 +443,10 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 
 	createCtrl("STATIC", "Option 1 — User profile (recommended):",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
-	y += 18
+	y += 20
 	createCtrl("STATIC", "  "+appDataPath,
-		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
-	y += 22
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 28, dlg, 0, inst)
+	y += 32
 	createCtrl("BUTTON", "Save to AppData",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		14, y, 160, 26, dlg, idCfgAppData, inst)
@@ -454,10 +454,10 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 
 	createCtrl("STATIC", "Option 2 — Beside the executable (portable):",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
-	y += 18
+	y += 20
 	createCtrl("STATIC", "  "+exePath,
-		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
-	y += 22
+		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 28, dlg, 0, inst)
+	y += 32
 	createCtrl("BUTTON", "Save beside exe",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		14, y, 160, 26, dlg, idCfgExeDir, inst)
@@ -728,7 +728,7 @@ func ensureDatabasesClass() {
 
 func showDatabasesDialog(parent HWND) {
 	ensureDatabasesClass()
-	const dlgW, dlgH int32 = 540, 260
+	const dlgW, dlgH int32 = 560, 330
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepDatabases", "Databases",
@@ -752,7 +752,7 @@ func showDatabasesDialog(parent HWND) {
 func createDatabasesControls(hwnd HWND) {
 	inst := getModuleHandle()
 	const lx int32 = 14
-	const cw int32 = 512
+	const cw int32 = 532
 
 	y := int32(14)
 
@@ -763,35 +763,35 @@ func createDatabasesControls(hwnd HWND) {
 
 	createCtrl("STATIC",
 		"Maps MAC address prefixes to manufacturer names. Used in the Hosts tab Vendor column.",
-		WS_CHILD|WS_VISIBLE, lx, y, cw, 18, hwnd, 0, inst)
-	y += 24
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 32, hwnd, 0, inst)
+	y += 36
 
-	// Status line
+	// Status line — multiline so long strings wrap rather than scroll
 	hwndDBStatus, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "Checking…",
-		WS_CHILD|WS_VISIBLE|ES_READONLY|ES_AUTOHSCROLL,
-		lx, y, cw, 22, hwnd, idDBStatusText, inst)
-	y += 32
+		WS_CHILD|WS_VISIBLE|ES_READONLY|ES_MULTILINE,
+		lx, y, cw, 40, hwnd, idDBStatusText, inst)
+	y += 50
 
-	// Data directory info
+	// Data directory info — allow two lines for long paths
 	dataDir := config.DataDir()
 	dirLabel := "Data directory: " + dataDir
 	createCtrl("STATIC", dirLabel,
-		WS_CHILD|WS_VISIBLE, lx, y, cw, 18, hwnd, 0, inst)
-	y += 28
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 36, hwnd, 0, inst)
+	y += 44
 
 	createCtrl("STATIC",
 		"Download a fresh copy from maclookup.app (~7 MB). If the file exists it\r\n"+
 			"is used instead of the built-in data; delete it to revert to the built-in copy.",
-		WS_CHILD|WS_VISIBLE, lx, y, cw, 34, hwnd, 0, inst)
-	y += 44
+		WS_CHILD|WS_VISIBLE, lx, y, cw, 36, hwnd, 0, inst)
+	y += 46
 
 	hwndDBDownload, _ = createWindowEx(0, "BUTTON", "Download updated database",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		lx, y, 200, 26, hwnd, idDBDownload, inst)
+		lx, y, 210, 26, hwnd, idDBDownload, inst)
 
-	// ── Close button ────────────────────────────────────────────────────────
+	// ── Close button — aligned to right edge, same row as Download ──────────
 	createCtrl("BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		440, 220, 80, 26, hwnd, idDBClose, inst)
+		lx+cw-80, y, 80, 26, hwnd, idDBClose, inst)
 }
 
