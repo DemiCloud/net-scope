@@ -128,7 +128,8 @@ const (
 	IDNO  = 7
 
 	// Owner-draw / custom-draw
-	NM_CUSTOMDRAW    = ^uint32(12) // -12 as uint32, matches NM_FIRST-12
+	// NM_CUSTOMDRAW = NM_FIRST(0) - 12 = -12 = 0xFFFFFFF4
+	NM_CUSTOMDRAW    = uint32(0xFFFFFFF4)
 	CDDS_PREPAINT    = 0x00000001
 	CDDS_ITEMPREPAINT = 0x00010001
 	CDRF_DODEFAULT   = 0x00000000

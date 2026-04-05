@@ -153,9 +153,15 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	}
 
 	// --- 3. Batch ARP (fast LAN MAC discovery) ---
+	// Wrapped in its own recover: mdlayher/arp panics on platforms without
+	// raw Ethernet support (e.g. Windows without npcap). A nil map is safe —
+	// all hosts fall through to ICMP / TCP liveness probes.
 	var macMap map[string]net.HardwareAddr
 	if iface != nil {
-		macMap = batchARP(iface, hosts, s.Config.Timeout*2)
+		func() {
+			defer func() { _ = recover() }()
+			macMap = batchARP(iface, hosts, s.Config.Timeout*2)
+		}()
 		// Detect ARP anomalies: compare with kernel ARP cache.
 		for ipStr, batchMAC := range macMap {
 			ip := net.ParseIP(ipStr)
