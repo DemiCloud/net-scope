@@ -485,7 +485,46 @@ func getSSDPRawText(ip string) string {
 
 
 
-// parseTXTMap converts a slice of "key=value" TXT records into a lowercase-keyed map.
+// listViewAddDHCPRow appends a single DHCP event to the DHCP listview.
+// Columns: Time | Type | Client MAC | Hostname | Client IP | Requested IP | Offered IP | Server IP
+func listViewAddDHCPRow(hwnd HWND, evt sweep.DHCPEvent) {
+	ts := evt.Time.Format("15:04:05")
+	tsPtr := utf16(ts)
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: tsPtr}
+	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return
+	}
+	setSubItem(hwnd, row, 1, evt.Type.String())
+	setSubItem(hwnd, row, 2, evt.ClientMAC)
+	host := evt.Hostname
+	if host == "" {
+		host = "—"
+	}
+	setSubItem(hwnd, row, 3, host)
+	ip := evt.ClientIP
+	if ip == "" {
+		ip = "—"
+	}
+	setSubItem(hwnd, row, 4, ip)
+	req := evt.RequestedIP
+	if req == "" {
+		req = "—"
+	}
+	setSubItem(hwnd, row, 5, req)
+	offered := evt.OfferedIP
+	if offered == "" {
+		offered = "—"
+	}
+	setSubItem(hwnd, row, 6, offered)
+	srv := evt.ServerIP
+	if srv == "" {
+		srv = "—"
+	}
+	setSubItem(hwnd, row, 7, srv)
+}
+
+
 func parseTXTMap(records []string) map[string]string {
 	m := make(map[string]string, len(records))
 	for _, r := range records {

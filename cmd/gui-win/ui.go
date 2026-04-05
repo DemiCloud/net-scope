@@ -94,6 +94,10 @@ var (
 	bcastSSDP      int // SSDP entries
 	pendingBcast   []bcastEntry
 	pendingBcastMu sync.Mutex
+
+	// DHCP event queue: service goroutine appends, UI thread reads via WM_DHCP_EVENT.
+	pendingDHCP   []sweep.DHCPEvent
+	pendingDHCPMu sync.Mutex
 )
 
 type bcastEntry struct {
@@ -199,16 +203,26 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_SERVICE_UP:
 		setWindowText(hwndElevLabel, statusForService())
-		// Update DHCP notice text now that we know the service elevation level.
 		if serviceElevated {
-			setWindowText(hwndListDHCP, "DHCP passive capture is not yet implemented.\n\nThis tab will show DHCP requests and leases observed on the network.")
 			enableWindow(hwndServiceBtn, false)
+			// Start passive DHCP capture in the elevated service.
+			startDHCPCapture(HWND(hwnd))
 		}
 		updateNetworkTab()
 		return 0
 
 	case WM_SERVICE_DOWN:
 		setWindowText(hwndElevLabel, "Service: not running")
+		return 0
+
+	case WM_DHCP_EVENT:
+		pendingDHCPMu.Lock()
+		var evt sweep.DHCPEvent
+		if int(wParam) < len(pendingDHCP) {
+			evt = pendingDHCP[int(wParam)]
+		}
+		pendingDHCPMu.Unlock()
+		listViewAddDHCPRow(hwndListDHCP, evt)
 		return 0
 
 	case WM_CREATE:
@@ -618,19 +632,20 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListSSDP, 3, "Services", scale(280))
 	listViewAddColumn(hwndListSSDP, 4, "Location", scale(300))
 
-	// ---- DHCP pane (hidden initially) ----
-	// When not elevated: shows an elevation notice. When elevated: ready for
-	// future passive DHCP capture (requires raw socket on UDP 67/68).
-	dhcpText := "⚠  DHCP passive capture requires Administrator privileges.\n\n" +
-		"Click \"Relaunch as Administrator\" at the top of the window to enable this feature."
-	if elevated {
-		dhcpText = "DHCP passive capture is not yet implemented.\n\n" +
-			"This tab will show DHCP requests and leases observed on the network."
-	}
-	hwndListDHCP, _ = createWindowEx(
-		WS_EX_CLIENTEDGE, "EDIT", dhcpText,
-		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+	// ---- DHCP listview (hidden initially) ----
+	hwndListDHCP, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
+	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+	listViewAddColumn(hwndListDHCP, 0, "Time",         scale(75))
+	listViewAddColumn(hwndListDHCP, 1, "Type",         scale(90))
+	listViewAddColumn(hwndListDHCP, 2, "Client MAC",   scale(140))
+	listViewAddColumn(hwndListDHCP, 3, "Hostname",     scale(160))
+	listViewAddColumn(hwndListDHCP, 4, "Client IP",    scale(120))
+	listViewAddColumn(hwndListDHCP, 5, "Requested IP", scale(120))
+	listViewAddColumn(hwndListDHCP, 6, "Offered IP",   scale(120))
+	listViewAddColumn(hwndListDHCP, 7, "Server IP",    scale(120))
 
 	// ---- network text area (hidden initially) ----
 	hwndListNetwork, _ = createWindowEx(

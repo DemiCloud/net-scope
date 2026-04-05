@@ -13,26 +13,28 @@ import (
 
 // ServiceCmd is sent by the GUI to the service.
 type ServiceCmd struct {
-	// Cmd is one of: "scan", "stop", "shutdown"
+	// Cmd is one of: "scan", "stop", "dhcp-start", "dhcp-stop", "shutdown"
 	Cmd    string  `json:"cmd"`
 	Target string  `json:"target,omitempty"`
 	Config *Config `json:"config,omitempty"`
 }
 
 // ServiceMsg is sent by the service to the GUI.
-// Exactly one of Ready/Result/Done/Err is meaningful per message.
+// Exactly one of Ready/Result/Done/DHCP/Err is meaningful per message.
 type ServiceMsg struct {
 	// Ready is sent once after connection is established.
 	// Elevated reports whether the service process is running as admin.
-	Ready    bool       `json:"ready,omitempty"`
-	Elevated bool       `json:"elevated,omitempty"`
+	Ready    bool        `json:"ready,omitempty"`
+	Elevated bool        `json:"elevated,omitempty"`
 	// Result carries a single scanned host.
-	Result   *Result    `json:"result,omitempty"`
+	Result   *Result     `json:"result,omitempty"`
 	// Done marks end of a scan; Stats is populated.
-	Done     bool       `json:"done,omitempty"`
-	Stats    *ScanStats `json:"stats,omitempty"`
+	Done     bool        `json:"done,omitempty"`
+	Stats    *ScanStats  `json:"stats,omitempty"`
+	// DHCP carries a single passively-observed DHCP packet.
+	DHCP     *DHCPEvent  `json:"dhcp,omitempty"`
 	// Err carries a human-readable error string.
-	Err      string     `json:"err,omitempty"`
+	Err      string      `json:"err,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,7 @@ func RunServiceConn(conn net.Conn) error {
 	}
 
 	var scanCancel context.CancelFunc
+	var dhcpCancel context.CancelFunc
 
 	for {
 		var cmd ServiceCmd
@@ -99,7 +102,42 @@ func RunServiceConn(conn net.Conn) error {
 				scanCancel = nil
 			}
 
+		case "dhcp-start":
+			if dhcpCancel != nil {
+				break // already running
+			}
+			if !IsElevated() {
+				_ = enc.Encode(ServiceMsg{Err: "dhcp-start: requires elevation"})
+				continue
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			dhcpCancel = cancel
+			ch := make(chan DHCPEvent, 64)
+			if err := ListenDHCP(ctx, ch); err != nil {
+				dhcpCancel()
+				dhcpCancel = nil
+				_ = enc.Encode(ServiceMsg{Err: "dhcp-start: " + err.Error()})
+				continue
+			}
+			go func() {
+				for evt := range ch {
+					e := evt
+					if werr := enc.Encode(ServiceMsg{DHCP: &e}); werr != nil {
+						return
+					}
+				}
+			}()
+
+		case "dhcp-stop":
+			if dhcpCancel != nil {
+				dhcpCancel()
+				dhcpCancel = nil
+			}
+
 		case "shutdown":
+			if dhcpCancel != nil {
+				dhcpCancel()
+			}
 			return nil
 
 		default:

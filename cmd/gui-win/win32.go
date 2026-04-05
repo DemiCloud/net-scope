@@ -96,6 +96,7 @@ const (
 	WM_FIRST_RUN     = WM_APP + 5 // posted to trigger first-run settings dialog
 	WM_SERVICE_UP    = WM_APP + 6 // sweep service connected and ready
 	WM_SERVICE_DOWN  = WM_APP + 7 // sweep service disconnected
+	WM_DHCP_EVENT    = WM_APP + 8 // DHCP packet observed by elevated service
 
 	// Control IDs
 	IDC_TARGET       = 101

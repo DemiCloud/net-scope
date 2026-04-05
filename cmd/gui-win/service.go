@@ -182,6 +182,13 @@ func sendScanViaService(hwnd HWND, target string, cfg sweep.Config) {
 				pendingMu.Unlock()
 				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), 0)
 			}
+			if msg.DHCP != nil {
+				pendingDHCPMu.Lock()
+				idx := len(pendingDHCP)
+				pendingDHCP = append(pendingDHCP, *msg.DHCP)
+				pendingDHCPMu.Unlock()
+				postMessage(hwnd, WM_DHCP_EVENT, uintptr(idx), 0)
+			}
 		}
 		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 	}()
@@ -196,6 +203,19 @@ func stopServiceScan() {
 	if enc != nil {
 		_ = enc.Encode(sweep.ServiceCmd{Cmd: "stop"})
 	}
+}
+
+// startDHCPCapture tells the elevated service to begin passive DHCP capture.
+// Events stream back as ServiceMsg{DHCP: &evt} and are posted to the UI thread
+// as WM_DHCP_EVENT. Safe to call when no service is running (no-op).
+func startDHCPCapture(hwnd HWND) {
+	serviceMu.Lock()
+	enc := serviceEnc
+	serviceMu.Unlock()
+	if enc == nil {
+		return
+	}
+	_ = enc.Encode(sweep.ServiceCmd{Cmd: "dhcp-start"})
 }
 
 // statusForService returns a status bar string describing the service state.
