@@ -27,9 +27,10 @@ var (
 	hwndScan          HWND
 	hwndStop          HWND
 	hwndAdminCheck    HWND // "Admin / ARP" checkbox
-	hwndList          HWND
-	hwndListBroadcast HWND
-	hwndListHealth    HWND // read-only text area for health stats
+	hwndList       HWND
+	hwndListMDNS   HWND // mDNS tab
+	hwndListSSDP   HWND // SSDP tab
+	hwndListHealth HWND // read-only text area for health stats
 	hwndTabCtrl       HWND
 	hwndStatus        HWND
 )
@@ -139,14 +140,17 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if hdr.IdFrom == IDC_TABS && hdr.Code == TCN_SELCHANGE {
 			tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 			showWindow(hwndList, SW_HIDE)
-			showWindow(hwndListBroadcast, SW_HIDE)
+			showWindow(hwndListMDNS, SW_HIDE)
+			showWindow(hwndListSSDP, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
 			switch tab {
 			case 0:
 				showWindow(hwndList, SW_SHOW)
 			case 1:
-				showWindow(hwndListBroadcast, SW_SHOW)
+				showWindow(hwndListMDNS, SW_SHOW)
 			case 2:
+				showWindow(hwndListSSDP, SW_SHOW)
+			case 3:
 				showWindow(hwndListHealth, SW_SHOW)
 			}
 		}
@@ -165,13 +169,19 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
-		// Right-click on broadcast list → simple copy menu.
-		if hdr.IdFrom == IDC_LIST_BCAST && hdr.Code == NM_RCLICK {
+		// Right-click on mDNS list → copy menu.
+		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP) && hdr.Code == NM_RCLICK {
+			hwndSrc := hwndListMDNS
+			numCols := int32(8)
+			if hdr.IdFrom == IDC_LIST_SSDP {
+				hwndSrc = hwndListSSDP
+				numCols = 5
+			}
 			pt := getCursorPos()
 			cpt := POINT{X: pt.X, Y: pt.Y}
-			procScreenToClient.Call(uintptr(hwndListBroadcast), uintptr(unsafe.Pointer(&cpt)))
+			procScreenToClient.Call(uintptr(hwndSrc), uintptr(unsafe.Pointer(&cpt)))
 			htInfo := LVHITTESTINFO{Pt: cpt}
-			row := int32(sendMessage(hwndListBroadcast, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo))))
+			row := int32(sendMessage(hwndSrc, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo))))
 			if row >= 0 {
 				menu := createPopupMenu()
 				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_IP, "Copy IP")
@@ -180,9 +190,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				destroyMenu(menu)
 				switch cmd {
 				case IDM_BCAST_COPY_IP:
-					copyToClipboard(HWND(hwnd), listViewGetCellText(hwndListBroadcast, row, 0))
+					copyToClipboard(HWND(hwnd), listViewGetCellText(hwndSrc, row, 0))
 				case IDM_BCAST_COPY_ROW:
-					copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndListBroadcast, row, 5))
+					copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndSrc, row, numCols))
 				}
 			}
 			return 0
@@ -258,7 +268,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingBcastMu.Unlock()
 		if e.ip != "" {
-			listViewAddBroadcastRow(hwndListBroadcast, e.ip, e.svc)
+			if e.svc.Source == "ssdp" {
+				listViewAddSSDPRow(hwndListSSDP, e.ip, e.svc)
+			} else {
+				listViewAddMDNSRow(hwndListMDNS, e.ip, e.svc)
+			}
 			bcastCount++
 			setStatusPart(1, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
 		}
@@ -287,9 +301,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
 		}
 
-		// Mirror any services to the Broadcast tab.
+		// Mirror any services to the appropriate broadcast tab.
 		for _, svc := range r.Services {
-			listViewAddBroadcastRow(hwndListBroadcast, ipStr, svc)
+			if svc.Source == "ssdp" {
+				listViewAddSSDPRow(hwndListSSDP, ipStr, svc)
+			} else {
+				listViewAddMDNSRow(hwndListMDNS, ipStr, svc)
+			}
 		}
 		return 0
 
@@ -351,8 +369,9 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		0, toolbarH, 1160, tabCtrlH, hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Hosts")
-	insertTab(hwndTabCtrl, 1, "Broadcast")
-	insertTab(hwndTabCtrl, 2, "Health")
+	insertTab(hwndTabCtrl, 1, "mDNS")
+	insertTab(hwndTabCtrl, 2, "SSDP")
+	insertTab(hwndTabCtrl, 3, "Health")
 
 	listTop := int32(toolbarH + tabCtrlH)
 
@@ -374,18 +393,32 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", 300)
 	listViewAddColumn(hwndList, colServices, "Services",    200)
 
-	// ---- broadcast listview (hidden initially) ----
-	hwndListBroadcast, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS, // no WS_VISIBLE
-		0, listTop, 1160, 600, hwnd, IDC_LIST_BCAST, inst)
-	sendMessage(hwndListBroadcast, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+	// ---- mDNS listview (hidden initially) ----
+	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
+		0, listTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
+	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
+	listViewAddColumn(hwndListMDNS, 0, "IP", 120)
+	listViewAddColumn(hwndListMDNS, 1, "Name", 200)
+	listViewAddColumn(hwndListMDNS, 2, "Service Type", 180)
+	listViewAddColumn(hwndListMDNS, 3, "Friendly Name", 170)
+	listViewAddColumn(hwndListMDNS, 4, "Model", 140)
+	listViewAddColumn(hwndListMDNS, 5, "Ver", 55)
+	listViewAddColumn(hwndListMDNS, 6, "Status", 60)
+	listViewAddColumn(hwndListMDNS, 7, "Extra", 220)
 
-	listViewAddColumn(hwndListBroadcast, 0, "IP", 120)
-	listViewAddColumn(hwndListBroadcast, 1, "Source", 70)
-	listViewAddColumn(hwndListBroadcast, 2, "Name", 220)
-	listViewAddColumn(hwndListBroadcast, 3, "Type", 220)
-	listViewAddColumn(hwndListBroadcast, 4, "Details", 500)
+	// ---- SSDP listview (hidden initially) ----
+	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
+		0, listTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
+	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
+	listViewAddColumn(hwndListSSDP, 0, "IP", 120)
+	listViewAddColumn(hwndListSSDP, 1, "Name", 220)
+	listViewAddColumn(hwndListSSDP, 2, "Device Type", 250)
+	listViewAddColumn(hwndListSSDP, 3, "Location", 260)
+	listViewAddColumn(hwndListSSDP, 4, "Server", 250)
 
 	// ---- health text area (hidden initially) ----
 	hwndListHealth, _ = createWindowEx(
@@ -439,7 +472,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 		listH = 0
 	}
 	moveWindow(hwndList, 0, listTop, width, listH)
-	moveWindow(hwndListBroadcast, 0, listTop, width, listH)
+	moveWindow(hwndListMDNS, 0, listTop, width, listH)
+	moveWindow(hwndListSSDP, 0, listTop, width, listH)
 	moveWindow(hwndListHealth, 0, listTop, width, listH)
 }
 

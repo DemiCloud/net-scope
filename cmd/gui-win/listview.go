@@ -149,8 +149,9 @@ func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
 	setSubItem(hwnd, row, colServices, svcStr)
 }
 
-// listViewAddBroadcastRow appends a single service entry to the Broadcast listview.
-func listViewAddBroadcastRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+// listViewAddMDNSRow appends a single mDNS service entry.
+// Columns: IP | Name | Service Type | Friendly Name | Model | Ver | Status | Extra
+func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	ipPtr := utf16(ip)
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
@@ -161,80 +162,79 @@ func listViewAddBroadcastRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	if row < 0 {
 		return
 	}
-	setSubItem(hwnd, row, 1, svc.Source)
-	setSubItem(hwnd, row, 2, svc.Name)
-	setSubItem(hwnd, row, 3, svc.Type)
-	setSubItem(hwnd, row, 4, formatTXTDetails(svc.Details))
+	txt := parseTXTMap(svc.Details)
+	setSubItem(hwnd, row, 1, svc.Name)
+	setSubItem(hwnd, row, 2, svc.Type)
+	setSubItem(hwnd, row, 3, txtOr(txt, "fn", ""))
+	setSubItem(hwnd, row, 4, txtOr(txt, "md", txtOr(txt, "model", "")))
+	setSubItem(hwnd, row, 5, txtOr(txt, "ve", txtOr(txt, "srcvers", "")))
+	setSubItem(hwnd, row, 6, txtOr(txt, "st", ""))
+	setSubItem(hwnd, row, 7, extraTXT(txt, "fn", "md", "model", "ve", "srcvers", "st",
+		"id", "cd", "rm", "nf", "pk", "pi", "psi", "ic", "ca", "bs"))
 }
 
-// formatTXTDetails converts raw mDNS/SSDP TXT key=value records into a
-// human-readable summary. Well-known keys (DNS-SD RFC 6763, Google Cast,
-// AirPlay, IPP) are mapped to readable labels; opaque hex identifiers and
-// empty values are suppressed.
-func formatTXTDetails(records []string) string {
-	// Human-readable labels for well-known DNS-SD / protocol TXT keys.
-	labels := map[string]string{
-		// Generic DNS-SD
-		"path":     "Path",
-		"txtvers":  "TXTv",
-		// Google Cast / Chromecast
-		"fn":       "Name",
-		"md":       "Model",
-		"ve":       "Ver",
-		"st":       "Status",
-		"ca":       "Caps",
-		"bs":       "BT",
-		"ic":       "Icon",
-		"rs":       "State",
-		// AirPlay
-		"deviceid": "DeviceID",
-		"features": "Features",
-		"flags":    "Flags",
-		"model":    "Model",
-		"srcvers":  "Ver",
-		// IPP / printers
-		"ty":       "Type",
-		"pdl":      "Formats",
-		"adminurl": "AdminURL",
-		"rp":       "Path",
-		// Suppress noisy/unknown keys (empty label = skip)
-		"nf": "",
-		"rm": "",
+// listViewAddSSDPRow appends a single SSDP entry.
+// Columns: IP | Name | Device Type | Location | Server
+func listViewAddSSDPRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+	ipPtr := utf16(ip)
+	item := LVITEM{
+		Mask:    LVIF_TEXT,
+		IItem:   0x7fffffff,
+		PszText: ipPtr,
 	}
-	// Opaque identifier keys — always skip regardless of value length.
-	suppressKeys := map[string]bool{
-		"id": true, "cd": true, "pk": true, "pi": true, "psi": true,
+	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return
 	}
+	loc := ""
+	server := ""
+	for _, d := range svc.Details {
+		if strings.HasPrefix(d, "location:") {
+			loc = strings.TrimPrefix(d, "location:")
+		} else if strings.HasPrefix(d, "server:") {
+			server = strings.TrimPrefix(d, "server:")
+		}
+	}
+	setSubItem(hwnd, row, 1, svc.Name)
+	setSubItem(hwnd, row, 2, svc.Type)
+	setSubItem(hwnd, row, 3, loc)
+	setSubItem(hwnd, row, 4, server)
+}
 
-	var parts []string
-	for _, rec := range records {
-		eq := strings.IndexByte(rec, '=')
+// parseTXTMap converts a slice of "key=value" TXT records into a lowercase-keyed map.
+func parseTXTMap(records []string) map[string]string {
+	m := make(map[string]string, len(records))
+	for _, r := range records {
+		eq := strings.IndexByte(r, '=')
 		if eq < 0 {
-			// No '=' — display as-is if non-empty.
-			if rec != "" {
-				parts = append(parts, rec)
-			}
 			continue
 		}
-		k := strings.ToLower(rec[:eq])
-		v := rec[eq+1:]
-		if v == "" {
-			continue // skip empty values
-		}
-		if suppressKeys[k] {
+		m[strings.ToLower(r[:eq])] = r[eq+1:]
+	}
+	return m
+}
+
+// txtOr returns the value for key from m, or fallback if missing/empty.
+func txtOr(m map[string]string, key, fallback string) string {
+	if v, ok := m[key]; ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// extraTXT returns key: value pairs for all keys not in the skip list,
+// suppressing opaque hex values.
+func extraTXT(m map[string]string, skip ...string) string {
+	skipSet := make(map[string]bool, len(skip))
+	for _, s := range skip {
+		skipSet[s] = true
+	}
+	var parts []string
+	for k, v := range m {
+		if skipSet[k] || v == "" || isOpaqueHex(v) {
 			continue
 		}
-		if isOpaqueHex(v) {
-			continue
-		}
-		label, known := labels[k]
-		if known && label == "" {
-			continue // explicitly suppressed key
-		}
-		if !known {
-			label = k // unknown key: show key name as-is
-		}
-		parts = append(parts, label+": "+v)
+		parts = append(parts, k+": "+v)
 	}
 	if len(parts) == 0 {
 		return "—"

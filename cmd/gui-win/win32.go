@@ -87,8 +87,9 @@ const (
 	IDC_LIST      = 105
 	IDC_STATUS    = 106
 	IDC_TABS      = 107
-	IDC_LIST_BCAST = 108
-	IDC_ADMIN     = 109 // "Admin / ARP" checkbox
+	IDC_LIST_MDNS  = 108
+	IDC_LIST_SSDP  = 110
+	IDC_ADMIN      = 109 // "Admin / ARP" checkbox
 
 	// Menu command IDs
 	IDM_FILE_EXIT        = 201
