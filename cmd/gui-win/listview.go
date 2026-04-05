@@ -164,7 +164,96 @@ func listViewAddBroadcastRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	setSubItem(hwnd, row, 1, svc.Source)
 	setSubItem(hwnd, row, 2, svc.Name)
 	setSubItem(hwnd, row, 3, svc.Type)
-	setSubItem(hwnd, row, 4, strings.Join(svc.Details, "; "))
+	setSubItem(hwnd, row, 4, formatTXTDetails(svc.Details))
+}
+
+// formatTXTDetails converts raw mDNS/SSDP TXT key=value records into a
+// human-readable summary. Well-known keys (DNS-SD RFC 6763, Google Cast,
+// AirPlay, IPP) are mapped to readable labels; opaque hex identifiers and
+// empty values are suppressed.
+func formatTXTDetails(records []string) string {
+	// Human-readable labels for well-known DNS-SD / protocol TXT keys.
+	labels := map[string]string{
+		// Generic DNS-SD
+		"path":     "Path",
+		"txtvers":  "TXTv",
+		// Google Cast / Chromecast
+		"fn":       "Name",
+		"md":       "Model",
+		"ve":       "Ver",
+		"st":       "Status",
+		"ca":       "Caps",
+		"bs":       "BT",
+		"ic":       "Icon",
+		"rs":       "State",
+		// AirPlay
+		"deviceid": "DeviceID",
+		"features": "Features",
+		"flags":    "Flags",
+		"model":    "Model",
+		"srcvers":  "Ver",
+		// IPP / printers
+		"ty":       "Type",
+		"pdl":      "Formats",
+		"adminurl": "AdminURL",
+		"rp":       "Path",
+		// Suppress noisy/unknown keys (empty label = skip)
+		"nf": "",
+		"rm": "",
+	}
+	// Opaque identifier keys — always skip regardless of value length.
+	suppressKeys := map[string]bool{
+		"id": true, "cd": true, "pk": true, "pi": true, "psi": true,
+	}
+
+	var parts []string
+	for _, rec := range records {
+		eq := strings.IndexByte(rec, '=')
+		if eq < 0 {
+			// No '=' — display as-is if non-empty.
+			if rec != "" {
+				parts = append(parts, rec)
+			}
+			continue
+		}
+		k := strings.ToLower(rec[:eq])
+		v := rec[eq+1:]
+		if v == "" {
+			continue // skip empty values
+		}
+		if suppressKeys[k] {
+			continue
+		}
+		if isOpaqueHex(v) {
+			continue
+		}
+		label, known := labels[k]
+		if known && label == "" {
+			continue // explicitly suppressed key
+		}
+		if !known {
+			label = k // unknown key: show key name as-is
+		}
+		parts = append(parts, label+": "+v)
+	}
+	if len(parts) == 0 {
+		return "—"
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
+// isOpaqueHex returns true if v is a pure hex string longer than 8 characters
+// (likely a hash, token, or device UUID with no display value).
+func isOpaqueHex(v string) bool {
+	if len(v) <= 8 {
+		return false
+	}
+	for _, c := range v {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // setSubItem sets the text for column col of an existing row.
