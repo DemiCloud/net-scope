@@ -1,13 +1,13 @@
 // Package config loads and persists net-sweep settings from a TOML file.
 //
 // Search order:
-//  1. ./config.toml          (current directory — good for CLI per-project use)
-//  2. <userConfigDir>/net-sweep/config.toml
-//     Linux:   ~/.config/net-sweep/config.toml
-//     Windows: %APPDATA%\net-sweep\config.toml
+//  1. <userConfigDir>/demicloud/net-sweep/config.toml  (preferred location)
+//     Windows: %APPDATA%\demicloud\net-sweep\config.toml
+//     Linux:   ~/.config/demicloud/net-sweep/config.toml
+//  2. ./config.toml  (current directory override for CLI per-project use)
 //
 // If no file is found, built-in defaults are used and a starter file is written
-// to the user config directory.
+// to the user config directory (#1).
 package config
 
 import (
@@ -52,6 +52,12 @@ type ScanConfig struct {
 	// Interface name to use for ARP scanning, e.g. "eth0".
 	// Leave empty to auto-detect from routing table.
 	Interface string `toml:"interface"`
+
+	// BannerGrab enables lightweight HTTP/SSH/FTP banner grabbing from open ports.
+	BannerGrab bool `toml:"banner_grab"`
+
+	// NetBIOS enables NetBIOS Name Service queries (UDP 137) for Windows host names.
+	NetBIOS bool `toml:"netbios"`
 }
 
 // Default returns the built-in defaults. Used when no config file exists
@@ -65,6 +71,7 @@ func Default() Config {
 				21,   // FTP
 				22,   // SSH
 				23,   // Telnet
+				25,   // SMTP
 				80,   // HTTP
 				443,  // HTTPS
 				445,  // SMB
@@ -75,6 +82,8 @@ func Default() Config {
 			PingFirst:       true,
 			BroadcastListen: "3s",
 			SNMPCommunity:   "public",
+			BannerGrab:      true,
+			NetBIOS:         true,
 		},
 	}
 }
@@ -93,12 +102,9 @@ func Load() (Config, string, error) {
 		}
 	}
 
-	// No file found — write a starter to the user config dir and use defaults.
-	cfg := Default()
-	if dir, err := userConfigPath(); err == nil {
-		_ = writeDefault(dir)
-	}
-	return cfg, "", nil
+	// No file found — return defaults without writing anything to disk.
+	// The GUI will prompt the user on first save.
+	return Default(), "", nil
 }
 
 // ToSweepConfig converts the TOML config into a sweep.Config.
@@ -114,6 +120,8 @@ func (c Config) ToSweepConfig() sweep.Config {
 		BroadcastListen: bl,
 		SNMPCommunity:   c.Scan.SNMPCommunity,
 		Interface:       c.Scan.Interface,
+		BannerGrab:      c.Scan.BannerGrab,
+		NetBIOS:         c.Scan.NetBIOS,
 	}
 }
 
@@ -122,10 +130,11 @@ func (c Config) ToSweepConfig() sweep.Config {
 // ---------------------------------------------------------------------------
 
 func searchPaths() []string {
-	paths := []string{"config.toml"}
+	var paths []string
 	if p, err := userConfigPath(); err == nil {
 		paths = append(paths, p)
 	}
+	paths = append(paths, "config.toml")
 	return paths
 }
 
@@ -134,7 +143,7 @@ func userConfigPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "net-sweep", File), nil
+	return filepath.Join(dir, "demicloud", "net-sweep", File), nil
 }
 
 func loadFile(path string) (Config, error) {
@@ -163,10 +172,15 @@ func Save(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	return SaveTo(cfg, p)
+}
+
+// SaveTo writes cfg to an explicit path as TOML.
+func SaveTo(cfg Config, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	f, err := os.Create(p)
+	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
@@ -182,6 +196,16 @@ func ConfigPath() string {
 		return ""
 	}
 	return p
+}
+
+// ExeLocalPath returns the path to config.toml in the same directory as the
+// running executable. Useful for portable / side-by-side installs.
+func ExeLocalPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return File
+	}
+	return filepath.Join(filepath.Dir(exe), File)
 }
 
 // ParseTimeout parses the Timeout string, returning 1s on error.
@@ -208,7 +232,7 @@ timeout = "1s"
 concurrency = 256
 
 # TCP ports to scan on every alive host.
-ports = [21, 22, 23, 80, 443, 445, 3389, 8080, 8443]
+ports = [21, 22, 23, 25, 80, 443, 445, 3389, 8080, 8443]
 
 # Skip TCP scan on hosts that don't respond to ICMP ping.
 ping_first = true
@@ -223,4 +247,10 @@ snmp_community = "public"
 # Network interface for ARP scanning (e.g. "eth0", "Ethernet").
 # Leave empty to auto-detect from the target subnet.
 interface = ""
+
+# Grab service banners from open ports (HTTP Server header, SSH version, FTP/SMTP greeting).
+banner_grab = true
+
+# Query NetBIOS Name Service (UDP 137) for Windows computer names.
+netbios = true
 `
