@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/demicloud/net-sweep/internal/config"
@@ -24,6 +25,7 @@ var (
 	hwndTarget        HWND
 	hwndScan          HWND
 	hwndStop          HWND
+	hwndAdminCheck    HWND // "Admin / ARP" checkbox
 	hwndList          HWND
 	hwndListBroadcast HWND
 	hwndListHealth    HWND // read-only text area for health stats
@@ -53,6 +55,55 @@ var (
 )
 
 // ---------------------------------------------------------------------------
+// Background broadcast listener state
+// ---------------------------------------------------------------------------
+
+var (
+	bcastCancel    context.CancelFunc
+	bcastMu        sync.Mutex
+	bcastCount     int // total services received since app start
+	pendingBcast   []bcastEntry
+	pendingBcastMu sync.Mutex
+)
+
+type bcastEntry struct {
+	ip  string
+	svc sweep.ServiceInfo
+}
+
+func startBroadcastListener() {
+	bcastMu.Lock()
+	defer bcastMu.Unlock()
+	if bcastCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	bcastCancel = cancel
+	go func() {
+		bl, err := time.ParseDuration(appConfig.Scan.BroadcastListen)
+		if err != nil || bl <= 0 {
+			bl = 3 * time.Second
+		}
+		sweep.ListenBroadcast(ctx, bl, func(ip string, svc sweep.ServiceInfo) {
+			pendingBcastMu.Lock()
+			idx := len(pendingBcast)
+			pendingBcast = append(pendingBcast, bcastEntry{ip, svc})
+			pendingBcastMu.Unlock()
+			postMessage(hwndMain, WM_BCAST_SVC, uintptr(idx), 0)
+		})
+	}()
+}
+
+func stopBroadcastListener() {
+	bcastMu.Lock()
+	defer bcastMu.Unlock()
+	if bcastCancel != nil {
+		bcastCancel()
+		bcastCancel = nil
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Layout constants
 // ---------------------------------------------------------------------------
 
@@ -69,6 +120,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	switch uint32(msg) {
 	case WM_CREATE:
 		createControls(HWND(hwnd))
+		startBroadcastListener()
 		return 0
 
 	case WM_SIZE:
@@ -160,6 +212,20 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		return 0
 
+	case WM_BCAST_SVC:
+		pendingBcastMu.Lock()
+		var e bcastEntry
+		if int(wParam) < len(pendingBcast) {
+			e = pendingBcast[int(wParam)]
+		}
+		pendingBcastMu.Unlock()
+		if e.ip != "" {
+			listViewAddBroadcastRow(hwndListBroadcast, e.ip, e.svc)
+			bcastCount++
+			setStatusPart(1, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
+		}
+		return 0
+
 	case WM_SCAN_RESULT:
 		pendingMu.Lock()
 		r := pendingResults[int(wParam)]
@@ -171,7 +237,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			rowResultMap[row] = r
 			if r.Alive {
 				liveCount++
-				setStatus(fmt.Sprintf("Found %d host(s)…", liveCount))
+				setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
 			}
 		} else if r.Alive {
 			// Broadcast-only or out-of-range host.
@@ -180,7 +246,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			listViewUpdateRow(hwndList, row, r)
 			rowResultMap[row] = r
 			liveCount++
-			setStatus(fmt.Sprintf("Found %d host(s)…", liveCount))
+			setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
 		}
 
 		// Mirror any services to the Broadcast tab.
@@ -195,7 +261,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		scanMu.Unlock()
 		enableWindow(hwndScan, true)
 		enableWindow(hwndStop, false)
-		setStatus(fmt.Sprintf("Done — %d host(s) found.", liveCount))
+		setStatusPart(0, fmt.Sprintf("Hosts: %d found", liveCount))
+		setStatusPart(2, "Scan complete")
 		// Refresh health tab text.
 		pendingMu.Lock()
 		stats := lastStats
@@ -205,6 +272,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DESTROY:
 		stopScan()
+		stopBroadcastListener()
 		postQuitMessage(0)
 		return 0
 	}
@@ -219,17 +287,26 @@ func createControls(hwnd HWND) {
 	inst := getModuleHandle()
 
 	// ---- toolbar ----
-	// [Target label] [target input ────────────────────────────────] [Scan] [Stop]
+	// [Target label] [target input ──────────] [Scan] [Stop] [☐ Admin / ARP]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, 8, 10, 48, 20, hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
-		58, 8, 680, 22, hwnd, IDC_TARGET, inst)
+		58, 8, 620, 22, hwnd, IDC_TARGET, inst)
 
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 748, 7, 80, 24, hwnd, IDC_SCAN, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 688, 7, 80, 24, hwnd, IDC_SCAN, inst)
 	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 836, 7, 80, 24, hwnd, IDC_STOP, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 776, 7, 80, 24, hwnd, IDC_STOP, inst)
 	enableWindow(hwndStop, false)
+
+	// "Admin / ARP" checkbox: opt into raw-socket probes (ARP + ICMP raw).
+	// Checked automatically when the process is already elevated.
+	hwndAdminCheck, _ = createWindowEx(0, "BUTTON", "Admin / ARP",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		868, 9, 110, 20, hwnd, IDC_ADMIN, inst)
+	if isElevated() {
+		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_CHECKED, 0)
+	}
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
@@ -278,8 +355,15 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		0, listTop, 1160, 600, hwnd, 0, inst)
 
-	// ---- status bar ----
-	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "Ready — enter a target and click Scan")
+	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
+	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
+	// Parts: first two fixed-width, last part fills the remainder (-1).
+	// We set widths after the window is shown (resizeControls will re-set them),
+	// but initialise now so text is visible immediately.
+	setStatusParts(400, 650)
+	setStatusPart(0, "Ready")
+	setStatusPart(1, "Broadcast: listening…")
+	setStatusPart(2, "Enter a target and click Scan")
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
 	appFont = createUIFont()
@@ -300,10 +384,14 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	width := loword(lParam)
 	height := hiword(lParam)
 
-	// Status bar resizes itself.
+	// Status bar resizes itself; then recompute part boundaries.
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
+	// Three equal-ish parts; last one stretches to fill.
+	p1 := width / 3
+	p2 := p1 * 2
+	setStatusParts(p1, p2)
 
 	moveWindow(hwndTabCtrl, 0, toolbarH, width, tabCtrlH)
 
@@ -348,23 +436,28 @@ func startScan(hwnd HWND) {
 		}
 	}
 
-	// Prompt for elevation if needed — raw ARP sockets require admin on Windows.
-	if !isElevated() {
+	// Read the Admin / ARP checkbox — tells us whether to use raw sockets.
+	wantAdmin := sendMessage(hwndAdminCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
+
+	// If the user wants admin probes but the process is not elevated, offer UAC.
+	if wantAdmin && !isElevated() {
 		r := messageBox(hwnd,
-			"net-sweep is not running as Administrator.\n"+
-				"MAC addresses and vendor lookup require elevated privileges.\n\n"+
+			"\"Admin / ARP\" is checked but net-sweep is not running as Administrator.\n"+
+				"MAC addresses and ARP discovery require elevated privileges.\n\n"+
 				"Relaunch as Administrator now?\n\n"+
-				"(Choose No to scan anyway — hosts will be discovered but MACs will be missing.)",
-			"Administrator Privileges Recommended",
+				"(Choose No to scan without ARP — hosts found via ICMP/TCP.)",
+			"Administrator Privileges",
 			MB_YESNO|MB_ICONWARNING)
 		if r == IDYES {
 			if exe, err := os.Executable(); err == nil {
 				shellExecute(0, "runas", exe, target, "", SW_SHOW)
 			}
-			postQuitMessage(0)
+			// Don't quit — let the user keep working in the non-elevated instance.
 			return
 		}
-		// No → continue scan without elevation
+		// No → uncheck and continue without ARP.
+		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_UNCHECKED, 0)
+		wantAdmin = false
 	}
 
 	// Expand target first so we can pre-populate the list.
@@ -403,12 +496,22 @@ func startScan(hwnd HWND) {
 
 	enableWindow(hwndScan, false)
 	enableWindow(hwndStop, true)
-	setStatus(fmt.Sprintf("Scanning %s… (%d hosts)", target, len(hosts)))
+	setStatusPart(2, fmt.Sprintf("Scanning %s… (%d hosts)", target, len(hosts)))
 
 	appCfg, _, _ := config.Load()
 	scanCfg := appCfg.ToSweepConfig()
+	if !wantAdmin {
+		// Without elevation skip raw ARP; ICMP (UDP fallback) and TCP still work.
+		scanCfg.Interface = ""
+	}
 
 	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				writeCrashLog(hwnd, p)
+				postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+			}
+		}()
 		sc := sweep.NewScanner(scanCfg)
 		ch, err := sc.Scan(ctx, target)
 		if err != nil {
@@ -496,10 +599,22 @@ func exportResults(hwnd HWND, format string) {
 
 const healthPlaceholder = "Run a scan to populate health statistics."
 
-func setStatus(s string) {
-	p, _ := syscall.UTF16PtrFromString(s)
-	sendMessage(hwndStatus, SB_SETTEXT, 0, uintptr(unsafe.Pointer(p)))
+// setStatusParts sets the right-edge pixel positions for the three status bar
+// parts. Pass p1, p2 as the right edge of part 0 and part 1; part 2 fills
+// the remainder (represented as -1).
+func setStatusParts(p1, p2 int32) {
+	parts := [3]int32{p1, p2, -1}
+	sendMessage(hwndStatus, SB_SETPARTS, 3, uintptr(unsafe.Pointer(&parts[0])))
 }
+
+// setStatusPart sets the text of one status bar part (0=Hosts, 1=Broadcast, 2=State).
+func setStatusPart(part uintptr, s string) {
+	p, _ := syscall.UTF16PtrFromString(s)
+	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
+}
+
+// setStatus is a convenience wrapper that updates the rightmost (state) part.
+func setStatus(s string) { setStatusPart(2, s) }
 
 // updateHealthTab fills the Health text area with stats from the last scan.
 func updateHealthTab(stats sweep.ScanStats) {
