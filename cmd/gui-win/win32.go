@@ -155,9 +155,14 @@ const (
 	NM_CUSTOMDRAW    = uint32(0xFFFFFFF4)
 	CDDS_PREPAINT    = 0x00000001
 	CDDS_ITEMPREPAINT = 0x00010001
+	CDDS_SUBITEM     = 0x00020000 // OR'd with CDDS_ITEMPREPAINT for per-subitem notifications
 	CDRF_DODEFAULT   = 0x00000000
-	CDRF_NOTIFYITEMDRAW = 0x00000020
+	CDRF_NOTIFYITEMDRAW = 0x00000020 // also CDRF_NOTIFYSUBITEMDRAW — same value
 	CDRF_NEWFONT     = 0x00000002
+
+	// WM_CTLCOLORSTATIC — sent by a STATIC (or read-only EDIT) to its parent
+	// before painting; parent returns an HBRUSH and can set text/background colours.
+	WM_CTLCOLORSTATIC = 0x0138
 
 	// GDI
 	SRCCOPY      = 0x00CC0020

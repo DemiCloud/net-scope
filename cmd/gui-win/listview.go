@@ -56,13 +56,10 @@ func listViewInsertPendingRow(hwnd HWND, ip string) int32 {
 
 // listViewUpdateRow writes all result fields into an existing row.
 func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
-	status := "—"
 	if r.Alive {
-		status = "●"
-	}
-	setSubItem(hwnd, row, colStatus, status)
-
-	if !r.Alive {
+		setSubItem(hwnd, row, colStatus, "●")
+	} else {
+		setSubItem(hwnd, row, colStatus, "✕")
 		return
 	}
 

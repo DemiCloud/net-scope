@@ -29,6 +29,14 @@ func scale(n int32) int32 {
 	return int32(uint32(n) * currentDPI / 96)
 }
 
+// Elevation bar status brushes — created in createControls, used in WM_CTLCOLORSTATIC.
+// Win32 COLORREF is 0x00BBGGRR (low byte = red).
+var (
+	brushElevGrey  HBRUSH // service not running  — light grey  RGB(235,235,235)
+	brushElevAmber HBRUSH // running, unelevated  — light amber RGB(255,243,205)
+	brushElevGreen HBRUSH // running, elevated    — light green RGB(212,237,218)
+)
+
 var (
 	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
 	hwndMain       HWND
@@ -159,6 +167,27 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			SWP_NOZORDER|SWP_NOACTIVATE)
 		return 0
 
+	case WM_CTLCOLORSTATIC:
+		// Colour the elevation status strip based on service state.
+		if HWND(lParam) == hwndElevLabel && brushElevGrey != 0 {
+			hdc := wParam
+			var bg, fg uint32
+			var brush HBRUSH
+			switch {
+			case serviceRunning() && serviceElevated:
+				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
+			case serviceRunning():
+				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // amber
+			default:
+				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
+			}
+			setBkMode(hdc, OPAQUE)
+			setTextColor(hdc, fg)
+			setBkColor(hdc, bg)
+			return uintptr(brush)
+		}
+		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+
 	case WM_SERVICE_UP:
 		setWindowText(hwndElevLabel, statusForService())
 		// Update DHCP notice text now that we know the service elevation level.
@@ -282,18 +311,38 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
-		// Custom draw: alternating row background + green dot for alive rows.
+		// Custom draw: alternating row backgrounds, dim dead rows, colour ●/✕ status dot.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_CUSTOMDRAW {
 			cd := (*NMLVCUSTOMDRAW)(unsafe.Pointer(lParam)) //nolint:govet
 			switch cd.DwDrawStage {
 			case CDDS_PREPAINT:
 				return CDRF_NOTIFYITEMDRAW
 			case CDDS_ITEMPREPAINT:
-				row := int(cd.DwItemSpec)
+				row := int32(cd.DwItemSpec)
 				if row%2 == 0 {
 					cd.ClrTextBk = 0x00FFFFFF // white
 				} else {
 					cd.ClrTextBk = 0x00F5F5F5 // very light gray
+				}
+				// Dim confirmed-dead rows so pending/alive rows stand out.
+				if r, ok := rowResultMap[row]; ok && !r.Alive {
+					cd.ClrText = 0x00A0A0A0
+				}
+				// Request per-subitem notifications to colour the status column.
+				return CDRF_NOTIFYITEMDRAW | CDRF_NEWFONT
+			case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+				// Only override the status column (col 0: ●, ✕, or …).
+				if int32(cd.ISubItem) == colStatus {
+					row := int32(cd.DwItemSpec)
+					if r, ok := rowResultMap[row]; ok {
+						if r.Alive {
+							cd.ClrText = 0x0028A028 // green  ●  RGB(40,160,40)
+						} else {
+							cd.ClrText = 0x001E1EC8 // red    ✕  RGB(200,30,30)
+						}
+					} else {
+						cd.ClrText = 0x00AAAAAA // grey   …  (pending)
+					}
 				}
 				return CDRF_NEWFONT
 			}
@@ -444,6 +493,8 @@ func createControls(hwnd HWND) {
 	}
 
 	// ---- elevation status bar (top strip) ----
+	// Label spans from the left margin up to the service button; the button
+	// sits to the right. They don't overlap, so no z-order paint conflict.
 	hwndElevLabel, _ = createWindowEx(0, "STATIC", "Service: starting…",
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
 		scale(8), 0, scale(740), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
@@ -454,6 +505,10 @@ func createControls(hwnd HWND) {
 	if elevated {
 		enableWindow(hwndServiceBtn, false)
 	}
+	// Brushes for the elevation status strip (long-lived; also freed on exit).
+	brushElevGrey  = createSolidBrush(0x00EBEBEB) // light grey
+	brushElevAmber = createSolidBrush(0x00CDF3FF) // light blue/amber
+	brushElevGreen = createSolidBrush(0x00DAEDD4) // light green
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
@@ -490,16 +545,16 @@ func createControls(hwnd HWND) {
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndList, colStatus,   "●",             40)
-	listViewAddColumn(hwndList, colIP,       "IP Address",   120)
-	listViewAddColumn(hwndList, colHost,     "Hostname",     160)
-	listViewAddColumn(hwndList, colMAC,      "MAC",          145)
-	listViewAddColumn(hwndList, colVendor,   "Vendor",       140)
-	listViewAddColumn(hwndList, colOS,       "OS",            90)
-	listViewAddColumn(hwndList, colLatency,  "Latency",       70)
-	listViewAddColumn(hwndList, colPorts,    "Ports",        110)
-	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", 300)
-	listViewAddColumn(hwndList, colServices, "Services",     200)
+	listViewAddColumn(hwndList, colStatus,   "●",              scale(40))
+	listViewAddColumn(hwndList, colIP,       "IP Address",     scale(120))
+	listViewAddColumn(hwndList, colHost,     "Hostname",       scale(160))
+	listViewAddColumn(hwndList, colMAC,      "MAC",            scale(145))
+	listViewAddColumn(hwndList, colVendor,   "Vendor",         scale(140))
+	listViewAddColumn(hwndList, colOS,       "OS",             scale(90))
+	listViewAddColumn(hwndList, colLatency,  "Latency",        scale(70))
+	listViewAddColumn(hwndList, colPorts,    "Ports",          scale(110))
+	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", scale(300))
+	listViewAddColumn(hwndList, colServices, "Services",       scale(200))
 
 	// ---- mDNS listview (hidden initially) ----
 	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -507,14 +562,14 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListMDNS, 0, "IP",            120)
-	listViewAddColumn(hwndListMDNS, 1, "Name",          200)
-	listViewAddColumn(hwndListMDNS, 2, "Service Type",  180)
-	listViewAddColumn(hwndListMDNS, 3, "Friendly Name", 170)
-	listViewAddColumn(hwndListMDNS, 4, "Model",         140)
-	listViewAddColumn(hwndListMDNS, 5, "Ver",            55)
-	listViewAddColumn(hwndListMDNS, 6, "Status",         60)
-	listViewAddColumn(hwndListMDNS, 7, "Extra",          220)
+	listViewAddColumn(hwndListMDNS, 0, "IP",            scale(120))
+	listViewAddColumn(hwndListMDNS, 1, "Name",          scale(200))
+	listViewAddColumn(hwndListMDNS, 2, "Service Type",  scale(180))
+	listViewAddColumn(hwndListMDNS, 3, "Friendly Name", scale(170))
+	listViewAddColumn(hwndListMDNS, 4, "Model",         scale(140))
+	listViewAddColumn(hwndListMDNS, 5, "Ver",           scale(55))
+	listViewAddColumn(hwndListMDNS, 6, "Status",        scale(60))
+	listViewAddColumn(hwndListMDNS, 7, "Extra",         scale(220))
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -522,11 +577,11 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListSSDP, 0, "IP",          120)
-	listViewAddColumn(hwndListSSDP, 1, "Name",        220)
-	listViewAddColumn(hwndListSSDP, 2, "Device Type", 250)
-	listViewAddColumn(hwndListSSDP, 3, "Location",    260)
-	listViewAddColumn(hwndListSSDP, 4, "Server",      250)
+	listViewAddColumn(hwndListSSDP, 0, "IP",          scale(120))
+	listViewAddColumn(hwndListSSDP, 1, "Name",        scale(220))
+	listViewAddColumn(hwndListSSDP, 2, "Device Type", scale(250))
+	listViewAddColumn(hwndListSSDP, 3, "Location",    scale(260))
+	listViewAddColumn(hwndListSSDP, 4, "Server",      scale(250))
 
 	// ---- DHCP pane (hidden initially) ----
 	// When not elevated: shows an elevation notice. When elevated: ready for
@@ -568,6 +623,11 @@ func createControls(hwnd HWND) {
 	// Use the actual window DPI (set above) so the font is correct on all monitors.
 	appFont = createUIFont(currentDPI)
 	setFontAllChildren(hwnd, appFont)
+
+	// Apply Consolas to the two text-report panes so aligned columns line up.
+	monoFont := createMonoFont()
+	sendMessage(hwndListNetwork, WM_SETFONT, uintptr(monoFont), 1)
+	sendMessage(hwndListHealth, WM_SETFONT, uintptr(monoFont), 1)
 }
 
 // createCtrl is a shorthand for plain child controls (STATIC, BUTTON).
@@ -592,7 +652,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	p2 := p1 * 2
 	setStatusParts(p1, p2)
 
-	// Elevation bar stretches to full width.
+	// Elevation bar: label stretches up to the service button.
 	moveWindow(hwndElevLabel, scale(8), 0, width-scale(220), scale(elevBarH))
 	moveWindow(hwndServiceBtn, width-scale(212), scale(3), scale(204), scale(26))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
