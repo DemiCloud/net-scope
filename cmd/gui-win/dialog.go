@@ -419,7 +419,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	ensureCfgLocClass()
 	cfgLocResult = "neither"
 
-	const dlgW, dlgH int32 = 520, 260
+	const dlgW, dlgH int32 = 520, 310
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepCfgLoc", "Where should net-sweep save its config?",
