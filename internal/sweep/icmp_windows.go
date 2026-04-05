@@ -56,10 +56,11 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 	}
 	defer procIcmpCloseHandle.Call(h)
 
-	// IcmpSendEcho expects DestinationAddress as IPAddr, which is a DWORD
-	// containing the IPv4 address in little-endian host byte order on x86/x64.
-	// net.IP.To4() returns big-endian bytes, so we reinterpret as little-endian.
-	dest := binary.LittleEndian.Uint32(ip4)
+	// IcmpSendEcho expects DestinationAddress as IPAddr (ULONG) in network byte
+	// order (big-endian), matching the convention of all Win32 socket APIs.
+	// net.IP.To4() already returns bytes in network order, so BigEndian.Uint32
+	// gives the correct numeric value (e.g. 192.168.1.1 → 0xC0A80101).
+	dest := binary.BigEndian.Uint32(ip4)
 
 	reqData := []byte("net-sweep")
 	// Reply buffer must be sizeof(ICMP_ECHO_REPLY) + requestSize + 8 (MSDN).

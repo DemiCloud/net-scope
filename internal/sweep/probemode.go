@@ -29,8 +29,14 @@ func RunProbeServer(ln net.Listener) error {
 	if err != nil {
 		return fmt.Errorf("probe accept: %w", err)
 	}
+	ln.Close()
+	return RunProbeConn(conn)
+}
+
+// RunProbeConn runs the probe server on an already-established connection.
+// The elevated subprocess uses this after dialling the GUI's listener.
+func RunProbeConn(conn net.Conn) error {
 	defer conn.Close()
-	ln.Close() // only one client
 
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)

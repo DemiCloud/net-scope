@@ -39,12 +39,13 @@ func run() {
 		if strings.HasPrefix(arg, "--probe=") {
 			addr := strings.TrimPrefix(arg, "--probe=")
 			hideOwnConsole()
-			ln, err := net.Listen("tcp", addr)
+			// The GUI already holds the listener; we connect to it.
+			conn, err := net.Dial("tcp", addr)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "probe listen: %v\n", err)
+				fmt.Fprintf(os.Stderr, "probe dial: %v\n", err)
 				os.Exit(1)
 			}
-			if err := sweep.RunProbeServer(ln); err != nil {
+			if err := sweep.RunProbeConn(conn); err != nil {
 				fmt.Fprintf(os.Stderr, "probe server: %v\n", err)
 				os.Exit(1)
 			}
