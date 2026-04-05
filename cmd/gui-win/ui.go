@@ -409,6 +409,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DESTROY:
 		stopScan()
+		stopService()
 		stopBroadcastListener()
 		postQuitMessage(0)
 		return 0
