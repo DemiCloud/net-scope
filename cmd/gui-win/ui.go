@@ -52,6 +52,7 @@ var (
 	hwndListPlaceholder HWND // empty-state overlay for Hosts tab
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
+	hwndListWSD    HWND // WS-Discovery tab
 	hwndListDHCP   HWND // DHCP tab
 	hwndListNetwork HWND // Network tab — live broadcast stats
 	hwndListHealth HWND // Scan Report tab
@@ -285,10 +286,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				case 2:
 					showWindow(hwndListSSDP, SW_SHOW)
 				case 3:
-					showWindow(hwndListDHCP, SW_SHOW)
+					showWindow(hwndListWSD, SW_SHOW)
 				case 4:
-					showWindow(hwndListNetwork, SW_SHOW)
+					showWindow(hwndListDHCP, SW_SHOW)
 				case 5:
+					showWindow(hwndListNetwork, SW_SHOW)
+				case 6:
 					showWindow(hwndListHealth, SW_SHOW)
 				}
 			}
@@ -309,13 +312,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			return 0
 		}
 		// Right-click on mDNS list → copy menu.
-		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP) && hdr.Code == NM_RCLICK {
+		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP || hdr.IdFrom == IDC_LIST_WSD) && hdr.Code == NM_RCLICK {
 			isMDNS := hdr.IdFrom == IDC_LIST_MDNS
 			hwndSrc := hwndListSSDP
 			numCols := int32(5)
 			if isMDNS {
 				hwndSrc = hwndListMDNS
 				numCols = 6
+			} else if hdr.IdFrom == IDC_LIST_WSD {
+				hwndSrc = hwndListWSD
+				numCols = 5
 			}
 			pt := getCursorPos()
 			cpt := POINT{X: pt.X, Y: pt.Y}
@@ -337,6 +343,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				case IDM_BCAST_COPY_RAW:
 					if isMDNS {
 						copyToClipboard(HWND(hwnd), getMDNSRawText(row))
+					} else if hdr.IdFrom == IDC_LIST_WSD {
+						ip := listViewGetCellText(hwndSrc, row, 0)
+						copyToClipboard(HWND(hwnd), getWSDRawText(ip))
 					} else {
 						ip := listViewGetCellText(hwndSrc, row, 0)
 						copyToClipboard(HWND(hwnd), getSSDPRawText(ip))
@@ -441,10 +450,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingBcastMu.Unlock()
 		if e.ip != "" {
-			if e.svc.Source == "ssdp" {
+			switch e.svc.Source {
+			case "ssdp":
 				listViewAddSSDPRow(hwndListSSDP, e.ip, e.svc)
 				bcastSSDP++
-			} else {
+			case "wsd":
+				listViewAddWSDRow(hwndListWSD, e.ip, e.svc)
+			default:
 				listViewAddMDNSRow(hwndListMDNS, e.ip, e.svc)
 				bcastMDNS++
 			}
@@ -487,9 +499,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 		// Mirror any services to the appropriate broadcast tab.
 		for _, svc := range r.Services {
-			if svc.Source == "ssdp" {
+			switch svc.Source {
+			case "ssdp":
 				listViewAddSSDPRow(hwndListSSDP, ipStr, svc)
-			} else {
+			case "wsd":
+				listViewAddWSDRow(hwndListWSD, ipStr, svc)
+			default:
 				listViewAddMDNSRow(hwndListMDNS, ipStr, svc)
 			}
 		}
@@ -563,9 +578,10 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 0, "Hosts")
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
-	insertTab(hwndTabCtrl, 3, "DHCP")
-	insertTab(hwndTabCtrl, 4, "Network")
-	insertTab(hwndTabCtrl, 5, "Scan Report")
+	insertTab(hwndTabCtrl, 3, "WSD")
+	insertTab(hwndTabCtrl, 4, "DHCP")
+	insertTab(hwndTabCtrl, 5, "Network")
+	insertTab(hwndTabCtrl, 6, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	scanBarY := scale(elevBarH + tabCtrlH)
@@ -631,6 +647,18 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListSSDP, 2, "Type",     scale(160))
 	listViewAddColumn(hwndListSSDP, 3, "Services", scale(280))
 	listViewAddColumn(hwndListSSDP, 4, "Location", scale(300))
+
+	// ---- WS-Discovery listview (hidden initially) ----
+	hwndListWSD, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
+	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+	listViewAddColumn(hwndListWSD, 0, "IP",            scale(120))
+	listViewAddColumn(hwndListWSD, 1, "Types",         scale(180))
+	listViewAddColumn(hwndListWSD, 2, "Transport URLs", scale(300))
+	listViewAddColumn(hwndListWSD, 3, "Scopes",        scale(200))
+	listViewAddColumn(hwndListWSD, 4, "Endpoint UUID", scale(280))
 
 	// ---- DHCP listview (hidden initially) ----
 	hwndListDHCP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -731,6 +759,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	}
 	moveWindow(hwndListMDNS, 0, otherTop, width, otherH)
 	moveWindow(hwndListSSDP, 0, otherTop, width, otherH)
+	moveWindow(hwndListWSD, 0, otherTop, width, otherH)
 	moveWindow(hwndListDHCP, 0, otherTop, width, otherH)
 	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)

@@ -107,6 +107,7 @@ const (
 	IDC_TABS         = 107
 	IDC_LIST_MDNS    = 108
 	IDC_LIST_SSDP    = 110
+	IDC_LIST_WSD     = 116 // WS-Discovery tab
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status label
 	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button

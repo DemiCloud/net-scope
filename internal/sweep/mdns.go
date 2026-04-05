@@ -85,6 +85,27 @@ func ListenBroadcast(ctx context.Context, timeout time.Duration, cb func(ip stri
 		}
 	}()
 
+	// WS-Discovery — send Probe (both namespaces) and collect responses,
+	// then repeat; also listen passively for Hello announcements.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for ctx.Err() == nil {
+			for ip, svcs := range discoverWSD(ctx, timeout) {
+				for _, svc := range svcs {
+					cb(ip, svc)
+				}
+			}
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ListenWSDHello(ctx, func(ip net.IP, svc ServiceInfo) {
+			cb(ip.String(), svc)
+		})
+	}()
+
 	wg.Wait()
 }
 

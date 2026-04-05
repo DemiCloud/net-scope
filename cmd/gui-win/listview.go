@@ -171,6 +171,13 @@ var (
 	// ssdpRawData accumulates every raw ServiceInfo received for each IP,
 	// used to build the Services column and for "Copy raw data".
 	ssdpRawData = map[string][]sweep.ServiceInfo{}
+
+	// wsdIPRow maps an IP address to the row index in the WSD listview.
+	// Used to deduplicate: one row per physical device.
+	wsdIPRow = map[string]int32{}
+
+	// wsdRawData accumulates every WSD ServiceInfo received for each IP.
+	wsdRawData = map[string][]sweep.ServiceInfo{}
 )
 
 // ---------------------------------------------------------------------------
@@ -485,7 +492,66 @@ func getSSDPRawText(ip string) string {
 
 
 
-// listViewAddDHCPRow appends a single DHCP event to the DHCP listview.
+// listViewAddWSDRow appends a single WS-Discovery device entry, deduplicating
+// by IP. Columns: IP | Types | Transport URLs | Scopes | Endpoint UUID
+func listViewAddWSDRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+	wsdRawData[ip] = append(wsdRawData[ip], svc)
+
+	dev := sweep.WsdServiceInfoToDevice(svc)
+	if existingRow, ok := wsdIPRow[ip]; ok {
+		if len(dev.XAddrs) > 0 {
+			setSubItem(hwnd, existingRow, 2, strings.Join(dev.XAddrs, "  "))
+		}
+		return
+	}
+
+	ipPtr := utf16(ip)
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: ipPtr}
+	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return
+	}
+	wsdIPRow[ip] = row
+	setSubItem(hwnd, row, 1, dev.FriendlyTypes())
+	xaddrs := strings.Join(dev.XAddrs, "  ")
+	if xaddrs == "" {
+		xaddrs = "—"
+	}
+	setSubItem(hwnd, row, 2, xaddrs)
+	scopes := dev.FriendlyScopes()
+	if scopes == "" {
+		scopes = "—"
+	}
+	setSubItem(hwnd, row, 3, scopes)
+	ep := strings.TrimPrefix(dev.EndpointAddr, "urn:uuid:")
+	if ep == "" {
+		ep = "—"
+	}
+	setSubItem(hwnd, row, 4, ep)
+}
+
+// getWSDRawText formats all accumulated WSD raw data for ip for clipboard copy.
+func getWSDRawText(ip string) string {
+	svcs, ok := wsdRawData[ip]
+	if !ok || len(svcs) == 0 {
+		return "(no data)"
+	}
+	var b strings.Builder
+	for _, s := range svcs {
+		b.WriteString("Type: ")
+		b.WriteString(s.Type)
+		b.WriteByte('\n')
+		for _, d := range s.Details {
+			b.WriteString(d)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+
+
 // Columns: Time | Type | Client MAC | Hostname | Client IP | Requested IP | Offered IP | Server IP
 func listViewAddDHCPRow(hwnd HWND, evt sweep.DHCPEvent) {
 	ts := evt.Time.Format("15:04:05")
