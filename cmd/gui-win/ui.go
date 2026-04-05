@@ -21,18 +21,24 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	appFont           HFONT // Segoe UI 9pt — shared by main window and all dialogs
-	hwndMain          HWND
-	hwndTarget        HWND
-	hwndScan          HWND
-	hwndStop          HWND
-	hwndAdminCheck    HWND // "Admin / ARP" checkbox
+	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
+	hwndMain       HWND
+	// Elevation bar (top strip)
+	hwndElevLabel  HWND // "Running as: User" / "Running as: Administrator"
+	hwndElevButton HWND // "Relaunch as Administrator" (hidden when already elevated)
+	// Scan bar (shown only when Hosts tab is active)
+	hwndTarget     HWND
+	hwndScan       HWND
+	hwndStop       HWND
+	hwndAdminCheck HWND // "Admin / ARP" checkbox
+	// Content panes
 	hwndList       HWND
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
-	hwndListHealth HWND // read-only text area for health stats
-	hwndTabCtrl       HWND
-	hwndStatus        HWND
+	hwndListDHCP   HWND // DHCP tab (placeholder — elevation notice when not elevated)
+	hwndListHealth HWND // Health tab
+	hwndTabCtrl    HWND
+	hwndStatus     HWND
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +116,9 @@ func stopBroadcastListener() {
 // ---------------------------------------------------------------------------
 
 const (
-	toolbarH = 38
+	toolbarH = 38 // legacy constant (kept for dialogs that reference it)
+	elevBarH = 32 // elevation status strip at very top
+	scanBarH = 36 // scan controls bar (shown only on Hosts tab)
 	tabCtrlH = 26 // height of the tab row
 )
 
@@ -139,19 +147,46 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
 		if hdr.IdFrom == IDC_TABS && hdr.Code == TCN_SELCHANGE {
 			tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+			// Hide all panes first.
 			showWindow(hwndList, SW_HIDE)
 			showWindow(hwndListMDNS, SW_HIDE)
 			showWindow(hwndListSSDP, SW_HIDE)
+			showWindow(hwndListDHCP, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
-			switch tab {
-			case 0:
+			// Show/hide scan bar and reposition Hosts listview accordingly.
+			// On Hosts tab the scan bar is visible and the list sits below it;
+			// on all other tabs the list fills from just below the tab strip.
+			if tab == 0 {
+				showWindow(hwndTarget, SW_SHOW)
+				showWindow(hwndScan, SW_SHOW)
+				showWindow(hwndStop, SW_SHOW)
+				showWindow(hwndAdminCheck, SW_SHOW)
+				// Ensure Hosts list is repositioned to account for scan bar.
+				r := getClientRect(hwndMain)
+				statusR := getClientRect(hwndStatus)
+				statusH := statusR.Bottom - statusR.Top
+				hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+				listH := (r.Bottom - r.Top) - hostsTop - statusH
+				if listH < 0 {
+					listH = 0
+				}
+				moveWindow(hwndList, 0, hostsTop, r.Right-r.Left, listH)
 				showWindow(hwndList, SW_SHOW)
-			case 1:
-				showWindow(hwndListMDNS, SW_SHOW)
-			case 2:
-				showWindow(hwndListSSDP, SW_SHOW)
-			case 3:
-				showWindow(hwndListHealth, SW_SHOW)
+			} else {
+				showWindow(hwndTarget, SW_HIDE)
+				showWindow(hwndScan, SW_HIDE)
+				showWindow(hwndStop, SW_HIDE)
+				showWindow(hwndAdminCheck, SW_HIDE)
+				switch tab {
+				case 1:
+					showWindow(hwndListMDNS, SW_SHOW)
+				case 2:
+					showWindow(hwndListSSDP, SW_SHOW)
+				case 3:
+					showWindow(hwndListDHCP, SW_SHOW)
+				case 4:
+					showWindow(hwndListHealth, SW_SHOW)
+				}
 			}
 		}
 		// Right-click on host list → context menu.
@@ -217,6 +252,17 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_COMMAND:
 		switch loword(wParam) {
+		case IDC_ELEV_BUTTON:
+			// Relaunch the same binary with "runas" to get an elevated instance.
+			exe, err := os.Executable()
+			if err == nil {
+				target := getWindowText(hwndTarget)
+				args := "--gui"
+				if target != "" {
+					args = target
+				}
+				shellExecute(HWND(hwnd), "runas", exe, args, "", SW_SHOWNORMAL)
+			}
 		case IDC_SCAN:
 			startScan(HWND(hwnd))
 		case IDC_STOP:
@@ -341,90 +387,120 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 func createControls(hwnd HWND) {
 	inst := getModuleHandle()
+	elevated := isElevated()
 
-	// ---- toolbar ----
-	// [Target label] [target input ──────────] [Scan] [Stop] [☐ Admin / ARP]
-	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, 8, 10, 48, 20, hwnd, 0, inst)
-	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
-		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
-		58, 8, 620, 22, hwnd, IDC_TARGET, inst)
-
-	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 688, 7, 80, 24, hwnd, IDC_SCAN, inst)
-	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 776, 7, 80, 24, hwnd, IDC_STOP, inst)
-	enableWindow(hwndStop, false)
-
-	// "Admin / ARP" checkbox: opt into raw-socket probes (ARP + ICMP raw).
-	// Checked automatically when the process is already elevated.
-	hwndAdminCheck, _ = createWindowEx(0, "BUTTON", "Admin / ARP",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		868, 9, 110, 20, hwnd, IDC_ADMIN, inst)
-	if isElevated() {
-		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_CHECKED, 0)
+	// ---- elevation status bar (top strip) ----
+	// Shows current privilege level; offers relaunch button when not elevated.
+	elevLabel := "⚠  Running as: User  —  Some features (ARP, ICMP, DHCP) require elevation."
+	if elevated {
+		elevLabel = "✔  Running as: Administrator  —  All features available."
+	}
+	hwndElevLabel, _ = createWindowEx(0, "STATIC", elevLabel,
+		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
+		8, 0, 900, elevBarH, hwnd, IDC_ELEV_LABEL, inst)
+	if !elevated {
+		hwndElevButton, _ = createWindowEx(0, "BUTTON", "Relaunch as Administrator",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+			916, 3, 220, 26, hwnd, IDC_ELEV_BUTTON, inst)
 	}
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		0, toolbarH, 1160, tabCtrlH, hwnd, IDC_TABS, inst)
+		0, elevBarH, 1160, tabCtrlH, hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Hosts")
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
-	insertTab(hwndTabCtrl, 3, "Health")
+	insertTab(hwndTabCtrl, 3, "DHCP")
+	insertTab(hwndTabCtrl, 4, "Health")
 
-	listTop := int32(toolbarH + tabCtrlH)
+	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
+	scanBarY := int32(elevBarH + tabCtrlH)
+	// [Target label] [target input ──────────────] [Scan] [Stop] [☐ Admin / ARP]
+	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, 8, scanBarY+8, 48, 20, hwnd, 0, inst)
+	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
+		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
+		58, scanBarY+6, 620, 22, hwnd, IDC_TARGET, inst)
+	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 688, scanBarY+5, 80, 24, hwnd, IDC_SCAN, inst)
+	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 776, scanBarY+5, 80, 24, hwnd, IDC_STOP, inst)
+	enableWindow(hwndStop, false)
+	hwndAdminCheck, _ = createWindowEx(0, "BUTTON", "Admin / ARP",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		868, scanBarY+7, 120, 20, hwnd, IDC_ADMIN, inst)
+	if elevated {
+		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_CHECKED, 0)
+	}
+
+	// Hosts listview starts below the scan bar.
+	hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+	// All other panes start just below the tab strip (no scan bar).
+	otherTop := int32(elevBarH + tabCtrlH)
 
 	// ---- hosts listview (visible) ----
 	hwndList, _ = createWindowEx(0, WC_LISTVIEW, "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
-		0, listTop, 1160, 600, hwnd, IDC_LIST, inst)
+		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-
-	listViewAddColumn(hwndList, colStatus,   "●",          40)
-	listViewAddColumn(hwndList, colIP,       "IP Address", 120)
-	listViewAddColumn(hwndList, colHost,     "Hostname",   160)
-	listViewAddColumn(hwndList, colMAC,      "MAC",        145)
-	listViewAddColumn(hwndList, colVendor,   "Vendor",     140)
-	listViewAddColumn(hwndList, colOS,       "OS",          90)
-	listViewAddColumn(hwndList, colLatency,  "Latency",     70)
-	listViewAddColumn(hwndList, colPorts,    "Ports",       110)
+	listViewAddColumn(hwndList, colStatus,   "●",             40)
+	listViewAddColumn(hwndList, colIP,       "IP Address",   120)
+	listViewAddColumn(hwndList, colHost,     "Hostname",     160)
+	listViewAddColumn(hwndList, colMAC,      "MAC",          145)
+	listViewAddColumn(hwndList, colVendor,   "Vendor",       140)
+	listViewAddColumn(hwndList, colOS,       "OS",            90)
+	listViewAddColumn(hwndList, colLatency,  "Latency",       70)
+	listViewAddColumn(hwndList, colPorts,    "Ports",        110)
 	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", 300)
-	listViewAddColumn(hwndList, colServices, "Services",    200)
+	listViewAddColumn(hwndList, colServices, "Services",     200)
 
 	// ---- mDNS listview (hidden initially) ----
 	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
 		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
-		0, listTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListMDNS, 0, "IP", 120)
-	listViewAddColumn(hwndListMDNS, 1, "Name", 200)
-	listViewAddColumn(hwndListMDNS, 2, "Service Type", 180)
+	listViewAddColumn(hwndListMDNS, 0, "IP",            120)
+	listViewAddColumn(hwndListMDNS, 1, "Name",          200)
+	listViewAddColumn(hwndListMDNS, 2, "Service Type",  180)
 	listViewAddColumn(hwndListMDNS, 3, "Friendly Name", 170)
-	listViewAddColumn(hwndListMDNS, 4, "Model", 140)
-	listViewAddColumn(hwndListMDNS, 5, "Ver", 55)
-	listViewAddColumn(hwndListMDNS, 6, "Status", 60)
-	listViewAddColumn(hwndListMDNS, 7, "Extra", 220)
+	listViewAddColumn(hwndListMDNS, 4, "Model",         140)
+	listViewAddColumn(hwndListMDNS, 5, "Ver",            55)
+	listViewAddColumn(hwndListMDNS, 6, "Status",         60)
+	listViewAddColumn(hwndListMDNS, 7, "Extra",          220)
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
 		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
-		0, listTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndListSSDP, 0, "IP", 120)
-	listViewAddColumn(hwndListSSDP, 1, "Name", 220)
+	listViewAddColumn(hwndListSSDP, 0, "IP",          120)
+	listViewAddColumn(hwndListSSDP, 1, "Name",        220)
 	listViewAddColumn(hwndListSSDP, 2, "Device Type", 250)
-	listViewAddColumn(hwndListSSDP, 3, "Location", 260)
-	listViewAddColumn(hwndListSSDP, 4, "Server", 250)
+	listViewAddColumn(hwndListSSDP, 3, "Location",    260)
+	listViewAddColumn(hwndListSSDP, 4, "Server",      250)
+
+	// ---- DHCP pane (hidden initially) ----
+	// When not elevated: shows an elevation notice. When elevated: ready for
+	// future passive DHCP capture (requires raw socket on UDP 67/68).
+	dhcpText := "⚠  DHCP passive capture requires Administrator privileges.\n\n" +
+		"Click \"Relaunch as Administrator\" at the top of the window to enable this feature."
+	if elevated {
+		dhcpText = "DHCP passive capture is not yet implemented.\n\n" +
+			"This tab will show DHCP requests and leases observed on the network."
+	}
+	hwndListDHCP, _ = createWindowEx(
+		WS_EX_CLIENTEDGE, "EDIT", dhcpText,
+		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 
 	// ---- health text area (hidden initially) ----
 	hwndListHealth, _ = createWindowEx(
 		WS_EX_CLIENTEDGE, "EDIT", healthPlaceholder,
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-		0, listTop, 1160, 600, hwnd, 0, inst)
+		0, otherTop, 1160, 600, hwnd, 0, inst)
 
 	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
@@ -459,22 +535,42 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
-	// Three equal-ish parts; last one stretches to fill.
 	p1 := width / 3
 	p2 := p1 * 2
 	setStatusParts(p1, p2)
 
-	moveWindow(hwndTabCtrl, 0, toolbarH, width, tabCtrlH)
-
-	listTop := int32(toolbarH + tabCtrlH)
-	listH := height - listTop - statusH
-	if listH < 0 {
-		listH = 0
+	// Elevation bar and tab strip always stretch to full width.
+	moveWindow(hwndElevLabel, 8, 0, width-240, elevBarH)
+	if hwndElevButton != 0 {
+		moveWindow(hwndElevButton, width-236, 3, 228, 26)
 	}
-	moveWindow(hwndList, 0, listTop, width, listH)
-	moveWindow(hwndListMDNS, 0, listTop, width, listH)
-	moveWindow(hwndListSSDP, 0, listTop, width, listH)
-	moveWindow(hwndListHealth, 0, listTop, width, listH)
+	moveWindow(hwndTabCtrl, 0, elevBarH, width, tabCtrlH)
+
+	// Scan bar controls are repositioned to match current width (target field stretches).
+	scanBarY := int32(elevBarH + tabCtrlH)
+	moveWindow(hwndTarget, 58, scanBarY+6, width-548, 22)
+	moveWindow(hwndScan, width-486, scanBarY+5, 80, 24)
+	moveWindow(hwndStop, width-398, scanBarY+5, 80, 24)
+	moveWindow(hwndAdminCheck, width-310, scanBarY+7, 120, 20)
+
+	// Hosts tab: list sits below the scan bar.
+	hostsTop := int32(elevBarH + tabCtrlH + scanBarH)
+	hostsH := height - hostsTop - statusH
+	if hostsH < 0 {
+		hostsH = 0
+	}
+	moveWindow(hwndList, 0, hostsTop, width, hostsH)
+
+	// All other panes fill from just below the tab strip.
+	otherTop := int32(elevBarH + tabCtrlH)
+	otherH := height - otherTop - statusH
+	if otherH < 0 {
+		otherH = 0
+	}
+	moveWindow(hwndListMDNS, 0, otherTop, width, otherH)
+	moveWindow(hwndListSSDP, 0, otherTop, width, otherH)
+	moveWindow(hwndListDHCP, 0, otherTop, width, otherH)
+	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
 }
 
 // ---------------------------------------------------------------------------
