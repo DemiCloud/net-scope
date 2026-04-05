@@ -99,6 +99,11 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_CREATE:
 		createSettingsControls(HWND(hwnd))
 		return 0
+	case WM_CTLCOLORSTATIC:
+		hdc := wParam
+		setBkMode(hdc, TRANSPARENT)
+		setTextColor(hdc, 0x00000000)
+		return uintptr(getSysColorBrush(COLOR_BTNFACE))
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idSettOK:
@@ -123,7 +128,7 @@ func ensureSettingsClass() {
 			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
 			LpfnWndProc:   settingsWndProc,
 			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
 			HCursor:       loadCursor(IDC_ARROW),
 			LpszClassName: cn,
 		}
@@ -380,6 +385,11 @@ var (
 
 var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
+	case WM_CTLCOLORSTATIC:
+		hdc := wParam
+		setBkMode(hdc, TRANSPARENT)
+		setTextColor(hdc, 0x00000000)
+		return uintptr(getSysColorBrush(COLOR_BTNFACE))
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idCfgAppData:
@@ -408,7 +418,7 @@ func ensureCfgLocClass() {
 			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
 			LpfnWndProc:   cfgLocWndProc,
 			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
 			HCursor:       loadCursor(IDC_ARROW),
 			LpszClassName: cn,
 		}
@@ -493,6 +503,11 @@ var registerFAQOnce sync.Once
 
 var faqWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
+	case WM_CTLCOLORSTATIC:
+		hdc := wParam
+		setBkMode(hdc, TRANSPARENT)
+		setTextColor(hdc, 0x00000000)
+		return uintptr(getSysColorBrush(COLOR_BTNFACE))
 	case WM_COMMAND:
 		if loword(wParam) == idFAQClose {
 			closeModal(HWND(hwnd))
@@ -512,7 +527,7 @@ func ensureFAQClass() {
 			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
 			LpfnWndProc:   faqWndProc,
 			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
 			HCursor:       loadCursor(IDC_ARROW),
 			LpszClassName: cn,
 		}
@@ -678,6 +693,11 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 	case WM_CREATE:
 		createDatabasesControls(HWND(hwnd))
 		return 0
+	case WM_CTLCOLORSTATIC:
+		hdc := wParam
+		setBkMode(hdc, TRANSPARENT)
+		setTextColor(hdc, 0x00000000)
+		return uintptr(getSysColorBrush(COLOR_BTNFACE))
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idDBDownload:
@@ -718,7 +738,7 @@ func ensureDatabasesClass() {
 			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
 			LpfnWndProc:   databasesWndProc,
 			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_WINDOW + 1),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
 			HCursor:       loadCursor(IDC_ARROW),
 			LpszClassName: cn,
 		}
