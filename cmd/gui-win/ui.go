@@ -438,26 +438,15 @@ func startScan(hwnd HWND) {
 
 	// Read the Admin / ARP checkbox — tells us whether to use raw sockets.
 	wantAdmin := sendMessage(hwndAdminCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
+	elevated := isElevated()
 
-	// If the user wants admin probes but the process is not elevated, offer UAC.
-	if wantAdmin && !isElevated() {
-		r := messageBox(hwnd,
-			"\"Admin / ARP\" is checked but net-sweep is not running as Administrator.\n"+
-				"MAC addresses and ARP discovery require elevated privileges.\n\n"+
-				"Relaunch as Administrator now?\n\n"+
-				"(Choose No to scan without ARP — hosts found via ICMP/TCP.)",
-			"Administrator Privileges",
-			MB_YESNO|MB_ICONWARNING)
-		if r == IDYES {
-			if exe, err := os.Executable(); err == nil {
-				shellExecute(0, "runas", exe, target, "", SW_SHOW)
-			}
-			// Don't quit — let the user keep working in the non-elevated instance.
-			return
-		}
-		// No → uncheck and continue without ARP.
-		sendMessage(hwndAdminCheck, BM_SETCHECK, BST_UNCHECKED, 0)
-		wantAdmin = false
+	appCfg, _, _ := config.Load()
+	scanCfg := appCfg.ToSweepConfig()
+
+	if !wantAdmin {
+		// Non-admin mode: TCP connect as liveness probe; no raw sockets needed.
+		scanCfg.Interface = ""
+		scanCfg.TCPFirst = true
 	}
 
 	// Expand target first so we can pre-populate the list.
@@ -483,7 +472,8 @@ func startScan(hwnd HWND) {
 	pendingMu.Unlock()
 
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
-	sendMessage(hwndListBroadcast, LVM_DELETEALLITEMS, 0, 0)
+	// Do NOT clear hwndListBroadcast — the background listener populates it
+	// continuously; scan-discovered services are appended, not a fresh set.
 	ipRowMap = make(map[string]int32, len(hosts))
 	rowResultMap = make(map[int32]sweep.Result, len(hosts))
 
@@ -496,13 +486,13 @@ func startScan(hwnd HWND) {
 
 	enableWindow(hwndScan, false)
 	enableWindow(hwndStop, true)
-	setStatusPart(2, fmt.Sprintf("Scanning %s… (%d hosts)", target, len(hosts)))
+	setStatusPart(2, statusForMode(wantAdmin, elevated))
 
-	appCfg, _, _ := config.Load()
-	scanCfg := appCfg.ToSweepConfig()
-	if !wantAdmin {
-		// Without elevation skip raw ARP; ICMP (UDP fallback) and TCP still work.
-		scanCfg.Interface = ""
+	// If admin probes are requested but we're not elevated, delegate to an
+	// elevated subprocess rather than relaunching the whole GUI.
+	if wantAdmin && !elevated {
+		startElevatedScan(hwnd, target, scanCfg)
+		return
 	}
 
 	go func() {

@@ -48,6 +48,7 @@ type Config struct {
 	BroadcastListen time.Duration // how long to listen for mDNS/SSDP; 0 = disabled
 	BannerGrab      bool          // grab service banners from open ports
 	NetBIOS         bool          // query NetBIOS names (UDP 137)
+	TCPFirst        bool          // use TCP connect as liveness probe (no raw socket needed)
 }
 
 // DefaultConfig returns sensible defaults for a LAN sweep.
@@ -279,6 +280,24 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}
 	}
 
+	// TCP liveness fallback — used when raw sockets are unavailable (TCPFirst
+	// mode, e.g. non-elevated on Windows). Try all configured ports in parallel;
+	// if any connect the host is alive and we reuse the results below.
+	if !r.Alive && s.Config.TCPFirst && len(s.Config.Ports) > 0 {
+		open := scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
+		if len(open) > 0 {
+			r.Alive = true
+			r.OpenPorts = open // already have results — skip the second scan below
+			// Try to fill in MAC from kernel ARP cache (populated by TCP SYN).
+			if r.MAC == nil {
+				if mac := lookupARPCache(ip); mac != nil {
+					r.MAC = mac
+					r.Vendor = lookupVendor(mac)
+				}
+			}
+		}
+	}
+
 	if !r.Alive {
 		return r
 	}
@@ -298,7 +317,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if len(s.Config.Ports) > 0 {
+		if len(s.Config.Ports) > 0 && len(r.OpenPorts) == 0 {
 			r.OpenPorts = scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
 		}
 	}()
