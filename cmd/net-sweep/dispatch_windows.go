@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 
 	guiwin "github.com/demicloud/net-sweep/cmd/gui-win"
@@ -15,24 +16,39 @@ import (
 var (
 	modKernel32Disp   = syscall.NewLazyDLL("kernel32.dll")
 	procAttachConsole = modKernel32Disp.NewProc("AttachConsole")
+	modUser32Disp     = syscall.NewLazyDLL("user32.dll")
+	procGetConsoleWin = modKernel32Disp.NewProc("GetConsoleWindow")
+	procShowWindow    = modUser32Disp.NewProc("ShowWindow")
 )
 
+const swHide = 0
+
+func hideOwnConsole() {
+	hwnd, _, _ := procGetConsoleWin.Call()
+	if hwnd != 0 {
+		procShowWindow.Call(hwnd, swHide)
+	}
+}
+
 func run() {
-	// Elevated probe-server mode: spawned by the GUI with --probe <addr>.
-	// Runs a single scan session over a TCP localhost connection, then exits.
-	// This mode is checked first so it works regardless of console attachment.
-	if len(os.Args) >= 3 && os.Args[1] == "--probe" {
-		addr := os.Args[2]
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "probe listen: %v\n", err)
-			os.Exit(1)
+	// Elevated probe-server mode: spawned by the GUI with --probe=addr.
+	// Argument is a single token (no space) so Windows command-line parsing
+	// can never accidentally merge or re-quote it.
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--probe=") {
+			addr := strings.TrimPrefix(arg, "--probe=")
+			hideOwnConsole()
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "probe listen: %v\n", err)
+				os.Exit(1)
+			}
+			if err := sweep.RunProbeServer(ln); err != nil {
+				fmt.Fprintf(os.Stderr, "probe server: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
-		if err := sweep.RunProbeServer(ln); err != nil {
-			fmt.Fprintf(os.Stderr, "probe server: %v\n", err)
-			os.Exit(1)
-		}
-		return
 	}
 
 	// ATTACH_PARENT_PROCESS = 0xFFFFFFFF
