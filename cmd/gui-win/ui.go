@@ -239,9 +239,15 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_FIRST_RUN:
-		// No config file was found at startup — show settings so the user
-		// can review defaults and optionally save a config file.
-		showSettingsDialog(HWND(hwnd))
+		// No config file was found at startup.  Ask where (if anywhere) to
+		// save one, then write the current defaults there.  Settings can be
+		// adjusted afterwards via Options → Settings.
+		appDataPath := config.ConfigPath()
+		exePath := config.ExeLocalPath()
+		savePath := showConfigLocationDialog(HWND(hwnd), appDataPath, exePath)
+		if savePath != "" {
+			_ = config.SaveTo(appConfig, savePath)
+		}
 		return 0
 
 	case WM_BCAST_SVC:

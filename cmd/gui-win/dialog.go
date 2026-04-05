@@ -69,11 +69,12 @@ func closeModal(dlg HWND) {
 // ---------------------------------------------------------------------------
 
 const (
-	idSettOK         = 501
-	idSettCancel     = 502
-	idSettPingFirst  = 503
-	idSettBannerGrab = 504
-	idSettNetBIOS    = 505
+	idSettOK            = 501
+	idSettCancel        = 502
+	idSettPingFirst     = 503
+	idSettBannerGrab    = 504
+	idSettNetBIOS       = 505
+	idSettDefaultTarget = 506
 )
 
 var (
@@ -85,8 +86,9 @@ var (
 	hwndSettBcast     HWND
 	hwndSettPingFirst HWND
 	hwndSettBanner    HWND
-	hwndSettNetBIOS   HWND
-	hwndSettPath      HWND
+	hwndSettNetBIOS       HWND
+	hwndSettPath          HWND
+	hwndSettDefaultTarget HWND
 
 	registerSettingsOnce sync.Once
 )
@@ -165,6 +167,7 @@ func showSettingsDialog(parent HWND) {
 	setWindowText(hwndSettSNMP, appConfig.Scan.SNMPCommunity)
 	setWindowText(hwndSettIface, appConfig.Scan.Interface)
 	setWindowText(hwndSettBcast, appConfig.Scan.BroadcastListen)
+	setWindowText(hwndSettDefaultTarget, appConfig.Scan.DefaultTarget)
 	if appConfig.Scan.PingFirst {
 		sendMessage(hwndSettPingFirst, BM_SETCHECK, BST_CHECKED, 0)
 	}
@@ -205,6 +208,7 @@ func createSettingsControls(hwnd HWND) {
 		{"SNMP Community:", &hwndSettSNMP},
 		{"Interface:", &hwndSettIface},
 		{"Broadcast Listen:", &hwndSettBcast},
+		{"Default Target:", &hwndSettDefaultTarget},
 	}
 
 	for i, f := range fields {
@@ -255,6 +259,7 @@ func applySettings(hwnd HWND) bool {
 	snmp := strings.TrimSpace(getWindowText(hwndSettSNMP))
 	iface := strings.TrimSpace(getWindowText(hwndSettIface))
 	bcast := strings.TrimSpace(getWindowText(hwndSettBcast))
+	defaultTarget := strings.TrimSpace(getWindowText(hwndSettDefaultTarget))
 	pingFirst := sendMessage(hwndSettPingFirst, BM_GETCHECK, 0, 0) == BST_CHECKED
 	bannerGrab := sendMessage(hwndSettBanner, BM_GETCHECK, 0, 0) == BST_CHECKED
 	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
@@ -302,13 +307,17 @@ func applySettings(hwnd HWND) bool {
 			Interface:       iface,
 			BannerGrab:      bannerGrab,
 			NetBIOS:         netBIOS,
+			DefaultTarget:   defaultTarget,
 		},
 	}
 
 	appConfig = cfg // always apply in-memory
 
-	// Save back to the same file if one was loaded; otherwise memory-only.
+	// Determine save path: use the file we loaded, or prompt for a location.
 	_, cfgPath, _ := config.Load()
+	if cfgPath == "" {
+		cfgPath = chooseConfigSavePath(hwnd)
+	}
 	if cfgPath != "" {
 		if err := config.SaveTo(cfg, cfgPath); err != nil {
 			messageBox(hwnd, "Could not save settings:\n"+err.Error(), "Error", 0)
@@ -427,7 +436,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	y := int32(14)
 
 	createCtrl("STATIC",
-		"Settings were changed. Choose where to save the config file.",
+		"No config file found. Choose where net-sweep should save its settings.",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 20, dlg, 0, inst)
 	y += 30
 
