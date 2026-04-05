@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/demicloud/net-sweep/internal/sweep"
 )
@@ -35,9 +36,11 @@ func startElevatedScan(hwnd HWND, target string, cfg sweep.Config) {
 	}
 	addr := ln.Addr().String()
 
-	// Spawn elevated helper: net-sweep.exe --probe 127.0.0.1:<port>
-	// ShellExecute "runas" triggers UAC; the helper has no window of its own.
-	shellExecute(0, "runas", exe, "--probe "+addr, "", SW_HIDE)
+	// Spawn elevated helper: net-sweep.exe --probe=127.0.0.1:<port>
+	// Single --probe=addr token avoids any Windows command-line quoting
+	// ambiguity. ShellExecute runas triggers one UAC prompt; no second GUI
+	// window appears because the helper detects --probe= and runs headless.
+	shellExecute(0, "runas", exe, "--probe="+addr, "", SW_HIDE)
 
 	go func() {
 		defer func() {
@@ -47,8 +50,10 @@ func startElevatedScan(hwnd HWND, target string, cfg sweep.Config) {
 			}
 		}()
 
+		// Give the user up to 60s to approve the UAC prompt.
+		ln.(*net.TCPListener).SetDeadline(time.Now().Add(60 * time.Second))
+
 		// Accept the single connection from the elevated helper.
-		// ln.Accept() will time out (or fail) if the user cancels UAC.
 		conn, err := ln.Accept()
 		ln.Close()
 		if err != nil {
