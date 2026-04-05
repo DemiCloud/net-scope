@@ -26,15 +26,20 @@ const (
 	colServices int32 = 9
 )
 
-// listViewAddColumn inserts a left-aligned column at index idx.
-func listViewAddColumn(hwnd HWND, idx int32, title string, width int32) {
+// listViewAddColumnFmt inserts a column at index idx with explicit alignment.
+func listViewAddColumnFmt(hwnd HWND, idx int32, title string, width, fmt int32) {
 	col := LVCOLUMN{
 		Mask:    LVCF_TEXT | LVCF_WIDTH | LVCF_FMT,
-		Fmt:     LVCFMT_LEFT,
+		Fmt:     fmt,
 		Cx:      width,
 		PszText: utf16(title),
 	}
 	sendMessage(hwnd, LVM_INSERTCOLUMN, uintptr(idx), uintptr(unsafe.Pointer(&col)))
+}
+
+// listViewAddColumn inserts a left-aligned column at index idx.
+func listViewAddColumn(hwnd HWND, idx int32, title string, width int32) {
+	listViewAddColumnFmt(hwnd, idx, title, width, LVCFMT_LEFT)
 }
 
 // listViewInsertPendingRow appends a row showing ip with a "…" status placeholder.

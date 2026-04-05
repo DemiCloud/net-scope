@@ -44,11 +44,11 @@ var (
 	hwndElevLabel  HWND // service status label
 	hwndServiceBtn HWND // "Elevate sweep service" button (hidden when already elevated)
 	// Scan bar (shown only when Hosts tab is active)
-	hwndTarget     HWND
-	hwndScan       HWND
-	hwndStop       HWND
+	hwndTarget          HWND
+	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
 	// Content panes
-	hwndList       HWND
+	hwndList            HWND
+	hwndListPlaceholder HWND // empty-state overlay for Hosts tab
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
 	hwndListDHCP   HWND // DHCP tab
@@ -71,6 +71,8 @@ var (
 	pendingMu      sync.Mutex
 	liveCount      int
 	lastStats      sweep.ScanStats // populated after scan completes
+	listHasHosts  bool            // true once ≥1 alive host found in current/last scan
+	isScanning    bool            // true while a scan is in progress (UI thread only)
 
 	// ipRowMap maps IP string → row index in hwndList.
 	// Written on the UI thread (startScan), read on the UI thread (WM_SCAN_RESULT).
@@ -186,6 +188,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setBkColor(hdc, bg)
 			return uintptr(brush)
 		}
+		// Placeholder text gets gray color, white background matching the listview.
+		if HWND(lParam) == hwndListPlaceholder {
+			setBkMode(wParam, TRANSPARENT)
+			setTextColor(wParam, 0x00999999)
+			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		}
 		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 
 	case WM_SERVICE_UP:
@@ -225,6 +233,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 			// Hide all panes first.
 			showWindow(hwndList, SW_HIDE)
+			showWindow(hwndListPlaceholder, SW_HIDE)
 			showWindow(hwndListMDNS, SW_HIDE)
 			showWindow(hwndListSSDP, SW_HIDE)
 			showWindow(hwndListDHCP, SW_HIDE)
@@ -236,7 +245,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if tab == 0 {
 				showWindow(hwndTarget, SW_SHOW)
 				showWindow(hwndScan, SW_SHOW)
-				showWindow(hwndStop, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
@@ -248,11 +256,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					listH = 0
 				}
 				moveWindow(hwndList, 0, hostsTop, r.Right-r.Left, listH)
+				moveWindow(hwndListPlaceholder, 0, hostsTop+(listH-scale(20))/2, r.Right-r.Left, scale(20))
 				showWindow(hwndList, SW_SHOW)
+				if !isScanning && !listHasHosts {
+					showWindow(hwndListPlaceholder, SW_SHOW)
+				}
 			} else {
 				showWindow(hwndTarget, SW_HIDE)
 				showWindow(hwndScan, SW_HIDE)
-				showWindow(hwndStop, SW_HIDE)
 
 				switch tab {
 				case 1:
@@ -355,9 +366,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// Spawn elevated service via UAC. Existing service is stopped first.
 			go elevateService(HWND(hwnd))
 		case IDC_SCAN:
-			startScan(HWND(hwnd))
-		case IDC_STOP:
-			stopScan()
+			if isScanning {
+				stopScan()
+			} else {
+				startScan(HWND(hwnd))
+			}
 		case IDM_FILE_EXIT:
 			stopScan()
 			postQuitMessage(0)
@@ -431,6 +444,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			rowResultMap[row] = r
 			if r.Alive {
 				liveCount++
+				if !listHasHosts {
+					listHasHosts = true
+					showWindow(hwndListPlaceholder, SW_HIDE)
+				}
 				setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
 			}
 		} else if r.Alive {
@@ -440,6 +457,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			listViewUpdateRow(hwndList, row, r)
 			rowResultMap[row] = r
 			liveCount++
+			if !listHasHosts {
+				listHasHosts = true
+				showWindow(hwndListPlaceholder, SW_HIDE)
+			}
 			setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
 		}
 
@@ -457,10 +478,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		scanMu.Lock()
 		scanCancel = nil
 		scanMu.Unlock()
-		enableWindow(hwndScan, true)
-		enableWindow(hwndStop, false)
+		isScanning = false
+		setWindowText(hwndScan, "Scan")
 		setStatusPart(0, fmt.Sprintf("Hosts: %d found", liveCount))
 		setStatusPart(2, "Scan complete")
+		if !listHasHosts {
+			setWindowText(hwndListPlaceholder, "No hosts found — try widening the target range")
+			showWindow(hwndListPlaceholder, SW_SHOW)
+		}
 		// Refresh health tab text.
 		pendingMu.Lock()
 		stats := lastStats
@@ -512,7 +537,7 @@ func createControls(hwnd HWND) {
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|TCS_FLATBUTTONS,
 		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Hosts")
 	insertTab(hwndTabCtrl, 1, "mDNS")
@@ -523,16 +548,13 @@ func createControls(hwnd HWND) {
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	// [Target label] [target input ──────────────────] [Scan] [Stop]
+	// [Target label] [target input ────────────────────────] [Scan/Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
 		scale(58), scanBarY+scale(6), scale(740), scale(22), hwnd, IDC_TARGET, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_SCAN, inst)
-	hwndStop, _ = createWindowEx(0, "BUTTON", "Stop",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(896), scanBarY+scale(5), scale(80), scale(24), hwnd, IDC_STOP, inst)
-	enableWindow(hwndStop, false)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -541,27 +563,33 @@ func createControls(hwnd HWND) {
 
 	// ---- hosts listview (visible) ----
 	hwndList, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
 	listViewAddColumn(hwndList, colStatus,   "●",              scale(40))
 	listViewAddColumn(hwndList, colIP,       "IP Address",     scale(120))
 	listViewAddColumn(hwndList, colHost,     "Hostname",       scale(160))
 	listViewAddColumn(hwndList, colMAC,      "MAC",            scale(145))
 	listViewAddColumn(hwndList, colVendor,   "Vendor",         scale(140))
 	listViewAddColumn(hwndList, colOS,       "OS",             scale(90))
-	listViewAddColumn(hwndList, colLatency,  "Latency",        scale(70))
-	listViewAddColumn(hwndList, colPorts,    "Ports",          scale(110))
+	listViewAddColumnFmt(hwndList, colLatency,  "Latency",     scale(70),  LVCFMT_RIGHT)
+	listViewAddColumnFmt(hwndList, colPorts,    "Ports",       scale(110), LVCFMT_RIGHT)
 	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", scale(300))
 	listViewAddColumn(hwndList, colServices, "Services",       scale(200))
 
+	// ---- empty-state placeholder (sits on top of hwndList when no hosts) ----
+	hwndListPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Enter a target above and click Scan",
+		WS_CHILD|WS_VISIBLE|SS_CENTER,
+		0, hostsTop+200, 1160, scale(20), hwnd, 0, inst)
+
 	// ---- mDNS listview (hidden initially) ----
 	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
 	listViewAddColumn(hwndListMDNS, 0, "IP",            scale(120))
 	listViewAddColumn(hwndListMDNS, 1, "Name",          scale(200))
 	listViewAddColumn(hwndListMDNS, 2, "Service Type",  scale(180))
@@ -573,10 +601,10 @@ func createControls(hwnd HWND) {
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|WS_BORDER|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
 	listViewAddColumn(hwndListSSDP, 0, "IP",          scale(120))
 	listViewAddColumn(hwndListSSDP, 1, "Name",        scale(220))
 	listViewAddColumn(hwndListSSDP, 2, "Device Type", scale(250))
@@ -657,11 +685,10 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndServiceBtn, width-scale(212), scale(3), scale(204), scale(26))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar controls: target field stretches, buttons anchor right.
+	// Scan bar: target stretches, single Scan/Stop button anchors to right.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(310), scale(22))
-	moveWindow(hwndScan, width-scale(244), scanBarY+scale(5), scale(80), scale(24))
-	moveWindow(hwndStop, width-scale(156), scanBarY+scale(5), scale(80), scale(24))
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(178), scale(22))
+	moveWindow(hwndScan, width-scale(112), scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts tab: list sits below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -670,6 +697,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 		hostsH = 0
 	}
 	moveWindow(hwndList, 0, hostsTop, width, hostsH)
+	// Placeholder centered vertically within the list area.
+	moveWindow(hwndListPlaceholder, 0, hostsTop+(hostsH-scale(20))/2, width, scale(20))
 
 	// All other panes fill from just below the tab strip.
 	otherTop := scale(elevBarH + tabCtrlH)
@@ -753,8 +782,10 @@ func startScan(hwnd HWND) {
 		ipRowMap[ipStr] = row
 	}
 
-	enableWindow(hwndScan, false)
-	enableWindow(hwndStop, true)
+	isScanning = true
+	listHasHosts = false
+	setWindowText(hwndScan, "Stop")
+	showWindow(hwndListPlaceholder, SW_HIDE)
 	setStatusPart(2, statusForService()+" — scanning")
 
 	// Route all scans through the persistent sweep service.

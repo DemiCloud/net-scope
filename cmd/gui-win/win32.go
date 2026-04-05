@@ -54,6 +54,7 @@ const (
 
 	// Static styles
 	SS_LEFT        = 0x0000
+	SS_CENTER      = 0x0001 // horizontally centered text
 	SS_CENTERIMAGE = 0x0200
 
 	// Button styles / messages
@@ -67,6 +68,7 @@ const (
 	CW_USEDEFAULT = ^int32(0x7fffffff) // 0x80000000
 	SW_SHOWNORMAL = 1
 	COLOR_WINDOW  = 5
+	COLOR_BTNFACE = 15 // system dialog/button background (light gray)
 
 	// Messages
 	WM_CREATE      = 0x0001
@@ -208,7 +210,9 @@ const (
 	LVCF_FMT   = 0x0001
 	LVCF_WIDTH = 0x0002
 	LVCF_TEXT  = 0x0004
-	LVCFMT_LEFT = 0
+	LVCFMT_LEFT   = 0
+	LVCFMT_RIGHT  = 1
+	LVCFMT_CENTER = 2
 
 	// LVITEM flags
 	LVIF_TEXT = 0x0001
@@ -225,11 +229,14 @@ const (
 
 	// Virtual keys
 	VK_CONTROL = 0x11
+	VK_RETURN  = 0x0D
+	VK_ESCAPE  = 0x1B
 	VK_KEY_A   = 0x41
 
 	// Tab control
-	WC_TABCONTROL  = "SysTabControl32"
-	TCM_FIRST      = 0x1300
+	WC_TABCONTROL   = "SysTabControl32"
+	TCS_FLATBUTTONS = 0x0008 // flat push-button tabs (more modern)
+	TCM_FIRST       = 0x1300
 	TCM_INSERTITEM = TCM_FIRST + 62 // TCM_INSERTITEMW
 	TCM_GETCURSEL  = TCM_FIRST + 11
 	TCM_ADJUSTRECT = TCM_FIRST + 40
@@ -431,6 +438,7 @@ var (
 	procGetCursorPos    = modUser32.NewProc("GetCursorPos")
 	procDestroyMenu     = modUser32.NewProc("DestroyMenu")
 	procScreenToClient  = modUser32.NewProc("ScreenToClient")
+	procGetFocus        = modUser32.NewProc("GetFocus")
 
 	// GDI32
 	modGdi32               = syscall.NewLazyDLL("gdi32.dll")
@@ -440,6 +448,9 @@ var (
 	procSetBkColor         = modGdi32.NewProc("SetBkColor")
 	procSetTextColor       = modGdi32.NewProc("SetTextColor")
 	procSetBkMode          = modGdi32.NewProc("SetBkMode")
+
+	// GetSysColorBrush returns a cached system-color brush; do not DeleteObject it.
+	procGetSysColorBrush = modUser32.NewProc("GetSysColorBrush")
 
 	// Comdlg32 (save file dialog)
 	modComdlg32             = syscall.NewLazyDLL("comdlg32.dll")
@@ -723,6 +734,12 @@ func destroyMenu(menu HMENU) {
 	procDestroyMenu.Call(uintptr(menu))
 }
 
+// getFocus returns the HWND of the currently focused control (0 if none).
+func getFocus() HWND {
+	r, _, _ := procGetFocus.Call()
+	return HWND(r)
+}
+
 // shellExecute opens a file or URL using the shell. Use op="open", SW_SHOW for show.
 func shellExecute(hwnd HWND, op, file, params, dir string, show int32) {
 	opPtr, _ := syscall.UTF16PtrFromString(op)
@@ -773,12 +790,13 @@ func setWindowPos(hwnd HWND, hwndInsertAfter uintptr, x, y, w, h int32, flags ui
 		uintptr(x), uintptr(y), uintptr(w), uintptr(h), uintptr(flags))
 }
 
-// createUIFont creates a Segoe UI font scaled to the given DPI.
-// 9pt at 96 DPI = -12px; at 144 DPI (150%) = -18px.
+// createUIFont creates a Segoe UI Variable Text font scaled to the given DPI.
+// "Segoe UI Variable Text" is the Win11 system text font; Windows falls back
+// to "Segoe UI" on Win10 and earlier.  10pt at 96 DPI = -13px.
 func createUIFont(dpi uint32) HFONT {
-	face, _ := syscall.UTF16PtrFromString("Segoe UI")
-	// Negative height = character height (not cell height). Scale from 96 DPI base.
-	height := -int32(12 * dpi / 96)
+	face, _ := syscall.UTF16PtrFromString("Segoe UI Variable Text")
+	// Negative height = character height. 10pt at 96 DPI = -13px.
+	height := -int32(13 * dpi / 96)
 	r, _, _ := procCreateFontW.Call(
 		uintptr(height),
 		0,                           // average char width (0 = auto)
@@ -850,6 +868,14 @@ func setBkColor(hdc uintptr, color uint32) uint32 {
 // setBkMode sets the background mix mode (TRANSPARENT=1, OPAQUE=2).
 func setBkMode(hdc uintptr, mode int32) {
 	procSetBkMode.Call(hdc, uintptr(mode))
+}
+
+// getSysColorBrush returns a cached system-color brush for colorIndex (e.g.
+// COLOR_BTNFACE).  The returned brush is owned by the system — do NOT call
+// deleteObject on it.
+func getSysColorBrush(colorIndex int) HBRUSH {
+	r, _, _ := procGetSysColorBrush.Call(uintptr(colorIndex))
+	return HBRUSH(r)
 }
 
 // LVHITTESTINFO is passed to LVM_HITTEST to find which item is at a given point
