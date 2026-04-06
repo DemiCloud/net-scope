@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // ---------------------------------------------------------------------------
@@ -272,8 +272,8 @@ func joinInts(vals []int) string {
 // chooseConfigSavePath returns the path to save the config to.
 // If a config file already exists at either known location, it uses that path
 // without prompting. On first save it shows a dialog with three options:
-//   - AppData  (e.g. %APPDATA%\demicloud\net-sweep\config.toml)
-//   - Beside exe (same directory as net-sweep.exe)
+//   - AppData  (e.g. %APPDATA%\demicloud\net-scope\config.toml)
+//   - Beside exe (same directory as net-scope.exe)
 //   - Neither  (keep in memory; returns "")
 func chooseConfigSavePath(hwnd HWND) string {
 	appDataPath := config.ConfigPath()
@@ -354,7 +354,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	y := int32(14)
 
 	createCtrl("STATIC",
-		"No config file found. Choose where net-sweep should save its settings.",
+				"No config file found. Choose where NetScope should save its settings.",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 20, dlg, 0, inst)
 	y += 30
 
@@ -547,16 +547,17 @@ A: "Admin Mode" means running net-sweep as a Windows Administrator (or with root
 // ---------------------------------------------------------------------------
 
 func showVersionDialog(parent HWND) {
-	body := "net-sweep " + version + "\n\n" +
+	body := "NetScope " + version + "\n" +
+		"Network inspection and reconnaissance — active probing, passive signal analysis, change detection.\n\n" +
 		"Build information\n" +
 		"─────────────────\n" +
 		"  Version : " + version + "\n" +
-		"  Source  : https://github.com/demicloud/net-sweep\n\n" +
+		"  Source  : https://github.com/demicloud/net-scope\n\n" +
 		"Command-line equivalent\n" +
 		"────────────────────────\n" +
-		"  net-sweep --version\n"
+		"  net-scope --version\n"
 
-	messageBox(parent, body, "Version — net-sweep", 0)
+	messageBox(parent, body, "Version — NetScope", 0)
 }
 
 // ---------------------------------------------------------------------------

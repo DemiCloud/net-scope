@@ -11,14 +11,14 @@
     "StringFileInfo": {
         "Comments":         "",
         "CompanyName":      "demicloud",
-        "FileDescription":  "net-sweep \u2014 LAN Host Discovery",
+        "FileDescription":  "NetScope — Network Inspection & Reconnaissance",
         "FileVersion":      "0.1.0",
-        "InternalName":     "net-sweep",
+        "InternalName":     "net-scope",
         "LegalCopyright":   "Copyright \u00a9 2026 demicloud",
         "LegalTrademarks":  "",
-        "OriginalFilename": "net-sweep.exe",
+        "OriginalFilename": "net-scope.exe",
         "PrivateBuild":     "",
-        "ProductName":      "net-sweep",
+        "ProductName":      "NetScope",
         "ProductVersion":   "0.1.0",
         "SpecialBuild":     ""
     },

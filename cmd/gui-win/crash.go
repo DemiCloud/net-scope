@@ -22,7 +22,7 @@ func crashLogPath() string {
 	}
 	dir := filepath.Join(appdata, "net-sweep")
 	_ = os.MkdirAll(dir, 0700)
-	return filepath.Join(dir, "net-sweep-crash.log")
+		return filepath.Join(dir, "net-scope-crash.log")
 }
 
 // writeCrashLog appends a timestamped crash entry (panic value + stack trace)
@@ -38,8 +38,8 @@ func writeCrashLog(hwnd HWND, recovered any) {
 	}
 
 	msg := fmt.Sprintf(
-		"net-sweep encountered an unexpected error:\n\n%v\n\nDetails saved to:\n%s",
+			"NetScope encountered an unexpected error:\n\n%v\n\nDetails saved to:\n%s",
 		recovered, path,
 	)
-	messageBox(hwnd, msg, "net-sweep — Unexpected Error", MB_ICONERROR)
+		messageBox(hwnd, msg, "NetScope — Unexpected Error", MB_ICONERROR)
 }

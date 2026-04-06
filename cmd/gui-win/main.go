@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // version and initialTarget are set by Run() before any window is created.
@@ -84,21 +84,21 @@ func Run(v, target string) {
 		LpszClassName: className,
 	}
 	if _, err := registerClassEx(&wc); err != nil {
-		messageBox(0, "RegisterClassEx failed: "+err.Error(), "net-sweep", 0)
+		messageBox(0, "RegisterClassEx failed: "+err.Error(), "NetScope", 0)
 		return
 	}
 
 	hwnd, err := createWindowEx(
 		0,
 		"NetSweepWnd",
-		"net-sweep",
+		"NetScope",
 		WS_OVERLAPPEDWINDOW,
 		int32(CW_USEDEFAULT), int32(CW_USEDEFAULT),
 		1160, 700,
 		0, 0, inst,
 	)
 	if err != nil {
-		messageBox(0, "CreateWindowEx failed: "+err.Error(), "net-sweep", 0)
+			messageBox(0, "CreateWindowEx failed: "+err.Error(), "NetScope", 0)
 		return
 	}
 	hwndMain = hwnd
@@ -115,7 +115,9 @@ func Run(v, target string) {
 
 	hOptions := createPopupMenu()
 	appendMenu(hOptions, MF_STRING, IDM_OPT_SETTINGS, "&Settings…")
-	appendMenu(hOptions, MF_STRING, IDM_OPT_DATABASES, "&Databases…")
+	hDatabases := createPopupMenu()
+	appendMenu(hDatabases, MF_STRING, IDM_OPT_DATABASES, "&Mac Vendors…")
+	appendMenu(hOptions, MF_POPUP, uintptr(hDatabases), "&Databases")
 	appendMenu(hMenu, MF_POPUP, uintptr(hOptions), "&Options")
 
 	hHosts := createPopupMenu()

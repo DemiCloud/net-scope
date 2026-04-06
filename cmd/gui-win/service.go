@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // ---------------------------------------------------------------------------
@@ -63,13 +63,13 @@ func stopService() {
 func spawnService(hwnd HWND, elevated bool) {
 	exe, err := os.Executable()
 	if err != nil {
-		messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "net-sweep", MB_ICONERROR)
+				messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "NetScope", MB_ICONERROR)
 		return
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "net-sweep", MB_ICONERROR)
+				messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
 		return
 	}
 	addr := ln.Addr().String()
