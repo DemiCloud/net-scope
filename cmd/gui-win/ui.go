@@ -323,7 +323,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			return uintptr(brush)
 		}
 		// Placeholder text gets gray color, white background matching the listview.
-		if HWND(lParam) == hwndListPlaceholder {
+		if HWND(lParam) == hwndListPlaceholder ||
+			HWND(lParam) == hwndMDNSPlaceholder ||
+			HWND(lParam) == hwndSSDPPlaceholder ||
+			HWND(lParam) == hwndWSDPlaceholder ||
+			HWND(lParam) == hwndDHCPPlaceholder {
 			setBkMode(wParam, TRANSPARENT)
 			setTextColor(wParam, 0x00999999)
 			return uintptr(getSysColorBrush(COLOR_WINDOW))
