@@ -58,7 +58,8 @@ const (
 	SS_CENTERIMAGE = 0x0200
 
 	// Button styles / messages
-	BS_AUTOCHECKBOX = 0x0003
+	BS_DEFPUSHBUTTON = 0x0001
+	BS_AUTOCHECKBOX  = 0x0003
 	BM_GETCHECK     = 0x00F0
 	BM_SETCHECK     = 0x00F1
 	BST_UNCHECKED   = 0
@@ -122,6 +123,8 @@ const (
 	IDM_FILE_EXPORT_CSV  = 206
 	IDM_OPT_SETTINGS     = 202
 	IDM_OPT_DATABASES    = 209 // Options > Databases…
+	IDM_HOSTS_VIEW_ALL  = 210 // Hosts > View All Hosts…
+	IDM_HOSTS_VIEW_HOST = 211 // Hosts > View Host…
 	IDM_HELP_ABOUT       = 203
 	IDM_HELP_FAQ         = 204
 	IDM_HELP_VERSION     = 207
@@ -217,7 +220,8 @@ const (
 
 	// ListView window class and styles
 	WC_LISTVIEW      = "SysListView32"
-	LVS_REPORT       = 0x0001
+	LVS_REPORT        = 0x0001
+	LVS_SINGLESEL     = 0x0004
 	LVS_SHOWSELALWAYS = 0x0008
 
 	// ListView extended styles

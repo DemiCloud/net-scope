@@ -5,6 +5,7 @@ package guiwin
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -213,6 +214,8 @@ func showHostDetailDialog(parent HWND, ip string) {
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
 
 	setFontAllChildren(dlg, appFont)
+	// Override the summary pane with a monospace font so padded labels align.
+	sendMessage(hwndHostSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
 	runModal(dlg, parent)
 }
 
@@ -410,6 +413,55 @@ func hostDetailCopyReport(hwnd HWND) {
 	copyToClipboard(hwnd, sb.String())
 }
 
+// unescapeDNSLabel removes DNS-SD backslash escapes from a service instance
+// name (e.g. "TCL\ C149X\ 4682" → "TCL C149X 4682").
+func unescapeDNSLabel(s string) string {
+	if !strings.ContainsRune(s, '\\') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	skip := false
+	for _, r := range s {
+		if skip {
+			b.WriteRune(r)
+			skip = false
+			continue
+		}
+		if r == '\\' {
+			skip = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// monoFont is a Consolas font for the summary EDIT control so that
+// manually-padded labels align correctly with a proportional window font.
+var (
+	monoFont     HFONT
+	monoFontOnce sync.Once
+)
+
+func getMonoFont() HFONT {
+	monoFontOnce.Do(func() {
+		face, _ := syscall.UTF16PtrFromString("Consolas")
+		height := int32(-13) // -13px ≈ 10pt at 96 DPI; runtime var avoids constant-overflow
+		r, _, _ := procCreateFontW.Call(
+			uintptr(height),
+			0, 0, 0,
+			FW_NORMAL,
+			0, 0, 0, 0, 0, 0,
+			CLEARTYPE_QUALITY,
+			0,
+			uintptr(unsafe.Pointer(face)),
+		)
+		monoFont = HFONT(r)
+	})
+	return monoFont
+}
+
 // buildHostSummary returns a multi-line text summary for ip.
 func buildHostSummary(ip string) string {
 	var sb strings.Builder
@@ -519,7 +571,7 @@ func buildHostSummary(ip string) string {
 				continue
 			}
 			seen[key] = true
-			name := svc.Name
+			name := unescapeDNSLabel(svc.Name)
 			if name == "" {
 				name = svc.Type
 			}
@@ -528,4 +580,337 @@ func buildHostSummary(ip string) string {
 	}
 
 	return strings.ReplaceAll(sb.String(), "\n", "\r\n")
+}
+
+// ---------------------------------------------------------------------------
+// hostDisplayName returns "IP — hostname" if a hostname is known, else "IP".
+func hostDisplayName(ip string) string {
+	if e, ok := hostRegistry[ip]; ok {
+		name := e.Result.Hostname
+		if name == "" {
+			name = e.Result.NetBIOS
+		}
+		if name != "" {
+			return ip + "  —  " + name
+		}
+	}
+	return ip
+}
+
+// ---------------------------------------------------------------------------
+// "View All Hosts" dialog
+// ---------------------------------------------------------------------------
+//
+// A read-only list of every host in the session registry.
+// Columns: IP (140 px) | Hostname (remainder).
+// Double-clicking a row opens the host-detail dialog for that IP.
+
+const (
+	idAllHostsList  = 700
+	idAllHostsClose = 701
+	// context menu IDs
+	idAllHostsCtxDetails = 720
+	idAllHostsCtxExport  = 721
+	idAllHostsCtxCopy    = 722
+)
+
+var (
+	hwndAllHostsList     HWND
+	registerAllHostsOnce sync.Once
+)
+
+// allHostsSelectedIP returns the IP of the currently selected All-Hosts row, or "".
+func allHostsSelectedIP() string {
+	row := int32(sendMessage(hwndAllHostsList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	if row < 0 {
+		return ""
+	}
+	return listViewGetCellText(hwndAllHostsList, row, 0)
+}
+
+// allHostsDoAction executes a context-menu action for the given ip.
+func allHostsDoAction(dlg HWND, ip string, action int32) {
+	switch action {
+	case idAllHostsCtxDetails:
+		closeModal(dlg)
+		showHostDetailDialog(hwndMain, ip)
+	case idAllHostsCtxCopy:
+		copyToClipboard(dlg, buildHostSummary(ip))
+	case idAllHostsCtxExport:
+		path := getSaveFileName(dlg, "Export Host Data", "txt",
+			"Text files|*.txt|All files|*.*|")
+		if path == "" {
+			return
+		}
+		if err := os.WriteFile(path, []byte(buildHostSummary(ip)), 0o644); err != nil {
+			messageBox(dlg, "Could not write file:\n"+err.Error(), "Export Error", MB_OK)
+		}
+	}
+}
+
+var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		inst := getModuleHandle()
+		r := getClientRect(HWND(hwnd))
+		cW, cH := r.Right, r.Bottom
+		const pad int32 = 10
+		const hintH int32 = 16
+		const btnH int32 = 26
+
+		// Listview leaves room for hint label + button row.
+		listH := cH - pad - hintH - pad - btnH - pad
+		hwndAllHostsList, _ = createWindowEx(0, WC_LISTVIEW, "",
+			WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
+			pad, pad, cW-pad*2, listH, HWND(hwnd), HMENU(idAllHostsList), inst)
+		sendMessage(hwndAllHostsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		listViewAddColumn(hwndAllHostsList, 0, "IP", 140)
+		listViewAddColumn(hwndAllHostsList, 1, "Hostname", cW-pad*2-140-4)
+
+		// Hint label between list and buttons.
+		hintY := pad + listH + pad/2
+		createWindowEx(0, "STATIC",
+			"Double-click or Enter for details  ·  Right-click for more options",
+			WS_CHILD|WS_VISIBLE,
+			pad, hintY, cW-pad*2-110, hintH, HWND(hwnd), 0, inst)
+
+		createWindowEx(0, "BUTTON", "Close",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+			cW-pad-100, cH-pad-btnH, 100, btnH, HWND(hwnd), HMENU(idAllHostsClose), inst)
+
+		// Populate rows from registry.
+		for _, ip := range allHostIPs() {
+			p := utf16(ip)
+			item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+			row := int32(sendMessage(hwndAllHostsList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+			if row >= 0 {
+				name := ""
+				if e, ok := hostRegistry[ip]; ok {
+					name = e.Result.Hostname
+					if name == "" {
+						name = e.Result.NetBIOS
+					}
+				}
+				setSubItem(hwndAllHostsList, row, 1, name)
+			}
+		}
+		return 0
+
+	case WM_CTLCOLORSTATIC:
+		setBkMode(wParam, TRANSPARENT)
+		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+
+	case WM_COMMAND:
+		if loword(wParam) == idAllHostsClose {
+			closeModal(HWND(hwnd))
+		}
+		return 0
+
+	case WM_KEYDOWN:
+		if wParam == VK_RETURN {
+			if ip := allHostsSelectedIP(); ip != "" {
+				closeModal(HWND(hwnd))
+				showHostDetailDialog(hwndMain, ip)
+			}
+		}
+		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+
+	case WM_NOTIFY:
+		hdr := (*NMHDR)(unsafe.Pointer(lParam))
+		if hdr.IdFrom != idAllHostsList {
+			return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+		}
+		switch hdr.Code {
+		case NM_DBLCLK:
+			if ip := allHostsSelectedIP(); ip != "" {
+				closeModal(HWND(hwnd))
+				showHostDetailDialog(hwndMain, ip)
+			}
+		case NM_RCLICK:
+			ip := allHostsSelectedIP()
+			if ip == "" {
+				// Try hit-test at cursor position.
+				pt := getCursorPos()
+				cpt := POINT{X: pt.X, Y: pt.Y}
+				procScreenToClient.Call(uintptr(hwndAllHostsList), uintptr(unsafe.Pointer(&cpt)))
+				ht := LVHITTESTINFO{Pt: cpt}
+				row := int32(sendMessage(hwndAllHostsList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+				if row >= 0 {
+					ip = listViewGetCellText(hwndAllHostsList, row, 0)
+				}
+			}
+			if ip != "" {
+				pt := getCursorPos()
+				menu := createPopupMenu()
+				appendMenu(menu, MF_STRING, idAllHostsCtxDetails, "Host Details")
+				appendMenu(menu, MF_STRING, idAllHostsCtxCopy, "Copy Data")
+				appendMenu(menu, MF_STRING, idAllHostsCtxExport, "Export Data…")
+				cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
+				destroyMenu(menu)
+				if cmd != 0 {
+					allHostsDoAction(HWND(hwnd), ip, cmd)
+				}
+			}
+		}
+		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+// showAllHostsDialog opens the "View All Hosts" modal.
+func showAllHostsDialog(parent HWND) {
+	if len(hostRegistry) == 0 {
+		messageBox(parent, "No hosts have been discovered in this session yet.", "All Hosts", MB_OK)
+		return
+	}
+
+	registerAllHostsOnce.Do(func() {
+		cn := utf16("NetSweepAllHosts")
+		wc := WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
+			LpfnWndProc:   allHostsWndProc,
+			HInstance:     getModuleHandle(),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
+			HCursor:       loadCursor(IDC_ARROW),
+			LpszClassName: cn,
+		}
+		registerClassEx(&wc)
+	})
+
+	const dlgW, dlgH int32 = 480, 400
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepAllHosts", "All Hosts",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
+}
+
+// ---------------------------------------------------------------------------
+// "View Host…" picker dialog
+// ---------------------------------------------------------------------------
+//
+// A small combo-based picker. The user selects a host and clicks OK to open
+// the full host-detail dialog for that IP.
+
+const (
+	idPickHostCombo = 710
+	idPickHostOK    = 711
+	idPickHostCancel = 712
+)
+
+var (
+	hwndPickCombo        HWND
+	registerPickHostOnce sync.Once
+)
+
+var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		inst := getModuleHandle()
+		r := getClientRect(HWND(hwnd))
+		cW, cH := r.Right, r.Bottom
+		const pad int32 = 10
+
+		createWindowEx(0, "STATIC", "Select host:",
+			WS_CHILD|WS_VISIBLE,
+			pad, pad+4, 90, 16, HWND(hwnd), 0, inst)
+		hwndPickCombo, _ = createWindowEx(0, "COMBOBOX", "",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST|CBS_AUTOHSCROLL,
+			pad+94, pad, cW-pad*2-94, 300, HWND(hwnd), HMENU(idPickHostCombo), inst)
+
+		// Populate combo.
+		for _, ip := range allHostIPs() {
+			label := hostDisplayName(ip)
+			p, _ := syscall.UTF16PtrFromString(label)
+			sendMessage(hwndPickCombo, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(p)))
+		}
+		sendMessage(hwndPickCombo, CB_SETCURSEL, 0, 0)
+
+		createWindowEx(0, "BUTTON", "OK",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
+			cW-pad*2-100-4, cH-pad-26, 100, 26, HWND(hwnd), HMENU(idPickHostOK), inst)
+		createWindowEx(0, "BUTTON", "Cancel",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+			cW-pad-100, cH-pad-26, 100, 26, HWND(hwnd), HMENU(idPickHostCancel), inst)
+		return 0
+
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idPickHostOK:
+			idx := sendMessage(hwndPickCombo, CB_GETCURSEL, 0, 0)
+			if idx == ^uintptr(0) {
+				closeModal(HWND(hwnd))
+				return 0
+			}
+			ips := allHostIPs()
+			if int(idx) < len(ips) {
+				ip := ips[int(idx)]
+				closeModal(HWND(hwnd))
+				showHostDetailDialog(hwndMain, ip)
+			}
+		case idPickHostCancel:
+			closeModal(HWND(hwnd))
+		}
+		return 0
+
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+// showPickHostDialog shows the host picker and then opens the detail dialog.
+func showPickHostDialog(parent HWND) {
+	if len(hostRegistry) == 0 {
+		messageBox(parent, "No hosts have been discovered in this session yet.", "View Host", MB_OK)
+		return
+	}
+	// If there's only one host, skip the picker.
+	if len(hostRegistry) == 1 {
+		ips := allHostIPs()
+		showHostDetailDialog(parent, ips[0])
+		return
+	}
+
+	registerPickHostOnce.Do(func() {
+		cn := utf16("NetSweepPickHost")
+		wc := WNDCLASSEX{
+			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
+			LpfnWndProc:   pickHostWndProc,
+			HInstance:     getModuleHandle(),
+			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
+			HCursor:       loadCursor(IDC_ARROW),
+			LpszClassName: cn,
+		}
+		registerClassEx(&wc)
+	})
+
+	const dlgW, dlgH int32 = 400, 110
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepPickHost", "View Host",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
 }
