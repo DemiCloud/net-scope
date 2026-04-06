@@ -351,6 +351,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWindow(hwndListPlaceholder, SW_HIDE)
 			showWindow(hwndListMDNS, SW_HIDE)
 			showWindow(hwndListSSDP, SW_HIDE)
+			showWindow(hwndListWSD, SW_HIDE)
 			showWindow(hwndListDHCP, SW_HIDE)
 			showWindow(hwndListNetwork, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
@@ -359,7 +360,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// on all other tabs the list fills from just below the tab strip.
 			if tab == 0 {
 				showWindow(hwndTarget, SW_SHOW)
-			showWindow(hwndDetect, SW_SHOW)
+				showWindow(hwndDetect, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
@@ -378,7 +379,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			} else {
 				showWindow(hwndTarget, SW_HIDE)
-			showWindow(hwndDetect, SW_HIDE)
+				showWindow(hwndDetect, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
