@@ -11,8 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 	"github.com/spf13/pflag"
 )
 
@@ -100,7 +100,7 @@ func (m model) View() string {
 	var b strings.Builder
 
 	b.WriteString(styleHeader.Render(fmt.Sprintf(
-		" net-sweep  %s  %d/%d probed  %d alive",
+		" net-scope  %s  %d/%d probed  %d alive",
 		m.target, m.done, m.total, m.found,
 	)))
 	b.WriteByte('\n')
@@ -234,7 +234,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "config: %s\n", cfgPath)
 	}
 
-	fs := pflag.NewFlagSet("net-sweep-tui", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("net-scope-tui", pflag.ContinueOnError)
 	fs.SortFlags = false
 
 	timeout     := fs.DurationP("timeout", "t", cfg.Scan.ParseTimeout(), "per-host probe timeout")
@@ -248,7 +248,7 @@ func main() {
 	showVersion := fs.BoolP("version", "V", false, "print version and exit")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: net-sweep-tui [OPTIONS] <target>\n\n")
+			fmt.Fprintf(os.Stderr, "Usage: net-scope-tui [OPTIONS] <target>\n\n")
 		fmt.Fprintf(os.Stderr, "  <target>  single IP or CIDR (e.g. 192.168.1.0/24)\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		fs.PrintDefaults()
@@ -260,7 +260,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Printf("net-sweep-tui %s\n", version)
+			fmt.Printf("net-scope-tui %s\n", version)
 		os.Exit(0)
 	}
 

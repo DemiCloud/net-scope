@@ -40,7 +40,7 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 		Body: &icmp.Echo{
 			ID:   id,
 			Seq:  seq,
-			Data: []byte("net-sweep"),
+				Data: []byte("net-scope"),
 		},
 	}
 	b, err := msg.Marshal(nil)

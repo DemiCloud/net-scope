@@ -9,7 +9,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // Column indices for the Hosts listview

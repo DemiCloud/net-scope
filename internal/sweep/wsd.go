@@ -37,7 +37,7 @@ func wsdProbeTemplate(discNS, addrNS string) string {
 		`<soap:Header>` +
 		`<wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To>` +
 		`<wsa:Action>` + discNS + `/Probe</wsa:Action>` +
-		`<wsa:MessageID>urn:uuid:net-sweep-probe</wsa:MessageID>` +
+		`<wsa:MessageID>urn:uuid:net-scope-probe</wsa:MessageID>` +
 		`</soap:Header>` +
 		`<soap:Body><wsd:Probe><wsd:Types/></wsd:Probe></soap:Body>` +
 		`</soap:Envelope>`

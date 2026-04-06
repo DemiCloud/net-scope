@@ -119,7 +119,7 @@ func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.
 	if err != nil {
 		return ""
 	}
-	req.Header.Set("User-Agent", "net-sweep/1.0")
+	req.Header.Set("User-Agent", "net-scope/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {

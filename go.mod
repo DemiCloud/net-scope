@@ -1,4 +1,4 @@
-module github.com/demicloud/net-sweep
+module github.com/demicloud/net-scope
 
 go 1.25.7
 

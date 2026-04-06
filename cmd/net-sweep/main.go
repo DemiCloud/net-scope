@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // version is injected at build time: -ldflags "-X main.version=x.y.z"

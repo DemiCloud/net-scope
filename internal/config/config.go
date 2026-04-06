@@ -1,9 +1,9 @@
 // Package config loads and persists net-sweep settings from a TOML file.
 //
 // Search order:
-//  1. <userConfigDir>/demicloud/net-sweep/config.toml  (preferred location)
+//  1. <userConfigDir>/demicloud/net-scope/config.toml  (preferred location)
 //     Windows: %APPDATA%\demicloud\net-sweep\config.toml
-//     Linux:   ~/.config/demicloud/net-sweep/config.toml
+//     Linux:   ~/.config/demicloud/net-scope/config.toml
 //  2. ./config.toml  (current directory override for CLI per-project use)
 //
 // If no file is found, built-in defaults are used and a starter file is written
@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // File is the config filename looked for in each search location.
@@ -147,7 +147,7 @@ func userConfigPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "demicloud", "net-sweep", File), nil
+	return filepath.Join(dir, "demicloud", "net-scope", File), nil
 }
 
 // DataDir returns the directory where per-user data files (e.g. oui.json) are
@@ -236,7 +236,7 @@ func parseDurationOr(s string, fallback time.Duration) time.Duration {
 }
 
 // defaultTOML is the starter file written on first run.
-const defaultTOML = `# net-sweep configuration
+const defaultTOML = `# net-scope configuration
 # All durations use Go syntax: "1s", "500ms", "2m", etc.
 
 [scan]

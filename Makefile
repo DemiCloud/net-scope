@@ -1,5 +1,5 @@
 # Project metadata
-NAME    := net-sweep
+NAME    := net-scope
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 OUI_URL := https://maclookup.app/downloads/json-database/get-db?version=latest
 
@@ -15,7 +15,7 @@ cli_out  = build/$(NAME)_$(1)_$(2)$(if $(filter windows,$(1)),.exe,)
 ## ── Dev shortcuts ────────────────────────────────────────────────────────────
 
 help: ## Show this help
-	@echo "net-sweep $(VERSION)"
+	@echo "net-scope $(VERSION)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'

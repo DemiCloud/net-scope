@@ -62,7 +62,7 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 	// gives the correct numeric value (e.g. 192.168.1.1 → 0xC0A80101).
 	dest := binary.BigEndian.Uint32(ip4)
 
-	reqData := []byte("net-sweep")
+	reqData := []byte("net-scope")
 	// Reply buffer must be sizeof(ICMP_ECHO_REPLY) + requestSize + 8 (MSDN).
 	replyBufSize := unsafe.Sizeof(icmpEchoReply{}) + uintptr(len(reqData)) + 8
 	replyBuf := make([]byte, replyBufSize)

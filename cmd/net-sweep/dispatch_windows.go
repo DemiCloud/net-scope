@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	guiwin "github.com/demicloud/net-sweep/cmd/gui-win"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	guiwin "github.com/demicloud/net-scope/cmd/gui-win"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 var (

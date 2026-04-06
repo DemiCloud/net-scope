@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 	"github.com/spf13/pflag"
 )
 
@@ -54,7 +54,7 @@ func main() {
 	}
 
 	// GNU-style long flags (pflag) with short aliases where useful.
-	fs := pflag.NewFlagSet("net-sweep", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("net-scope", pflag.ContinueOnError)
 	fs.SortFlags = false
 
 	timeout     := fs.DurationP("timeout", "t", cfg.Scan.ParseTimeout(), "per-host probe timeout")
@@ -73,7 +73,7 @@ func main() {
 	showVersion := fs.BoolP("version", "V", false, "print version and exit")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: net-sweep [OPTIONS] <target>\n\n")
+			fmt.Fprintf(os.Stderr, "Usage: net-scope [OPTIONS] <target>\n\n")
 		fmt.Fprintf(os.Stderr, "  <target>  single IP or CIDR (e.g. 192.168.1.0/24, 10.0.0.5)\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		fs.PrintDefaults()
@@ -86,7 +86,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Printf("net-sweep %s\n", version)
+			fmt.Printf("net-scope %s\n", version)
 		os.Exit(0)
 	}
 
