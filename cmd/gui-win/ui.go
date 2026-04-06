@@ -536,18 +536,32 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				// Request per-subitem notifications to colour the status column.
 				return CDRF_NOTIFYITEMDRAW | CDRF_NEWFONT
 			case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
-				// Only override the status column (col 0: ●, ✕, or …).
+				// For the status column (col 0) Win32 ignores LVCFMT_CENTER, so we
+				// draw the symbol centred ourselves and suppress default rendering.
 				if int32(cd.ISubItem) == colStatus {
 					row := int32(cd.DwItemSpec)
+					// Choose symbol and colour.
+					text, color := "…", uint32(0x00AAAAAA)
 					if r, ok := rowResultMap[row]; ok {
 						if r.Alive {
-							cd.ClrText = 0x0028A028 // green  ●  RGB(40,160,40)
+							text, color = "●", 0x0028A028
 						} else {
-							cd.ClrText = 0x001E1EC8 // red    ✕  RGB(200,30,30)
+							text, color = "✕", 0x001E1EC8
 						}
-					} else {
-						cd.ClrText = 0x00AAAAAA // grey   …  (pending)
 					}
+					// Alternating row background (match CDDS_ITEMPREPAINT logic).
+					bgColor := uint32(0x00FFFFFF)
+					if row%2 != 0 {
+						bgColor = 0x00F5F5F5
+					}
+					bg := createSolidBrush(bgColor)
+					rc := cd.Rc
+					fillRect(cd.Hdc, &rc, bg)
+					deleteObject(uintptr(bg))
+					setBkMode(cd.Hdc, TRANSPARENT)
+					setTextColor(cd.Hdc, color)
+					drawText(cd.Hdc, text, &rc, DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX)
+					return CDRF_SKIPDEFAULT
 				}
 				return CDRF_NEWFONT
 			}

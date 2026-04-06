@@ -172,9 +172,16 @@ const (
 	CDDS_PREPAINT    = 0x00000001
 	CDDS_ITEMPREPAINT = 0x00010001
 	CDDS_SUBITEM     = 0x00020000 // OR'd with CDDS_ITEMPREPAINT for per-subitem notifications
-	CDRF_DODEFAULT   = 0x00000000
+	CDRF_DODEFAULT      = 0x00000000
+	CDRF_SKIPDEFAULT    = 0x00000004 // suppress default drawing for this item/subitem
+	CDRF_NEWFONT        = 0x00000002
 	CDRF_NOTIFYITEMDRAW = 0x00000020 // also CDRF_NOTIFYSUBITEMDRAW — same value
-	CDRF_NEWFONT     = 0x00000002
+
+	// DrawText format flags (used to centre-draw the status column)
+	DT_CENTER     = 0x00000001
+	DT_VCENTER    = 0x00000004
+	DT_SINGLELINE = 0x00000020
+	DT_NOPREFIX   = 0x00000800
 
 	// WM_CTLCOLORSTATIC — sent by a STATIC (or read-only EDIT) to its parent
 	// before painting; parent returns an HBRUSH and can set text/background colours.
@@ -489,6 +496,8 @@ var (
 
 	// GetSysColorBrush returns a cached system-color brush; do not DeleteObject it.
 	procGetSysColorBrush = modUser32.NewProc("GetSysColorBrush")
+	procFillRect         = modUser32.NewProc("FillRect")
+	procDrawTextW        = modUser32.NewProc("DrawTextW")
 
 	// Comdlg32 (save file dialog)
 	modComdlg32             = syscall.NewLazyDLL("comdlg32.dll")
@@ -906,6 +915,18 @@ func setBkColor(hdc uintptr, color uint32) uint32 {
 // setBkMode sets the background mix mode (TRANSPARENT=1, OPAQUE=2).
 func setBkMode(hdc uintptr, mode int32) {
 	procSetBkMode.Call(hdc, uintptr(mode))
+}
+
+// fillRect fills rc with brush on the given device context.
+func fillRect(hdc uintptr, rc *RECT, brush HBRUSH) {
+	procFillRect.Call(hdc, uintptr(unsafe.Pointer(rc)), uintptr(brush))
+}
+
+// drawText draws text centred within rc using DrawTextW.
+func drawText(hdc uintptr, text string, rc *RECT, format uint32) {
+	t, _ := syscall.UTF16PtrFromString(text)
+	procDrawTextW.Call(hdc, uintptr(unsafe.Pointer(t)), ^uintptr(0),
+		uintptr(unsafe.Pointer(rc)), uintptr(format))
 }
 
 // getSysColorBrush returns a cached system-color brush for colorIndex (e.g.
