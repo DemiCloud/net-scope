@@ -81,7 +81,16 @@ release: clean ## Build all platforms stripped → dist/ + checksums.txt
 	echo "==> Windows"; \
 	build_cli windows amd64; \
 	echo "==> FreeBSD (OPNsense)"; \
-	build_cli freebsd amd64
+	build_cli freebsd amd64; \
+	echo "==> Packaging"; \
+	cd dist && \
+	for f in $(NAME)_linux_amd64 $(NAME)_linux_arm64 $(NAME)_freebsd_amd64; do \
+		cp $$f $(NAME) && tar -czf $${f}.tar.gz $(NAME) && rm $(NAME); \
+		echo "  $$f.tar.gz"; \
+	done && \
+	zip -q $(NAME)_windows_amd64.zip $(NAME)_windows_amd64.exe && \
+	echo "  $(NAME)_windows_amd64.zip" && \
+	rm $(NAME)_linux_amd64 $(NAME)_linux_arm64 $(NAME)_freebsd_amd64 $(NAME)_windows_amd64.exe
 	@echo "==> Checksums"
 	cd dist && sha256sum * > checksums.txt && cat checksums.txt
 
