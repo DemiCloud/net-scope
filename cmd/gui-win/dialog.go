@@ -219,7 +219,7 @@ func createSettingsControls(hwnd HWND) {
 
 	for i, f := range fields {
 		y := y0 + int32(i)*rh
-		createCtrl("STATIC", f.label, WS_CHILD|WS_VISIBLE, lx, y+4, lw, 16, hwnd, 0, inst)
+		createCtrl("STATIC", f.label, WS_CHILD|WS_VISIBLE, lx, y+4, lw, 18, hwnd, 0, inst)
 		*f.dst, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
 			ex, y, ew, 22, hwnd, 0, inst)
@@ -809,9 +809,9 @@ func createDatabasesControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		lx, y, 210, 26, hwnd, idDBDownload, inst)
 
-	// ── Close button — aligned to right edge, same row as Download ──────────
+	// ── Close button — same right margin as Download has left margin ─────────
 	createCtrl("BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		lx+cw-80, y, 80, 26, hwnd, idDBClose, inst)
+		cw-80, y, 80, 26, hwnd, idDBClose, inst)
 }
 
