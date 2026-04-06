@@ -18,3 +18,8 @@
 - [ ] **Explorer file icon** — embed RT_ICON + RT_GROUP_ICON in the `.syso` resource so the `.exe` shows the radar icon in Windows Explorer (requires dynamic gen-rsrc rewrite)
 - [ ] **Null-value dash alignment** — `—` placeholders in right-aligned columns (Latency, Ports) should render right-aligned; check whether LVCFMT is honoured or if custom draw is needed
 - [ ] **Publisher / company info** — populate product description, company name, and icon in the About/version dialog so the app looks professional
+- [ ] **"Databases" sub-menu** — replace the current single "Mac Vendors" menu item with a "Databases" sub-menu containing "Mac Vendors…" as the first entry; future diff/snapshot databases can be added here
+- [ ] **Scan Report empty-state overlay** — the Scan Report tab has no placeholder; add one matching the style of the other tabs
+- [ ] **Win32 internal framework cleanup** — audit `cmd/gui-win/` for duplicated scaffolding (dialog creation, layout helpers, font caching, etc.) and extract into a small internal framework; goal is zero copy-paste between dialogs
+- [ ] **README.md** — generate a project README covering build instructions, usage, screenshots, and contributing guidelines
+- [ ] **GitHub Wiki / FAQ** — move the FAQ content to a GitHub Wiki page; update the Options → FAQ menu item to open the wiki URL in the default browser instead of showing the inline dialog; confirm whether wiki content can live in the repo (it can, via a separate `wiki/` branch or the companion `<repo>.wiki.git`)

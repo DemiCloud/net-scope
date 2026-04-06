@@ -101,6 +101,26 @@ toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
 
 ---
 
+## Architectural Boundaries
+
+Keep a strict separation between layers. When in doubt, put logic in the lowest appropriate layer:
+
+| Layer | Location | Responsibility |
+| --- | --- | --- |
+| **Backend** | `internal/sweep/` | All network I/O, scanning, enrichment, result types |
+| **Service** | `cmd/gui-win/service.go` + OS service wrapper | Background capture (DHCP, passive listeners); should serve TUI and future Linux GUI too — not just the Windows GUI |
+| **Config** | `internal/config/` | Serialisation, defaults, path resolution only |
+| **Front-end** | `cmd/gui-win/`, `cmd/net-sweep/{cli,tui}*` | Display, user input, layout — **no business logic here** |
+
+**Rules:**
+
+- Do not add scanning, enrichment, or capture logic to any GUI or CLI file.
+- Do not add Win32 or platform-specific code outside `cmd/gui-win/`.
+- The service layer (`sweep.Service` / Windows service shim) should be reusable from the TUI and any future Linux GUI — it is not a GUI-only component.
+- Config parsing and defaults live in `internal/config/`; frontends only call `Load()` / `SaveTo()`.
+
+---
+
 ## Shelved Work (do not implement without discussion)
 
 - Linux native GUI (toolkit not decided)
