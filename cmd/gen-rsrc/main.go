@@ -1,5 +1,5 @@
-// gen-rsrc generates cmd/gui-win/resource_windows_amd64.syso containing a
-// VERSIONINFO resource (File Description, Company, Version shown in Explorer).
+// gen-rsrc generates cmd/gui-win/resource_windows_amd64.syso containing
+// VERSIONINFO, application manifest, and icon resources for Explorer.
 // Run via: go run ./cmd/gen-rsrc/ -dir cmd/gui-win
 //
 // The output is a minimal COFF object file (.syso). Go's linker automatically
@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,10 +36,19 @@ type versionJSON struct {
 		ProductName      string `json:"ProductName"`
 		ProductVersion   string `json:"ProductVersion"`
 	} `json:"StringFileInfo"`
+	IconPath string `json:"IconPath"`
 }
 
 type versionNum struct {
 	Major, Minor, Patch, Build uint16
+}
+
+// resEntry holds one resource (type, name, language, data).
+type resEntry struct {
+	typeID uint32
+	nameID uint32
+	langID uint32
+	data   []byte
 }
 
 // ---------------------------------------------------------------------------
@@ -60,16 +70,104 @@ func main() {
 		os.Exit(1)
 	}
 
-	viData := buildVSVersionInfo(info)
-	syso := buildCOFF(viData, []byte(appManifest))
+	var entries []resEntry
 
+	// RT_ICON (3) and RT_GROUP_ICON (14) — one RT_ICON per image in the .ico file.
+	numIcons := 0
+	if info.IconPath != "" {
+		icoData, err := os.ReadFile(filepath.Join(*dir, info.IconPath))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gen-rsrc: read icon:", err)
+			os.Exit(1)
+		}
+		images, grp, err := parseICO(icoData)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "gen-rsrc: parse icon:", err)
+			os.Exit(1)
+		}
+		for i, img := range images {
+			entries = append(entries, resEntry{3, uint32(i + 1), 0x0409, img})
+		}
+		entries = append(entries, resEntry{14, 1, 0x0409, grp})
+		numIcons = len(images)
+	}
+
+	// RT_VERSION (16)
+	viData := buildVSVersionInfo(info)
+	entries = append(entries, resEntry{16, 1, 0x0409, viData})
+
+	// RT_MANIFEST (24)
+	entries = append(entries, resEntry{24, 1, 0x0409, []byte(appManifest)})
+
+	syso := buildCOFF(entries)
 	outPath := filepath.Join(*dir, "resource_windows_amd64.syso")
 	if err := os.WriteFile(outPath, syso, 0644); err != nil {
 		fmt.Fprintln(os.Stderr, "gen-rsrc:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("gen-rsrc: wrote %s (%d bytes, vi=%d bytes, manifest=%d bytes)\n",
-		outPath, len(syso), len(viData), len(appManifest))
+	iconMsg := ""
+	if numIcons > 0 {
+		iconMsg = fmt.Sprintf(", icons=%d", numIcons)
+	}
+	fmt.Printf("gen-rsrc: wrote %s (%d bytes, vi=%d bytes, manifest=%d bytes%s)\n",
+		outPath, len(syso), len(viData), len(appManifest), iconMsg)
+}
+
+// ---------------------------------------------------------------------------
+// ICO file parser
+// ---------------------------------------------------------------------------
+
+// parseICO extracts raw image blobs from a .ico file and builds the
+// RT_GROUP_ICON blob that references them by sequential resource ID.
+func parseICO(data []byte) (images [][]byte, grpIconDir []byte, err error) {
+	if len(data) < 6 {
+		return nil, nil, fmt.Errorf("ico: file too short")
+	}
+	le := binary.LittleEndian
+	if le.Uint16(data[0:]) != 0 || le.Uint16(data[2:]) != 1 {
+		return nil, nil, fmt.Errorf("ico: invalid header")
+	}
+	count := int(le.Uint16(data[4:]))
+	if len(data) < 6+count*16 {
+		return nil, nil, fmt.Errorf("ico: truncated directory")
+	}
+
+	// GRPICONDIR header (6 bytes) + GRPICONDIRENTRY per image (14 bytes each).
+	grp := make([]byte, 6+count*14)
+	le.PutUint16(grp[0:], 0)             // reserved
+	le.PutUint16(grp[2:], 1)             // type = icon
+	le.PutUint16(grp[4:], uint16(count)) // count
+
+	images = make([][]byte, count)
+	for i := 0; i < count; i++ {
+		e := data[6+i*16:]
+		bWidth      := e[0]
+		bHeight     := e[1]
+		bColorCount := e[2]
+		bReserved   := e[3]
+		wPlanes     := le.Uint16(e[4:])
+		wBitCount   := le.Uint16(e[6:])
+		byteCount   := le.Uint32(e[8:])
+		imgOffset   := le.Uint32(e[12:])
+
+		end := int(imgOffset) + int(byteCount)
+		if end > len(data) {
+			return nil, nil, fmt.Errorf("ico: image %d out of bounds", i)
+		}
+		images[i] = data[imgOffset:end]
+
+		// GRPICONDIRENTRY (14 bytes)
+		g := grp[6+i*14:]
+		g[0] = bWidth
+		g[1] = bHeight
+		g[2] = bColorCount
+		g[3] = bReserved
+		le.PutUint16(g[4:], wPlanes)
+		le.PutUint16(g[6:], wBitCount)
+		le.PutUint32(g[8:], byteCount)
+		le.PutUint16(g[12:], uint16(i+1)) // resource ID = sequential 1-based
+	}
+	return images, grp, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -230,179 +328,222 @@ const appManifest = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 `
 
 // ---------------------------------------------------------------------------
-// COFF .syso builder
+// COFF .syso builder (generic: supports any number of resource entries)
 // ---------------------------------------------------------------------------
 
 const (
-	imageMachineAMD64          = uint16(0x8664)
-	imageSCNInitializedData    = uint32(0x00000040)
-	imageSCNAlign4Bytes        = uint32(0x00300000)
-	imageSCNMemRead            = uint32(0x40000000)
-	imageRelAMD64Addr32NB      = uint16(0x0003)
-	imageSymClassStatic        = byte(3)
+	imageMachineAMD64       = uint16(0x8664)
+	imageSCNInitializedData = uint32(0x00000040)
+	imageSCNAlign4Bytes     = uint32(0x00300000)
+	imageSCNMemRead         = uint32(0x40000000)
+	imageRelAMD64Addr32NB   = uint16(0x0003)
+	imageSymClassStatic     = byte(3)
 
 	rsrcCharacteristics = imageSCNInitializedData | imageSCNAlign4Bytes | imageSCNMemRead
 )
 
-// buildCOFF wraps viData and manifestData inside a minimal COFF object file
-// (.syso) that the Go linker includes automatically.  The single .rsrc section
-// holds two resource trees:
+// buildCOFF packs resource entries into a minimal COFF .syso file.
 //
-//   RT_VERSION  (type=16)  — VERSIONINFO displayed in Explorer
-//   RT_MANIFEST (type=24)  — enables comctl32 v6 visual styles
+// The .rsrc section contains a three-level resource directory tree:
+//   Level 1  — resource type  (e.g. RT_ICON=3, RT_VERSION=16)
+//   Level 2  — resource name/ID (e.g. 1 for first icon, 1 for version)
+//   Level 3  — language  (always 0x0409 English here)
+//   DataEntry — points to the raw resource blob via an ADDR32NB relocation
 //
-// Section layout (all offsets relative to section start):
-//
-//   0   L1 dir           (16) — 2 ID entries
-//   16  L1 entry type=16 ( 8) → L2-A at 32
-//   24  L1 entry type=24 ( 8) → L2-B at 56
-//   32  L2-A dir         (16) — 1 ID entry
-//   48  L2-A entry id=1  ( 8) → L3-A at 80
-//   56  L2-B dir         (16) — 1 ID entry
-//   72  L2-B entry id=1  ( 8) → L3-B at 104
-//   80  L3-A dir         (16) — 1 ID entry
-//   96  L3-A entry 0409  ( 8) → DataEntry-A at 128
-//  104  L3-B dir         (16) — 1 ID entry
-//  120  L3-B entry 0409  ( 8) → DataEntry-B at 144
-//  128  DataEntry-A      (16) — viData (ADDR32NB reloc patches OffsetToData)
-//  144  DataEntry-B      (16) — manifestData (ditto)
-//  160  viData (padded to DWORD)
-//  160+viPad  manifestData (padded to DWORD)
-func buildCOFF(viData []byte, manifestData []byte) []byte {
-	viPadded := make([]byte, align4(len(viData)))
-	copy(viPadded, viData)
-	mfPadded := make([]byte, align4(len(manifestData)))
-	copy(mfPadded, manifestData)
+// Entries are sorted by (typeID, nameID, langID) before building.
+// One RT_ICON entry per icon image size plus one RT_GROUP_ICON is the norm;
+// add RT_VERSION and RT_MANIFEST to complete the set.
+func buildCOFF(entries []resEntry) []byte {
+	le := binary.LittleEndian
 
-	const (
-		offL1   = 0
-		offL2A  = 32
-		offL2B  = 56
-		offL3A  = 80
-		offL3B  = 104
-		offDEA  = 128
-		offDEB  = 144
-		offData = 160
-	)
-	offManifest := offData + len(viPadded)
-	sectionSize := offManifest + len(mfPadded)
-	sec := make([]byte, sectionSize)
+	// Sort entries by (typeID, nameID, langID).
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.typeID != b.typeID {
+			return a.typeID < b.typeID
+		}
+		if a.nameID != b.nameID {
+			return a.nameID < b.nameID
+		}
+		return a.langID < b.langID
+	})
 
-	putDir := func(off int, numID uint16) {
-		binary.LittleEndian.PutUint16(sec[off+12:], 0)
-		binary.LittleEndian.PutUint16(sec[off+14:], numID)
+	// Group into typeRec → nameRec (one language per name in our usage).
+	type nameRec struct {
+		nameID  uint32
+		langID  uint32
+		dataIdx int
 	}
-	putEntry := func(off int, id, target uint32, isDir bool) {
-		binary.LittleEndian.PutUint32(sec[off:], id)
-		if isDir {
-			binary.LittleEndian.PutUint32(sec[off+4:], 0x80000000|target)
-		} else {
-			binary.LittleEndian.PutUint32(sec[off+4:], target)
+	type typeRec struct {
+		typeID uint32
+		names  []nameRec
+	}
+	var types []typeRec
+	for idx, e := range entries {
+		var tr *typeRec
+		for i := range types {
+			if types[i].typeID == e.typeID {
+				tr = &types[i]
+				break
+			}
+		}
+		if tr == nil {
+			types = append(types, typeRec{typeID: e.typeID})
+			tr = &types[len(types)-1]
+		}
+		tr.names = append(tr.names, nameRec{e.nameID, e.langID, idx})
+	}
+
+	numTypes := len(types)
+	numData := len(entries)
+
+	// ── Compute section offsets ───────────────────────────────────────────
+	// Layout:  L1 dir | L2 dirs (one per type) | L3 dirs (one per name) |
+	//          DataEntries (one per entry) | raw data blobs
+
+	off := 16 + numTypes*8 // L1 directory
+
+	l2Offs := make([]int, numTypes)
+	for i, tr := range types {
+		l2Offs[i] = off
+		off += 16 + len(tr.names)*8
+	}
+
+	// l3Offs indexed by flat (type→name) order
+	l3Offs := make([]int, numData)
+	flat := 0
+	for _, tr := range types {
+		for range tr.names {
+			l3Offs[flat] = off
+			off += 24 // 16-byte header + 1 entry × 8 bytes
+			flat++
 		}
 	}
 
-	// Level 1: two ID entries, sorted ascending (16 < 24)
-	putDir(offL1, 2)
-	putEntry(offL1+16, 16, uint32(offL2A), true) // RT_VERSION  = 16
-	putEntry(offL1+24, 24, uint32(offL2B), true) // RT_MANIFEST = 24
+	deOffs := make([]int, numData) // DataEntry offsets
+	for i := range entries {
+		deOffs[i] = off
+		off += 16
+	}
+	dirEnd := off
 
-	// Level 2-A: RT_VERSION subtree
-	putDir(offL2A, 1)
-	putEntry(offL2A+16, 1, uint32(offL3A), true)
+	dataOffs := make([]int, numData) // raw blob offsets
+	dataEnd := dirEnd
+	for i, e := range entries {
+		dataOffs[i] = dataEnd
+		dataEnd += align4(len(e.data))
+	}
+	sectionSize := dataEnd
 
-	// Level 2-B: RT_MANIFEST subtree
-	putDir(offL2B, 1)
-	putEntry(offL2B+16, 1, uint32(offL3B), true)
+	// ── Fill section buffer ───────────────────────────────────────────────
+	sec := make([]byte, sectionSize)
 
-	// Level 3-A: English (0x0409) → DataEntry-A
-	putDir(offL3A, 1)
-	putEntry(offL3A+16, 0x0409, uint32(offDEA), false)
+	putDir := func(off, n int) {
+		le.PutUint16(sec[off+12:], 0)
+		le.PutUint16(sec[off+14:], uint16(n))
+	}
+	putDirEntry := func(dirOff, idx int, id uint32, target int, isSubdir bool) {
+		p := dirOff + 16 + idx*8
+		le.PutUint32(sec[p:], id)
+		if isSubdir {
+			le.PutUint32(sec[p+4:], 0x80000000|uint32(target))
+		} else {
+			le.PutUint32(sec[p+4:], uint32(target))
+		}
+	}
 
-	// Level 3-B: English (0x0409) → DataEntry-B
-	putDir(offL3B, 1)
-	putEntry(offL3B+16, 0x0409, uint32(offDEB), false)
+	// Level 1
+	putDir(0, numTypes)
+	for i, tr := range types {
+		putDirEntry(0, i, tr.typeID, l2Offs[i], true)
+	}
 
-	// DataEntry-A: viData
-	le := binary.LittleEndian
-	le.PutUint32(sec[offDEA:], uint32(offData))       // OffsetToData (ADDR32NB relocation addend)
-	le.PutUint32(sec[offDEA+4:], uint32(len(viData))) // Size
+	// Level 2 + Level 3
+	flat = 0
+	for i, tr := range types {
+		putDir(l2Offs[i], len(tr.names))
+		for j, nr := range tr.names {
+			putDirEntry(l2Offs[i], j, nr.nameID, l3Offs[flat], true)
+			// Level 3 (always 1 language)
+			putDir(l3Offs[flat], 1)
+			putDirEntry(l3Offs[flat], 0, nr.langID, deOffs[nr.dataIdx], false)
+			flat++
+		}
+	}
 
-	// DataEntry-B: manifest
-	le.PutUint32(sec[offDEB:], uint32(offManifest))         // OffsetToData (ADDR32NB relocation addend)
-	le.PutUint32(sec[offDEB+4:], uint32(len(manifestData))) // Size
+	// DataEntries + raw blobs
+	for i, e := range entries {
+		p := deOffs[i]
+		le.PutUint32(sec[p:], uint32(dataOffs[i]))   // OffsetToData (patched by ADDR32NB reloc)
+		le.PutUint32(sec[p+4:], uint32(len(e.data))) // Size
+		// CodePage and Reserved stay 0
+		copy(sec[dataOffs[i]:], e.data)
+	}
 
-	copy(sec[offData:], viPadded)
-	copy(sec[offManifest:], mfPadded)
-
+	// ── COFF file wrapper ─────────────────────────────────────────────────
 	const (
-		coffHdrSize  = 20
-		sectHdrSize  = 40
-		relocSize    = 10
-		numRelocs    = 2 // one per DataEntry
-		symEntrySize = 18
-		numSyms      = 2 // section symbol + aux record
-		strTabSize   = 4
+		coffHdrSize = 20
+		sectHdrSize = 40
+		relocSize   = 10
+		numSyms     = 2
+		strTabSize  = 4
 	)
-	secDataOff := coffHdrSize + sectHdrSize
-	relocOff := secDataOff + sectionSize
-	symTabOff := relocOff + numRelocs*relocSize
+	secDataFileOff := coffHdrSize + sectHdrSize
+	relocFileOff   := secDataFileOff + sectionSize
+	symTabFileOff  := relocFileOff + numData*relocSize
 
 	var out bytes.Buffer
 	w := &out
 
-	// ---- COFF header ----
+	// COFF header
 	binary.Write(w, binary.LittleEndian, imageMachineAMD64)
-	binary.Write(w, binary.LittleEndian, uint16(1))          // NumberOfSections
-	binary.Write(w, binary.LittleEndian, uint32(0))          // TimeDateStamp
-	binary.Write(w, binary.LittleEndian, uint32(symTabOff))  // PointerToSymbolTable
-	binary.Write(w, binary.LittleEndian, uint32(numSyms))    // NumberOfSymbols
-	binary.Write(w, binary.LittleEndian, uint16(0))          // SizeOfOptionalHeader
-	binary.Write(w, binary.LittleEndian, uint16(0))          // Characteristics
+	binary.Write(w, binary.LittleEndian, uint16(1))               // NumberOfSections
+	binary.Write(w, binary.LittleEndian, uint32(0))               // TimeDateStamp
+	binary.Write(w, binary.LittleEndian, uint32(symTabFileOff))   // PointerToSymbolTable
+	binary.Write(w, binary.LittleEndian, uint32(numSyms))         // NumberOfSymbols
+	binary.Write(w, binary.LittleEndian, uint16(0))               // SizeOfOptionalHeader
+	binary.Write(w, binary.LittleEndian, uint16(0))               // Characteristics
 
-	// ---- Section header (.rsrc) ----
-	out.Write([]byte{'.', 'r', 's', 'r', 'c', 0, 0, 0}) // Name[8]
-	binary.Write(w, binary.LittleEndian, uint32(0))                   // VirtualSize
-	binary.Write(w, binary.LittleEndian, uint32(0))                   // VirtualAddress
-	binary.Write(w, binary.LittleEndian, uint32(sectionSize))         // SizeOfRawData
-	binary.Write(w, binary.LittleEndian, uint32(secDataOff))          // PointerToRawData
-	binary.Write(w, binary.LittleEndian, uint32(relocOff))            // PointerToRelocations
-	binary.Write(w, binary.LittleEndian, uint32(0))                   // PointerToLinenumbers
-	binary.Write(w, binary.LittleEndian, uint16(numRelocs))           // NumberOfRelocations
-	binary.Write(w, binary.LittleEndian, uint16(0))                   // NumberOfLinenumbers
-	binary.Write(w, binary.LittleEndian, rsrcCharacteristics)         // Characteristics
+	// Section header (.rsrc)
+	out.Write([]byte{'.', 'r', 's', 'r', 'c', 0, 0, 0})
+	binary.Write(w, binary.LittleEndian, uint32(0))               // VirtualSize
+	binary.Write(w, binary.LittleEndian, uint32(0))               // VirtualAddress
+	binary.Write(w, binary.LittleEndian, uint32(sectionSize))     // SizeOfRawData
+	binary.Write(w, binary.LittleEndian, uint32(secDataFileOff))  // PointerToRawData
+	binary.Write(w, binary.LittleEndian, uint32(relocFileOff))    // PointerToRelocations
+	binary.Write(w, binary.LittleEndian, uint32(0))               // PointerToLinenumbers
+	binary.Write(w, binary.LittleEndian, uint16(numData))         // NumberOfRelocations
+	binary.Write(w, binary.LittleEndian, uint16(0))               // NumberOfLinenumbers
+	binary.Write(w, binary.LittleEndian, rsrcCharacteristics)
 
-	// ---- Section data ----
+	// Section data
 	out.Write(sec)
 
-	// ---- Relocations ----
-	// Reloc for DataEntry-A (version info)
-	binary.Write(w, binary.LittleEndian, uint32(offDEA))        // VirtualAddress (site in section)
-	binary.Write(w, binary.LittleEndian, uint32(0))             // SymbolTableIndex = .rsrc symbol
-	binary.Write(w, binary.LittleEndian, imageRelAMD64Addr32NB) // Type
+	// Relocations: one IMAGE_RELOCATION per DataEntry
+	for i := range entries {
+		binary.Write(w, binary.LittleEndian, uint32(deOffs[i]))    // VirtualAddress (site in section)
+		binary.Write(w, binary.LittleEndian, uint32(0))            // SymbolTableIndex (.rsrc symbol)
+		binary.Write(w, binary.LittleEndian, imageRelAMD64Addr32NB)
+	}
 
-	// Reloc for DataEntry-B (manifest)
-	binary.Write(w, binary.LittleEndian, uint32(offDEB))        // VirtualAddress (site in section)
-	binary.Write(w, binary.LittleEndian, uint32(0))             // SymbolTableIndex = .rsrc symbol
-	binary.Write(w, binary.LittleEndian, imageRelAMD64Addr32NB) // Type
-
-	// ---- Symbol table ----
+	// Symbol table: section symbol + auxiliary record (18 bytes each)
 	out.Write([]byte{'.', 'r', 's', 'r', 'c', 0, 0, 0}) // ShortName[8]
 	binary.Write(w, binary.LittleEndian, uint32(0))      // Value
 	binary.Write(w, binary.LittleEndian, uint16(1))      // SectionNumber (1-based)
 	binary.Write(w, binary.LittleEndian, uint16(0))      // Type
-	out.WriteByte(imageSymClassStatic)                   // StorageClass
-	out.WriteByte(1)                                     // NumberOfAuxSymbols
+	out.WriteByte(imageSymClassStatic)
+	out.WriteByte(1) // NumberOfAuxSymbols
 
-	// Auxiliary record for section symbol
+	// Auxiliary record for section symbol (18 bytes)
 	binary.Write(w, binary.LittleEndian, uint32(sectionSize)) // Length
-	binary.Write(w, binary.LittleEndian, uint16(numRelocs))   // NumberOfRelocations
+	binary.Write(w, binary.LittleEndian, uint16(numData))     // NumberOfRelocations
 	binary.Write(w, binary.LittleEndian, uint16(0))           // NumberOfLinenumbers
 	binary.Write(w, binary.LittleEndian, uint32(0))           // CheckSum
 	binary.Write(w, binary.LittleEndian, uint16(1))           // Number (section index)
 	out.WriteByte(0)                                          // Selection
 	out.Write([]byte{0, 0, 0})                               // Padding → 18 bytes total
 
-	// ---- String table (empty) ----
+	// String table (empty — just the size field)
 	binary.Write(w, binary.LittleEndian, uint32(strTabSize))
 
 	return out.Bytes()
