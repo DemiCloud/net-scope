@@ -731,19 +731,16 @@ func updateSortIndicators() {
 }
 
 // applyHostsSort re-sorts hwndList rows by sortCol/sortAsc, rebuilding
-// ipRowMap and rowResultMap. No-op if sortCol < 0.
+// ipRowMap and rowResultMap. When sortCol < 0 (unsorted), restores natural
+// IP-numeric order (the order results arrive from the scanner).
 func applyHostsSort() {
-	if sortCol < 0 {
-		return
-	}
-
-	// Collect results (alive rows recorded in rowResultMap).
+	// Collect results recorded in rowResultMap.
 	results := make([]sweep.Result, 0, len(rowResultMap))
 	for _, r := range rowResultMap {
 		results = append(results, r)
 	}
 
-	// Collect pending IPs (inserted but no result yet — still scanning or dead).
+	// Collect pending IPs (inserted but no result yet).
 	resultIPs := make(map[string]bool, len(results))
 	for _, r := range results {
 		resultIPs[r.IP.String()] = true
@@ -755,13 +752,21 @@ func applyHostsSort() {
 		}
 	}
 
-	sort.SliceStable(results, func(i, j int) bool {
-		c := compareHostResult(results[i], results[j], sortCol)
-		if sortAsc {
-			return c < 0
-		}
-		return c > 0
-	})
+	if sortCol < 0 {
+		// Unsorted: restore natural IP-numeric order.
+		sort.SliceStable(results, func(i, j int) bool {
+			return compareHostResult(results[i], results[j], colIP) < 0
+		})
+		sort.Strings(pendingIPs)
+	} else {
+		sort.SliceStable(results, func(i, j int) bool {
+			c := compareHostResult(results[i], results[j], sortCol)
+			if sortAsc {
+				return c < 0
+			}
+			return c > 0
+		})
+	}
 
 	// Rebuild the ListView.
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)

@@ -492,12 +492,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 		}
-		// Column header click → sort hosts.
+		// Column header click → sort hosts (asc → desc → unsorted → …).
 		if hdr.IdFrom == IDC_LIST && hdr.Code == LVN_COLUMNCLICK {
 			nm := (*NMLISTVIEW)(unsafe.Pointer(lParam)) //nolint:govet
 			col := nm.ISubItem
 			if col == sortCol {
-				sortAsc = !sortAsc
+				if sortAsc {
+					sortAsc = false // asc → desc
+				} else {
+					sortCol = -1 // desc → unsorted
+				}
 			} else {
 				sortCol = col
 				sortAsc = true
