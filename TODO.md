@@ -22,4 +22,4 @@
 - [ ] **Scan Report empty-state overlay** — the Scan Report tab has no placeholder; add one matching the style of the other tabs
 - [ ] **Win32 internal framework cleanup** — audit `cmd/gui-win/` for duplicated scaffolding (dialog creation, layout helpers, font caching, etc.) and extract into a small internal framework; goal is zero copy-paste between dialogs
 - [ ] **README.md** — generate a project README covering build instructions, usage, screenshots, and contributing guidelines
-- [ ] **GitHub Wiki / FAQ** — move the FAQ content to a GitHub Wiki page; update the Options → FAQ menu item to open the wiki URL in the default browser instead of showing the inline dialog; confirm whether wiki content can live in the repo (it can, via a separate `wiki/` branch or the companion `<repo>.wiki.git`)
+- [ ] **GitHub Wiki / FAQ** — move the FAQ content to a GitHub Wiki page; update the Options → FAQ menu item to open the wiki URL in the default browser instead of showing the inline dialog; note: the GitHub Wiki lives in a separate companion repo (`<repo>.wiki.git`) — it is not part of the main repo's commit history, but can be cloned/edited independently
