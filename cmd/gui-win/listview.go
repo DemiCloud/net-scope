@@ -4,6 +4,7 @@ package guiwin
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -676,4 +677,209 @@ func listViewGetRowTSV(hwnd HWND, row, numCols int32) string {
 		parts[c] = listViewGetCellText(hwnd, row, c)
 	}
 	return strings.Join(parts, "\t")
+}
+
+// ---------------------------------------------------------------------------
+// Hosts ListView — sortable columns
+// ---------------------------------------------------------------------------
+
+// sortCol is the column currently sorted (-1 = no sort applied).
+// sortAsc is true for ascending, false for descending.
+var (
+	sortCol int32 = -1
+	sortAsc bool  = true
+)
+
+// hostsColTitles holds the canonical (indicator-free) header text per column,
+// indexed by the colXxx constants defined above.
+var hostsColTitles = [10]string{
+	"●",              // colStatus   0
+	"IP Address",     // colIP       1
+	"Hostname",       // colHost     2
+	"MAC",            // colMAC      3
+	"Vendor",         // colVendor   4
+	"OS",             // colOS       5
+	"Latency",        // colLatency  6
+	"Ports",          // colPorts    7
+	"Banners / SNMP", // colBanner   8
+	"Services",       // colServices 9
+}
+
+// listViewSetColumnHeader updates the header text for a single column.
+func listViewSetColumnHeader(hwnd HWND, idx int32, title string) {
+	col := LVCOLUMN{
+		Mask:    LVCF_TEXT,
+		PszText: utf16(title),
+	}
+	sendMessage(hwnd, LVM_SETCOLUMN, uintptr(idx), uintptr(unsafe.Pointer(&col)))
+}
+
+// updateSortIndicators refreshes all column headers in hwndList to show ▲/▼
+// on the current sortCol and plain titles on all others.
+func updateSortIndicators() {
+	for i, title := range hostsColTitles {
+		h := title
+		if int32(i) == sortCol {
+			if sortAsc {
+				h = title + " ▲"
+			} else {
+				h = title + " ▼"
+			}
+		}
+		listViewSetColumnHeader(hwndList, int32(i), h)
+	}
+}
+
+// applyHostsSort re-sorts hwndList rows by sortCol/sortAsc, rebuilding
+// ipRowMap and rowResultMap. No-op if sortCol < 0.
+func applyHostsSort() {
+	if sortCol < 0 {
+		return
+	}
+
+	// Collect results (alive rows recorded in rowResultMap).
+	results := make([]sweep.Result, 0, len(rowResultMap))
+	for _, r := range rowResultMap {
+		results = append(results, r)
+	}
+
+	// Collect pending IPs (inserted but no result yet — still scanning or dead).
+	resultIPs := make(map[string]bool, len(results))
+	for _, r := range results {
+		resultIPs[r.IP.String()] = true
+	}
+	pendingIPs := make([]string, 0)
+	for ip := range ipRowMap {
+		if !resultIPs[ip] {
+			pendingIPs = append(pendingIPs, ip)
+		}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		c := compareHostResult(results[i], results[j], sortCol)
+		if sortAsc {
+			return c < 0
+		}
+		return c > 0
+	})
+
+	// Rebuild the ListView.
+	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
+	ipRowMap = make(map[string]int32, len(results)+len(pendingIPs))
+	rowResultMap = make(map[int32]sweep.Result, len(results))
+
+	for _, r := range results {
+		ip := r.IP.String()
+		row := listViewInsertPendingRow(hwndList, ip)
+		ipRowMap[ip] = row
+		listViewUpdateRow(hwndList, row, r)
+		rowResultMap[row] = r
+	}
+	for _, ip := range pendingIPs {
+		row := listViewInsertPendingRow(hwndList, ip)
+		ipRowMap[ip] = row
+	}
+}
+
+// compareHostResult compares two Results by column col.
+// Returns negative if a < b, positive if a > b, 0 if equal.
+// Empty/dash values always sort last (after real values) in ascending order.
+func compareHostResult(a, b sweep.Result, col int32) int {
+	switch col {
+	case colStatus:
+		// Alive first.
+		if a.Alive == b.Alive {
+			return 0
+		}
+		if a.Alive {
+			return -1
+		}
+		return 1
+
+	case colIP:
+		ai := a.IP.To4()
+		bi := b.IP.To4()
+		if ai == nil || bi == nil {
+			return strings.Compare(a.IP.String(), b.IP.String())
+		}
+		for k := 0; k < 4; k++ {
+			if ai[k] != bi[k] {
+				if ai[k] < bi[k] {
+					return -1
+				}
+				return 1
+			}
+		}
+		return 0
+
+	case colHost:
+		ha, hb := a.Hostname, b.Hostname
+		if ha == "" {
+			ha = a.NetBIOS
+		}
+		if hb == "" {
+			hb = b.NetBIOS
+		}
+		return cmpStrDash(ha, hb)
+
+	case colMAC:
+		ma, mb := "", ""
+		if a.MAC != nil {
+			ma = a.MAC.String()
+		}
+		if b.MAC != nil {
+			mb = b.MAC.String()
+		}
+		return cmpStrDash(ma, mb)
+
+	case colVendor:
+		return cmpStrDash(a.Vendor, b.Vendor)
+
+	case colOS:
+		return cmpStrDash(string(a.OS), string(b.OS))
+
+	case colLatency:
+		if a.Latency == b.Latency {
+			return 0
+		}
+		// Zero latency (unknown) sorts last.
+		if a.Latency == 0 {
+			return 1
+		}
+		if b.Latency == 0 {
+			return -1
+		}
+		if a.Latency < b.Latency {
+			return -1
+		}
+		return 1
+
+	case colPorts:
+		if len(a.OpenPorts) == len(b.OpenPorts) {
+			return 0
+		}
+		if len(a.OpenPorts) < len(b.OpenPorts) {
+			return -1
+		}
+		return 1
+	}
+	// colBanner, colServices — no structural comparison; preserve insertion order.
+	return 0
+}
+
+// cmpStrDash compares two strings case-insensitively, treating empty strings
+// as greater than all real values so unknowns sort last ascending.
+func cmpStrDash(a, b string) int {
+	emptyA := a == ""
+	emptyB := b == ""
+	if emptyA && emptyB {
+		return 0
+	}
+	if emptyA {
+		return 1
+	}
+	if emptyB {
+		return -1
+	}
+	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
 }

@@ -492,6 +492,20 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 		}
+		// Column header click → sort hosts.
+		if hdr.IdFrom == IDC_LIST && hdr.Code == LVN_COLUMNCLICK {
+			nm := (*NMLISTVIEW)(unsafe.Pointer(lParam)) //nolint:govet
+			col := nm.ISubItem
+			if col == sortCol {
+				sortAsc = !sortAsc
+			} else {
+				sortCol = col
+				sortAsc = true
+			}
+			updateSortIndicators()
+			applyHostsSort()
+			return 0
+		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
 			row := int32(sendMessage(hwndList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
@@ -1164,6 +1178,9 @@ func startScan(hwnd HWND) {
 
 	// Reset display state.
 	liveCount = 0
+	sortCol = -1
+	sortAsc = true
+	updateSortIndicators()
 	pendingMu.Lock()
 	pendingResults = pendingResults[:0]
 	pendingMu.Unlock()

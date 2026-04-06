@@ -193,6 +193,7 @@ const (
 	LVS_EX_DOUBLEBUFFER  = 0x00010000
 	LVM_FIRST                    = 0x1000
 	LVM_INSERTCOLUMN             = LVM_FIRST + 97
+	LVM_SETCOLUMN                = LVM_FIRST + 96
 	LVM_INSERTITEM               = LVM_FIRST + 77
 	LVM_SETITEM                  = LVM_FIRST + 76
 	LVM_DELETEALLITEMS           = LVM_FIRST + 9
@@ -209,6 +210,9 @@ const (
 	LVCFMT_RIGHT                 = 1
 	LVCFMT_CENTER                = 2
 	LVIF_TEXT                    = 0x0001
+	// ListView notifications
+	LVN_FIRST       = uint32(0xFFFFFF9C) // -100
+	LVN_COLUMNCLICK = uint32(0xFFFFFF94) // LVN_FIRST - 8
 
 	// StatusBar
 	SB_SETTEXT  = 0x040B
@@ -365,6 +369,14 @@ type NMLVCUSTOMDRAW struct {
 	ClrText     uint32
 	ClrTextBk   uint32
 	ISubItem    int32
+}
+
+// NMLISTVIEW is sent with LVN_* ListView notifications (e.g. LVN_COLUMNCLICK).
+// Only the first three fields are needed; the rest are omitted.
+type NMLISTVIEW struct {
+	Hdr      NMHDR
+	IItem    int32
+	ISubItem int32
 }
 
 // LVHITTESTINFO is passed to LVM_HITTEST.
