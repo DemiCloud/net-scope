@@ -177,7 +177,7 @@ func showHostDetailDialog(parent HWND, ip string) {
 	dialogProbeCtx = ctx
 	dialogProbeCancel = cancel
 
-	const dlgW, dlgH int32 = 700, 540
+	const dlgW, dlgH int32 = 740, 600
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepHostDetail", "Host detail — "+ip,
@@ -384,8 +384,8 @@ func buildHostSummary(ip string) string {
 
 	e := hostRegistry[ip] // may be nil for IPs typed manually
 	if e == nil {
-		sb.WriteString("IP:       " + ip + "\n")
-		sb.WriteString("(No scan data available for this host)\n")
+		sb.WriteString("IP:       " + ip + "\r\n")
+		sb.WriteString("(No scan data available for this host)\r\n")
 		return sb.String()
 	}
 
@@ -495,5 +495,5 @@ func buildHostSummary(ip string) string {
 		}
 	}
 
-	return sb.String()
+	return strings.ReplaceAll(sb.String(), "\n", "\r\n")
 }
