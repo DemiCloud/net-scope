@@ -709,11 +709,11 @@ var aboutIconWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		pt := getCursorPos()
 		menu := createPopupMenu()
 		appendMenu(menu, MF_STRING, IDM_CTX_COPY_ICON, "Copy Image")
-		trackPopupMenu(menu, TPM_RIGHTBUTTON, pt.X, pt.Y, HWND(hwnd))
+		// TPM_RETURNCMD: TrackPopupMenu returns the command ID directly
+		// instead of posting WM_COMMAND, which is more reliable for child windows.
+		cmd := trackPopupMenu(menu, TPM_RIGHTBUTTON|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
 		destroyMenu(menu)
-		return 0
-	case WM_COMMAND:
-		if loword(wParam) == IDM_CTX_COPY_ICON {
+		if int(cmd) == IDM_CTX_COPY_ICON {
 			copyIconToClipboard(HWND(hwnd), 256)
 		}
 		return 0
@@ -733,12 +733,12 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 			14, 14, 96, 96,
 			HWND(hwnd), 0, inst)
 
-		text := "NetScope " + version + "\n" +
-			"Network inspection and reconnaissance tool combining active\n" +
-			"probing, passive signal analysis, and change detection\n" +
-			"for LAN environments.\n\n" +
-			"Copyright \u00a9 2026 demicloud\n" +
-			"https://github.com/demicloud/net-scope"
+		text := "NetScope  " + version + "\r\n\r\n" +
+			"Network inspection & reconnaissance\r\n" +
+			"for LAN environments.\r\n\r\n" +
+			"Active probing · Passive signal analysis\r\n" +
+			"Change detection across scans\r\n\r\n" +
+			"github.com/demicloud/net-scope"
 		createWindowEx(0, "STATIC", text,
 			WS_CHILD|WS_VISIBLE|SS_LEFT,
 			126, 14, cW-126-14, 130,
@@ -824,11 +824,12 @@ func copyIconToClipboard(owner HWND, sz int) {
 		buf[off], buf[off+1], buf[off+2], buf[off+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
 	}
 	pu16 := func(off int, v uint16) { buf[off], buf[off+1] = byte(v), byte(v>>8) }
-	pu32(0, 40)                 // biSize
-	pu32(4, uint32(sz))         // biWidth
-	pu32(8, uint32(-int32(sz))) // biHeight (negative = top-down)
-	pu16(12, 1)                 // biPlanes
-	pu16(14, 32)                // biBitCount
+	pu32(0, 40)                       // biSize
+	pu32(4, uint32(sz))               // biWidth
+	pu32(8, uint32(-int32(sz)))       // biHeight (negative = top-down)
+	pu16(12, 1)                       // biPlanes
+	pu16(14, 32)                      // biBitCount (BI_RGB)
+	pu32(20, uint32(sz*sz*4))         // biSizeImage (required by some apps)
 
 	off := hdrSize
 	for row := 0; row < sz; row++ {
