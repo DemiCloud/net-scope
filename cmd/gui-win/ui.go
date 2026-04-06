@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -108,13 +109,63 @@ var (
 
 	// arpPollCancel cancels the periodic ARP table polling goroutine.
 	arpPollCancel context.CancelFunc
+
+	// hostRegistry accumulates data about every host seen across all scans
+	// and broadcast events. Written and read only on the UI thread.
+	hostRegistry map[string]*hostEntry
 )
+
+// ensureHostEntry returns the hostEntry for ip, creating it if needed.
+func ensureHostEntry(ip string) *hostEntry {
+	if hostRegistry == nil {
+		hostRegistry = make(map[string]*hostEntry)
+	}
+	e, ok := hostRegistry[ip]
+	if !ok {
+		e = &hostEntry{IP: ip, FirstSeen: time.Now()}
+		hostRegistry[ip] = e
+	}
+	return e
+}
+
+// allHostIPs returns all known IPs from the registry, sorted numerically.
+func allHostIPs() []string {
+	ips := make([]string, 0, len(hostRegistry))
+	for ip := range hostRegistry {
+		ips = append(ips, ip)
+	}
+	sort.Slice(ips, func(i, j int) bool {
+		ai := net.ParseIP(ips[i]).To4()
+		aj := net.ParseIP(ips[j]).To4()
+		if ai == nil || aj == nil {
+			return ips[i] < ips[j]
+		}
+		for k := 0; k < 4; k++ {
+			if ai[k] != aj[k] {
+				return ai[k] < aj[k]
+			}
+		}
+		return false
+	})
+	return ips
+}
 
 // enrichEvent carries a NetBIOS name and/or MAC for an existing Hosts row.
 type enrichEvent struct {
 	ip      string
 	netbios string
 	mac     net.HardwareAddr
+}
+
+// hostEntry is the persistent record for a host seen across any source.
+type hostEntry struct {
+	IP           string
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	Result       sweep.Result      // latest scan data (zero-value for broadcast-only hosts)
+	HasResult    bool              // true once a scan result has been recorded
+	DHCPEvents   []sweep.DHCPEvent // all DHCP packets observed for this IP
+	ExtraServices []sweep.ServiceInfo // broadcast services not yet in Result.Services
 }
 
 type bcastEntry struct {
@@ -302,6 +353,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			enrichIP = evt.ClientIP
 		}
 		if enrichIP != "" && enrichIP != "0.0.0.0" {
+			// Registry: store DHCP event regardless of whether IP is in Hosts tab.
+			en := ensureHostEntry(enrichIP)
+			en.LastSeen = time.Now()
+			en.DHCPEvents = append(en.DHCPEvents, evt)
 			if _, inHosts := ipRowMap[enrichIP]; inHosts {
 				var parsedMAC net.HardwareAddr
 				if evt.ClientMAC != "" {
@@ -395,6 +450,17 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					showWindow(hwndListHealth, SW_SHOW)
 				}
 			}
+		}
+		// Double-click on host list → host detail dialog.
+		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
+			row := int32(sendMessage(hwndList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+			if row >= 0 {
+				ip := listViewGetCellText(hwndList, row, colIP)
+				if ip != "" {
+					showHostDetailDialog(HWND(hwnd), ip)
+				}
+			}
+			return 0
 		}
 		// Right-click on host list → context menu.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_RCLICK {
@@ -563,6 +629,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			bcastCount++
 			setStatusPart(1, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
 			updateNetworkTab()
+			// Registry: append service to the host's ExtraServices list.
+			en := ensureHostEntry(e.ip)
+			en.LastSeen = time.Now()
+			en.ExtraServices = append(en.ExtraServices, e.svc)
 		}
 		return 0
 
@@ -572,6 +642,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingMu.Unlock()
 
 		ipStr := r.IP.String()
+		// Always update the registry with the latest scan data.
+		{
+			en := ensureHostEntry(ipStr)
+			en.LastSeen = time.Now()
+			en.Result = r
+			en.HasResult = true
+		}
 		if row, found := ipRowMap[ipStr]; found {
 			listViewUpdateRow(hwndList, row, r)
 			rowResultMap[row] = r
@@ -648,6 +725,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if !ok {
 			return 0
 		}
+		// Also update the registry.
+		en := ensureHostEntry(e.ip)
+		en.LastSeen = time.Now()
 		if e.netbios != "" {
 			cur := listViewGetCellText(hwndList, row, colHost)
 			if cur == "\u2014" || cur == "" {
@@ -656,6 +736,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					r.NetBIOS = e.netbios
 					rowResultMap[row] = r
 				}
+			}
+			if en.Result.NetBIOS == "" {
+				en.Result.NetBIOS = e.netbios
 			}
 		}
 		if e.mac != nil {
@@ -673,6 +756,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 						r.Vendor = sweep.LookupVendor(e.mac)
 					}
 					rowResultMap[row] = r
+				}
+			}
+			if en.Result.MAC == nil {
+				en.Result.MAC = e.mac
+				if en.Result.Vendor == "" {
+					en.Result.Vendor = sweep.LookupVendor(e.mac)
 				}
 			}
 		}
@@ -1287,6 +1376,8 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	menuItem(hCopy, IDM_CTX_COPY_HOST, "Hostname",         r.Hostname != "")
 	menuItem(hCopy, IDM_CTX_COPY_ROW,  "Full row (tab-separated)", true)
 	appendMenu(menu, MF_POPUP, uintptr(hCopy), "Copy")
+	appendMenu(menu, MF_SEPARATOR, 0, "")
+	menuItem(menu, IDM_CTX_VIEW_DETAILS, "View details\u2026", true)
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
 	switch cmd {
@@ -1333,6 +1424,8 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 		copyToClipboard(parent, strings.Join([]string{
 			ip, r.Hostname, mac, r.Vendor, string(r.OS), ports,
 		}, "\t"))
+	case IDM_CTX_VIEW_DETAILS:
+		showHostDetailDialog(parent, ip)
 	}
 }
 

@@ -98,6 +98,7 @@ const (
 	WM_SERVICE_DOWN  = WM_APP + 7 // sweep service disconnected
 	WM_DHCP_EVENT    = WM_APP + 8 // DHCP packet observed by elevated service
 	WM_HOST_ENRICH   = WM_APP + 9 // background enrichment: NetBIOS name or ARP MAC arrived
+	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
 
 	// Control IDs
 	IDC_TARGET       = 101
@@ -143,6 +144,8 @@ const (
 	IDM_BCAST_COPY_ROW   = 3030
 	IDM_BCAST_COPY_IP    = 3031
 	IDM_BCAST_COPY_RAW   = 3032
+	// Host detail dialog
+	IDM_CTX_VIEW_DETAILS = 3040
 
 	// Detect-subnet popup menu item base (up to 16 interfaces supported)
 	IDM_DETECT_BASE = 3100
@@ -173,6 +176,25 @@ const (
 	// WM_CTLCOLORSTATIC — sent by a STATIC (or read-only EDIT) to its parent
 	// before painting; parent returns an HBRUSH and can set text/background colours.
 	WM_CTLCOLORSTATIC = 0x0138
+
+	// ComboBox window class and styles
+	CBS_SIMPLE       = 0x0001 // always-open list
+	CBS_DROPDOWN     = 0x0002 // editable text + drop-down list
+	CBS_DROPDOWNLIST = 0x0003 // non-editable (fixed choices)
+	CBS_AUTOHSCROLL  = 0x0040 // auto-scroll the edit field horizontally
+	CBS_SORT         = 0x0100 // sort list items alphabetically
+
+	// ComboBox messages
+	CB_ADDSTRING      = 0x0143
+	CB_RESETCONTENT   = 0x014B
+	CB_GETCURSEL      = 0x0147
+	CB_GETLBTEXT      = 0x0148
+	CB_GETLBTEXTLEN   = 0x0149
+	CB_SETCURSEL      = 0x014E
+	CB_FINDSTRINGEXACT = 0x0158
+
+	// ComboBox notification (HIWORD of wParam in WM_COMMAND)
+	CBN_SELCHANGE = 1
 
 	// GDI
 	SRCCOPY      = 0x00CC0020
@@ -214,6 +236,8 @@ const (
 	LVM_SETEXTENDEDLISTVIEWSTYLE = LVM_FIRST + 54 // no ANSI/W split
 	LVM_HITTEST                  = LVM_FIRST + 18 // hit-test (no ANSI/W split)
 	LVM_GETITEMTEXT              = LVM_FIRST + 115 // LVM_GETITEMTEXTW
+	LVM_GETNEXTITEM              = LVM_FIRST + 12  // find next item matching flags
+	LVNI_SELECTED                = 0x0002          // only selected items
 	// LVCOLUMN flags
 	LVCF_FMT   = 0x0001
 	LVCF_WIDTH = 0x0002
@@ -267,7 +291,9 @@ const (
 	TPM_RETURNCMD    = 0x0100
 
 	// NM_RCLICK notification: NM_FIRST(0) - 5 = -5 = 0xFFFFFFFB
-	NM_RCLICK = uint32(0xFFFFFFFB)
+	NM_RCLICK  = uint32(0xFFFFFFFB)
+	// NM_DBLCLK: NM_FIRST(0) - 3 = -3 = 0xFFFFFFFD
+	NM_DBLCLK  = uint32(0xFFFFFFFD)
 
 	// Window styles (popup dialogs)
 	WS_POPUP        = 0x80000000
