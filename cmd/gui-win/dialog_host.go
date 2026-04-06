@@ -801,13 +801,16 @@ func showAllHostsDialog(parent HWND) {
 // ---------------------------------------------------------------------------
 // "View Host…" picker dialog
 // ---------------------------------------------------------------------------
+// "Query Host…" dialog
+// ---------------------------------------------------------------------------
 //
-// A small combo-based picker. The user selects a host and clicks OK to open
-// the full host-detail dialog for that IP.
+// Enter or select any IP address (known session hosts are pre-populated in the
+// combo as shortcuts) and click OK to open the full host-detail/probe dialog.
+// Works even when no scan has been run.
 
 const (
-	idPickHostCombo = 710
-	idPickHostOK    = 711
+	idPickHostCombo  = 710
+	idPickHostOK     = 711
 	idPickHostCancel = 712
 )
 
@@ -824,20 +827,25 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		cW, cH := r.Right, r.Bottom
 		const pad int32 = 10
 
-		createWindowEx(0, "STATIC", "Select host:",
+		createWindowEx(0, "STATIC", "Host or IP:",
 			WS_CHILD|WS_VISIBLE,
 			pad, pad+4, 90, 16, HWND(hwnd), 0, inst)
+		// CBS_DROPDOWN lets the user type a free-form IP in addition to
+		// selecting a previously discovered host from the drop-down list.
 		hwndPickCombo, _ = createWindowEx(0, "COMBOBOX", "",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST|CBS_AUTOHSCROLL,
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWN|CBS_AUTOHSCROLL,
 			pad+94, pad, cW-pad*2-94, 300, HWND(hwnd), HMENU(idPickHostCombo), inst)
 
-		// Populate combo.
+		// Pre-populate known session hosts as shortcuts (may be empty).
 		for _, ip := range allHostIPs() {
 			label := hostDisplayName(ip)
 			p, _ := syscall.UTF16PtrFromString(label)
 			sendMessage(hwndPickCombo, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(p)))
 		}
-		sendMessage(hwndPickCombo, CB_SETCURSEL, 0, 0)
+		// Hint label
+		createWindowEx(0, "STATIC", "Enter any IP or hostname — or pick a discovered host from the list.",
+			WS_CHILD|WS_VISIBLE,
+			pad, pad+28, cW-pad*2, 16, HWND(hwnd), 0, inst)
 
 		createWindowEx(0, "BUTTON", "OK",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
@@ -850,17 +858,20 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idPickHostOK:
-			idx := sendMessage(hwndPickCombo, CB_GETCURSEL, 0, 0)
-			if idx == ^uintptr(0) {
-				closeModal(HWND(hwnd))
+			// Read directly from the combo's edit field (works for both typed and selected).
+			ip := strings.TrimSpace(getWindowText(hwndPickCombo))
+			// If the user picked a "ip — hostname" display label, extract just the IP.
+			if i := strings.Index(ip, " "); i > 0 {
+				candidate := ip[:i]
+				if strings.Contains(candidate, ".") || strings.Contains(candidate, ":") {
+					ip = candidate
+				}
+			}
+			if ip == "" {
 				return 0
 			}
-			ips := allHostIPs()
-			if int(idx) < len(ips) {
-				ip := ips[int(idx)]
-				closeModal(HWND(hwnd))
-				showHostDetailDialog(hwndMain, ip)
-			}
+			closeModal(HWND(hwnd))
+			showHostDetailDialog(hwndMain, ip)
 		case idPickHostCancel:
 			closeModal(HWND(hwnd))
 		}
@@ -873,19 +884,9 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-// showPickHostDialog shows the host picker and then opens the detail dialog.
+// showPickHostDialog opens the Query Host dialog.
+// Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
-	if len(hostRegistry) == 0 {
-		messageBox(parent, "No hosts have been discovered in this session yet.", "View Host", MB_OK)
-		return
-	}
-	// If there's only one host, skip the picker.
-	if len(hostRegistry) == 1 {
-		ips := allHostIPs()
-		showHostDetailDialog(parent, ips[0])
-		return
-	}
-
 	registerPickHostOnce.Do(func() {
 		cn := utf16("NetSweepPickHost")
 		wc := WNDCLASSEX{
@@ -899,10 +900,10 @@ func showPickHostDialog(parent HWND) {
 		registerClassEx(&wc)
 	})
 
-	const dlgW, dlgH int32 = 400, 110
+	const dlgW, dlgH int32 = 460, 120
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepPickHost", "View Host",
+		"NetSweepPickHost", "Query Host",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
