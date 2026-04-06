@@ -51,7 +51,11 @@ var (
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
 	// Content panes
 	hwndList            HWND
-	hwndListPlaceholder HWND // empty-state overlay for Hosts tab
+	hwndListPlaceholder HWND // empty-state overlay for Scanner tab
+	hwndMDNSPlaceholder HWND // empty-state overlay for mDNS tab
+	hwndSSDPPlaceholder HWND // empty-state overlay for SSDP tab
+	hwndWSDPlaceholder  HWND // empty-state overlay for WSD tab
+	hwndDHCPPlaceholder HWND // empty-state overlay for DHCP tab
 	hwndListMDNS   HWND // mDNS tab
 	hwndListSSDP   HWND // SSDP tab
 	hwndListWSD    HWND // WS-Discovery tab
@@ -95,6 +99,8 @@ var (
 	bcastCount     int // total services received since app start
 	bcastMDNS      int // mDNS entries
 	bcastSSDP      int // SSDP entries
+	bcastWSD       int // WSD entries
+	bcastDHCP      int // DHCP entries
 	pendingBcast   []bcastEntry
 	pendingBcastMu sync.Mutex
 
@@ -346,6 +352,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingDHCPMu.Unlock()
 		listViewAddDHCPRow(hwndListDHCP, evt)
+		if bcastDHCP == 0 {
+			showWindow(hwndDHCPPlaceholder, SW_HIDE)
+		}
+		bcastDHCP++
 		// Cross-enrich the Hosts tab: if the DHCP IP matches a scanned row,
 		// fill in hostname (opt 12) and/or MAC (chaddr) if currently blank.
 		enrichIP := evt.OfferedIP
@@ -405,9 +415,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWindow(hwndList, SW_HIDE)
 			showWindow(hwndListPlaceholder, SW_HIDE)
 			showWindow(hwndListMDNS, SW_HIDE)
+			showWindow(hwndMDNSPlaceholder, SW_HIDE)
 			showWindow(hwndListSSDP, SW_HIDE)
+			showWindow(hwndSSDPPlaceholder, SW_HIDE)
 			showWindow(hwndListWSD, SW_HIDE)
+			showWindow(hwndWSDPlaceholder, SW_HIDE)
 			showWindow(hwndListDHCP, SW_HIDE)
+			showWindow(hwndDHCPPlaceholder, SW_HIDE)
 			showWindow(hwndListNetwork, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
 			// Show/hide scan bar and reposition Hosts listview accordingly.
@@ -438,12 +452,24 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
+					if bcastMDNS == 0 {
+						showWindow(hwndMDNSPlaceholder, SW_SHOW)
+					}
 				case 2:
 					showWindow(hwndListSSDP, SW_SHOW)
+					if bcastSSDP == 0 {
+						showWindow(hwndSSDPPlaceholder, SW_SHOW)
+					}
 				case 3:
 					showWindow(hwndListWSD, SW_SHOW)
+					if bcastWSD == 0 {
+						showWindow(hwndWSDPlaceholder, SW_SHOW)
+					}
 				case 4:
 					showWindow(hwndListDHCP, SW_SHOW)
+					if bcastDHCP == 0 {
+						showWindow(hwndDHCPPlaceholder, SW_SHOW)
+					}
 				case 5:
 					showWindow(hwndListNetwork, SW_SHOW)
 				case 6:
@@ -637,11 +663,21 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			switch e.svc.Source {
 			case "ssdp":
 				listViewAddSSDPRow(hwndListSSDP, e.ip, e.svc)
+				if bcastSSDP == 0 {
+					showWindow(hwndSSDPPlaceholder, SW_HIDE)
+				}
 				bcastSSDP++
 			case "wsd":
 				listViewAddWSDRow(hwndListWSD, e.ip, e.svc)
+				if bcastWSD == 0 {
+					showWindow(hwndWSDPlaceholder, SW_HIDE)
+				}
+				bcastWSD++
 			default:
 				listViewAddMDNSRow(hwndListMDNS, e.ip, e.svc)
+				if bcastMDNS == 0 {
+					showWindow(hwndMDNSPlaceholder, SW_HIDE)
+				}
 				bcastMDNS++
 			}
 			bcastCount++
@@ -701,10 +737,22 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			switch svc.Source {
 			case "ssdp":
 				listViewAddSSDPRow(hwndListSSDP, ipStr, svc)
+				if bcastSSDP == 0 {
+					showWindow(hwndSSDPPlaceholder, SW_HIDE)
+				}
+				bcastSSDP++
 			case "wsd":
 				listViewAddWSDRow(hwndListWSD, ipStr, svc)
+				if bcastWSD == 0 {
+					showWindow(hwndWSDPlaceholder, SW_HIDE)
+				}
+				bcastWSD++
 			default:
 				listViewAddMDNSRow(hwndListMDNS, ipStr, svc)
+				if bcastMDNS == 0 {
+					showWindow(hwndMDNSPlaceholder, SW_HIDE)
+				}
+				bcastMDNS++
 			}
 		}
 		return 0
@@ -832,7 +880,7 @@ func createControls(hwnd HWND) {
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|TCS_FLATBUTTONS,
 		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
-	insertTab(hwndTabCtrl, 0, "Hosts")
+	insertTab(hwndTabCtrl, 0, "Scanner")
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
 	insertTab(hwndTabCtrl, 3, "WSD")
@@ -892,6 +940,10 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListMDNS, 3, "Device/Model", scale(180))
 	listViewAddColumn(hwndListMDNS, 4, "Capabilities", scale(170))
 	listViewAddColumn(hwndListMDNS, 5, "Notes",        scale(300))
+	hwndMDNSPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Listening — no mDNS traffic detected yet",
+		WS_CHILD|SS_CENTER,
+		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -904,6 +956,10 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListSSDP, 2, "Type",     scale(160))
 	listViewAddColumn(hwndListSSDP, 3, "Services", scale(280))
 	listViewAddColumn(hwndListSSDP, 4, "Location", scale(300))
+	hwndSSDPPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Listening — no SSDP traffic detected yet",
+		WS_CHILD|SS_CENTER,
+		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
 	// ---- WS-Discovery listview (hidden initially) ----
 	hwndListWSD, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -916,6 +972,10 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListWSD, 2, "Transport URLs", scale(300))
 	listViewAddColumn(hwndListWSD, 3, "Scopes",        scale(200))
 	listViewAddColumn(hwndListWSD, 4, "Endpoint UUID", scale(280))
+	hwndWSDPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Listening — no WS-Discovery traffic detected yet",
+		WS_CHILD|SS_CENTER,
+		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
 	// ---- DHCP listview (hidden initially) ----
 	hwndListDHCP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -931,6 +991,10 @@ func createControls(hwnd HWND) {
 	listViewAddColumn(hwndListDHCP, 5, "Requested IP", scale(120))
 	listViewAddColumn(hwndListDHCP, 6, "Offered IP",   scale(120))
 	listViewAddColumn(hwndListDHCP, 7, "Server IP",    scale(120))
+	hwndDHCPPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Listening — no DHCP traffic detected yet (requires elevation)",
+		WS_CHILD|SS_CENTER,
+		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
 	// ---- network text area (hidden initially) ----
 	hwndListNetwork, _ = createWindowEx(
@@ -1015,9 +1079,13 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 		otherH = 0
 	}
 	moveWindow(hwndListMDNS, 0, otherTop, width, otherH)
+	moveWindow(hwndMDNSPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListSSDP, 0, otherTop, width, otherH)
+	moveWindow(hwndSSDPPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListWSD, 0, otherTop, width, otherH)
+	moveWindow(hwndWSDPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListDHCP, 0, otherTop, width, otherH)
+	moveWindow(hwndDHCPPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
 }
