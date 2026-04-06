@@ -3,6 +3,8 @@
 package guiwin
 
 import (
+	"bytes"
+	"image/png"
 	"os"
 	"strconv"
 	"strings"
@@ -354,7 +356,8 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	y := int32(14)
 
 	createCtrl("STATIC",
-				"No config file found. Choose where NetScope should save its settings.",
+			
+	"No config file found. Choose where NetScope should save its settings.",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 20, dlg, 0, inst)
 	y += 30
 
@@ -670,7 +673,8 @@ func createDatabasesControls(hwnd HWND) {
 
 	createCtrl("STATIC",
 		"Download a fresh copy from maclookup.app (~7 MB). If the file exists it\r\n"+
-			"is used instead of the built-in data; delete it to revert to the built-in copy.",
+		
+	"is used instead of the built-in data; delete it to revert to the built-in copy.",
 		WS_CHILD|WS_VISIBLE, lx, y, cw, 36, hwnd, 0, inst)
 	y += 46
 
@@ -734,11 +738,16 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 			HWND(hwnd), 0, inst)
 
 		text := "NetScope  " + version + "\r\n\r\n" +
-			"Network inspection & reconnaissance\r\n" +
-			"for LAN environments.\r\n\r\n" +
-			"Active probing · Passive signal analysis\r\n" +
-			"Change detection across scans\r\n\r\n" +
-			"github.com/demicloud/net-scope"
+		
+	"Network inspection & reconnaissance\r\n" +
+		
+	"for LAN environments.\r\n\r\n" +
+		
+	"Active probing · Passive signal analysis\r\n" +
+		
+	"Change detection across scans\r\n\r\n" +
+		
+	"github.com/demicloud/net-scope"
 		createWindowEx(0, "STATIC", text,
 			WS_CHILD|WS_VISIBLE|SS_LEFT,
 			126, 14, cW-126-14, 130,
@@ -801,52 +810,76 @@ func showAboutDialog(parent HWND) {
 }
 
 // copyIconToClipboard renders the icon at sz×sz pixels and puts it on the
-// clipboard as CF_DIB (BITMAPINFOHEADER + 32-bpp BGR top-down pixel rows).
+// clipboard in two formats:
+//
+//   - "PNG"  (registered format) — lossless RGBA; consumed by Teams, Copilot,
+//     browsers, and most modern apps.
+//   - CF_DIB — 32-bpp BGR; fallback for older Win32 apps (e.g. Paint).
+//
+// CF_DIB alone fails in modern apps because the alpha byte is 0 (fully
+// transparent) in BI_RGB mode, so receivers see an empty image.
 func copyIconToClipboard(owner HWND, sz int) {
 	img := drawIcon(sz)
-	const hdrSize = 40
-	total := hdrSize + sz*sz*4
 
-	hMem := globalAlloc(GMEM_MOVEABLE, uintptr(total))
-	if hMem == 0 {
-		return
-	}
-	ptr := globalLock(hMem)
-	if ptr == 0 {
-		return
-	}
-	buf := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), total)
-	for i := range buf {
-		buf[i] = 0
-	}
-
-	pu32 := func(off int, v uint32) {
-		buf[off], buf[off+1], buf[off+2], buf[off+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
-	}
-	pu16 := func(off int, v uint16) { buf[off], buf[off+1] = byte(v), byte(v>>8) }
-	pu32(0, 40)                       // biSize
-	pu32(4, uint32(sz))               // biWidth
-	pu32(8, uint32(-int32(sz)))       // biHeight (negative = top-down)
-	pu16(12, 1)                       // biPlanes
-	pu16(14, 32)                      // biBitCount (BI_RGB)
-	pu32(20, uint32(sz*sz*4))         // biSizeImage (required by some apps)
-
-	off := hdrSize
-	for row := 0; row < sz; row++ {
-		for col := 0; col < sz; col++ {
-			c := img.RGBAAt(col, row)
-			buf[off+0] = c.B
-			buf[off+1] = c.G
-			buf[off+2] = c.R
-			buf[off+3] = 0
-			off += 4
+	// ── PNG encoding ────────────────────────────────────────────────────────
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, img); err == nil {
+		pngBytes := pngBuf.Bytes()
+		hPNG := globalAlloc(GMEM_MOVEABLE, uintptr(len(pngBytes)))
+		if hPNG != 0 {
+			if ptr := globalLock(hPNG); ptr != 0 {
+				dst := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), len(pngBytes))
+				copy(dst, pngBytes)
+				globalUnlock(hPNG)
+			}
 		}
-	}
+		cfPNG := registerClipboardFormat("PNG")
 
-	globalUnlock(hMem)
-	openClipboard(owner)
-	emptyClipboard()
-	setClipboardData(CF_DIB, hMem)
-	closeClipboard()
+		// ── CF_DIB (BITMAPINFOHEADER + 32-bpp BGR rows) ────────────────────
+		const hdrSize = 40
+		total := hdrSize + sz*sz*4
+		hDIB := globalAlloc(GMEM_MOVEABLE, uintptr(total))
+		if hDIB != 0 {
+			if ptr := globalLock(hDIB); ptr != 0 {
+				buf := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), total)
+				for i := range buf {
+					buf[i] = 0
+				}
+				pu32 := func(off int, v uint32) {
+					buf[off], buf[off+1], buf[off+2], buf[off+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+				}
+				pu16 := func(off int, v uint16) { buf[off], buf[off+1] = byte(v), byte(v>>8) }
+				pu32(0, 40)                   // biSize
+				pu32(4, uint32(sz))           // biWidth
+				pu32(8, uint32(-int32(sz)))   // biHeight (negative = top-down)
+				pu16(12, 1)                   // biPlanes
+				pu16(14, 32)                  // biBitCount
+				pu32(20, uint32(sz*sz*4))     // biSizeImage
+				off := hdrSize
+				for row := 0; row < sz; row++ {
+					for col := 0; col < sz; col++ {
+						c := img.RGBAAt(col, row)
+						buf[off+0] = c.B
+						buf[off+1] = c.G
+						buf[off+2] = c.R
+						buf[off+3] = 0
+						off += 4
+					}
+				}
+				globalUnlock(hDIB)
+			}
+		}
+
+		// Open clipboard and set both formats in one session.
+		openClipboard(owner)
+		emptyClipboard()
+		if cfPNG != 0 && hPNG != 0 {
+			setClipboardData(cfPNG, hPNG)
+		}
+		if hDIB != 0 {
+			setClipboardData(CF_DIB, hDIB)
+		}
+		closeClipboard()
+	}
 }
 

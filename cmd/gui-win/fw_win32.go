@@ -472,6 +472,7 @@ var (
 	procCloseClipboard               = modUser32.NewProc("CloseClipboard")
 	procEmptyClipboard               = modUser32.NewProc("EmptyClipboard")
 	procSetClipboardData             = modUser32.NewProc("SetClipboardData")
+	procRegisterClipboardFormatW     = modUser32.NewProc("RegisterClipboardFormatW")
 
 	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 
@@ -949,6 +950,14 @@ func emptyClipboard() {
 func setClipboardData(format uint32, hMem uintptr) uintptr {
 	r, _, _ := procSetClipboardData.Call(uintptr(format), hMem)
 	return r
+}
+
+// registerClipboardFormat registers a named clipboard format and returns its ID.
+// Returns 0 on failure.
+func registerClipboardFormat(name string) uint32 {
+	ptr, _ := syscall.UTF16PtrFromString(name)
+	r, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(ptr)))
+	return uint32(r)
 }
 
 func globalAlloc(flags uint32, size uintptr) uintptr {
