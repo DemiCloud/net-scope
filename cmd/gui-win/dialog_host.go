@@ -217,64 +217,96 @@ func showHostDetailDialog(parent HWND, ip string) {
 }
 
 // createHostDetailControls builds all child controls for the dialog.
+// All positions are derived from the actual client rect so they are
+// correct regardless of caption-bar height, border size, or DPI.
 func createHostDetailControls(hwnd HWND) {
 	inst := getModuleHandle()
-	const pad int32 = 8
-	const dlgW int32 = 700
+	r := getClientRect(hwnd)
+	cW := r.Right  // actual client width
+	cH := r.Bottom // actual client height
+	const pad int32 = 10
 
-	// ── Row 1: Host label + IP combo ──────────────────────────────────────
+	// Row 1: Host label + IP combo (full width minus label)
 	y := pad
 	createCtrl("STATIC", "Host:", WS_CHILD|WS_VISIBLE,
-		pad, y+4, 36, 18, hwnd, 0, inst)
+		pad, y+4, 36, 16, hwnd, 0, inst)
 	hwndHostIPCombo, _ = createWindowEx(0, "COMBOBOX", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_SORT,
-		pad+40, y, dlgW-pad*2-40, 200, hwnd, HMENU(idHostIPCombo), inst)
+		pad+40, y, cW-pad*2-40, 240, hwnd, HMENU(idHostIPCombo), inst)
 
-	// ── Summary readonly edit ──────────────────────────────────────────────
-	y += 32
+	// Summary readonly edit (1/3 of client height)
+	y += 28
+	summaryH := cH / 3
 	hwndHostSummary, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-		pad, y, dlgW-pad*2, 160, hwnd, 0, inst)
+		pad, y, cW-pad*2, summaryH, hwnd, 0, inst)
 
-	// ── Probe controls bar ─────────────────────────────────────────────────
-	y += 168
+	// Section label
+	y += summaryH + 8
+	createCtrl("STATIC", "On-demand probes:", WS_CHILD|WS_VISIBLE,
+		pad, y+2, 140, 16, hwnd, 0, inst)
+
+	// Probe controls bar: left-to-right, Run-all gets remaining width
+	y += 22
+	const (
+		portLblW  int32 = 32
+		portEditW int32 = 52
+		typeLblW  int32 = 36
+		typeComboW int32 = 110
+		runBtnW   int32 = 60
+		gap       int32 = 8
+	)
+	x := pad
 	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE,
-		pad, y+5, 28, 18, hwnd, 0, inst)
+		x, y+4, portLblW, 16, hwnd, 0, inst)
+	x += portLblW
 	hwndHostPortEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "22",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
-		pad+32, y, 50, 22, hwnd, HMENU(idHostPortEdit), inst)
+		x, y, portEditW, 22, hwnd, HMENU(idHostPortEdit), inst)
+	x += portEditW + gap
 	createCtrl("STATIC", "Type:", WS_CHILD|WS_VISIBLE,
-		pad+90, y+5, 30, 18, hwnd, 0, inst)
+		x, y+4, typeLblW, 16, hwnd, 0, inst)
+	x += typeLblW
 	hwndHostTypeCombo, _ = createWindowEx(0, "COMBOBOX", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
-		pad+124, y, 90, 200, hwnd, HMENU(idHostTypeCombo), inst)
+		x, y, typeComboW, 200, hwnd, HMENU(idHostTypeCombo), inst)
+	x += typeComboW + gap
 	hwndHostRunBtn, _ = createWindowEx(0, "BUTTON", "Run",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+222, y, 60, 24, hwnd, HMENU(idHostRunProbe), inst)
+		x, y, runBtnW, 24, hwnd, HMENU(idHostRunProbe), inst)
+	x += runBtnW + gap*2
+	runAllW := cW - pad - x
+	if runAllW < 130 {
+		runAllW = 130
+	}
 	hwndHostRunAllBtn, _ = createWindowEx(0, "BUTTON", "Run all common probes",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+290, y, 160, 24, hwnd, HMENU(idHostRunAll), inst)
+		x, y, runAllW, 24, hwnd, HMENU(idHostRunAll), inst)
 
-	// ── Probe results listview ─────────────────────────────────────────────
-	y += 32
-	probeListH := int32(540) - y - pad - 36 - pad // leave room for button row
+	// Probe results listview: fill all space above the button row
+	y += 30
+	const btnRowH int32 = 28 + pad*2
+	probeListH := cH - y - btnRowH
+	if probeListH < 60 {
+		probeListH = 60
+	}
 	hwndHostProbeList, _ = createWindowEx(0, WC_LISTVIEW, "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
-		pad, y, dlgW-pad*2, probeListH, hwnd, HMENU(idHostProbeList), inst)
+		pad, y, cW-pad*2, probeListH, hwnd, HMENU(idHostProbeList), inst)
 	sendMessage(hwndHostProbeList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndHostProbeList, 0, "Port", 70)
+	listViewAddColumn(hwndHostProbeList, 0, "Port", 60)
 	listViewAddColumn(hwndHostProbeList, 1, "Type", 80)
-	listViewAddColumn(hwndHostProbeList, 2, "Result", dlgW-pad*2-70-80-4)
+	listViewAddColumn(hwndHostProbeList, 2, "Result", cW-pad*2-60-80-4)
 
-	// ── Button row ─────────────────────────────────────────────────────────
-	btnY := int32(540) - pad - 28
+	// Bottom button row pinned to client bottom
+	btnY := cH - pad - 26
 	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy report",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		dlgW-pad-180-8-90, btnY, 90, 26, hwnd, HMENU(idHostCopyReport), inst)
+		cW-pad-210, btnY, 100, 26, hwnd, HMENU(idHostCopyReport), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		dlgW-pad-90, btnY, 90, 26, hwnd, HMENU(idHostClose), inst)
+		cW-pad-100, btnY, 100, 26, hwnd, HMENU(idHostClose), inst)
 }
 
 // hostDetailSelectIP updates the summary when the user picks a different IP.
