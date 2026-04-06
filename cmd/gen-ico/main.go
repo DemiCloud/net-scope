@@ -72,7 +72,8 @@ func main() {
 
 // drawIcon renders the NetScope icon: a deep-navy circle with three concentric
 // teal network-topology rings graduating from bright (outer) to dim (inner),
-// node dots at each ring, and radial spokes connecting adjacent layers.
+// node dots at each ring, asymmetric spokes connecting adjacent layers, and a
+// bright focal anchor at the centre.
 // Kept in sync with cmd/gui-win/icon.go drawIcon().
 func drawIcon(size int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
@@ -85,8 +86,9 @@ func drawIcon(size int) *image.RGBA {
 	col1   := color.RGBA{0, 212, 180, 255}  // outer ring — bright teal
 	col2   := color.RGBA{0, 158, 138, 210}  // mid ring
 	col3   := color.RGBA{0, 96, 104, 160}   // inner ring — dim
-	colSpk := color.RGBA{0, 170, 155, 130}  // inter-ring spokes
-	colHub := color.RGBA{0, 80, 80, 110}    // centre glow
+	colSpk := color.RGBA{0, 160, 148, 120}  // inter-ring spokes
+	colHub := color.RGBA{0, 80, 80, 100}    // centre glow
+	colFoc := color.RGBA{60, 240, 210, 255} // focal anchor — bright teal-white
 
 	// Fractional ring radii (fraction of R)
 	const (
@@ -96,19 +98,21 @@ func drawIcon(size int) *image.RGBA {
 		r3 = 0.32 // inner ring
 	)
 	ht  := math.Max(0.5, R*0.018) // ring half-thickness
-	hsp := math.Max(0.5, R*0.015) // spoke half-width
+	hsp := math.Max(0.5, R*0.016) // spoke half-width
 	nr1 := math.Max(1.0, R*0.065) // node radius — outer
 	nr2 := math.Max(1.0, R*0.056) // node radius — mid
 	nr3 := math.Max(1.0, R*0.047) // node radius — inner
 
-	// Node angles (0=right, CCW positive, degrees)
-	nodes1 := [6]float64{0, 60, 120, 180, 240, 300}
-	nodes2 := [4]float64{30, 120, 210, 300}
-	nodes3 := [3]float64{90, 210, 330}
+	// Node angles — deliberately asymmetric (not perfect n-fold symmetry).
+	// Small offsets prevent the "radar screen" read.
+	nodes1 := [6]float64{2, 70, 128, 188, 252, 310}  // outer (was 0,60,120,180,240,300)
+	nodes2 := [4]float64{22, 118, 212, 298}           // mid   (was 30,120,210,300)
+	nodes3 := [3]float64{88, 206, 334}                // inner (was 90,210,330)
 
-	// Spoke angles: ring1↔ring2 at shared angles 120°, 300°; ring2↔ring3 at 210°
-	spk12 := [2]float64{120, 300}
-	spk23 := [1]float64{210}
+	// Two spokes at non-symmetric positions — avoid the cardinal-pair read.
+	// Each spoke connects a node on one ring to the nearest node on the next.
+	spk12 := [1]float64{128} // r1 ↔ r2 at 128°
+	spk23 := [1]float64{212} // r2 ↔ r3 at 212°
 
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
@@ -147,7 +151,7 @@ func drawIcon(size int) *image.RGBA {
 				c = iconOver(c, col1, iconFillCov(d, nr1))
 			}
 
-			// Radial spokes between adjacent rings
+			// Asymmetric spokes
 			for _, deg := range spk12 {
 				a := deg * math.Pi / 180
 				d := iconSegDist(px, py,
@@ -163,8 +167,11 @@ func drawIcon(size int) *image.RGBA {
 				c = iconOver(c, colSpk, iconFillCov(d, hsp))
 			}
 
-			// Centre glow — marks the innermost hub
-			c = iconOver(c, colHub, iconFillCov(dist, math.Max(1.0, R*0.10)))
+			// Centre glow
+			c = iconOver(c, colHub, iconFillCov(dist, math.Max(1.5, R*0.14)))
+
+			// Focal anchor — small bright disc marking the inspection point
+			c = iconOver(c, colFoc, iconFillCov(dist, math.Max(0.8, R*0.055)))
 
 			// Clip to bounding circle with 1px anti-alias
 			alpha := iconClamp01(R + 0.5 - dist)
