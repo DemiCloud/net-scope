@@ -642,14 +642,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDM_HELP_VERSION:
 			showVersionDialog(HWND(hwnd))
 		case IDM_HELP_ABOUT:
-			messageBox(HWND(hwnd),
-				"NetScope "+version+"\n"+
-					"Network inspection and reconnaissance tool combining active\n"+
-					"probing, passive signal analysis, and change detection\n"+
-					"for LAN environments.\n\n"+
-					"Copyright \u00a9 2026 demicloud\n"+
-					"https://github.com/demicloud/net-scope",
-				"About NetScope", 0)
+			showAboutDialog(HWND(hwnd))
 		case IDM_HELP_CRASHLOG:
 			path := crashLogPath()
 			if _, err := os.Stat(path); os.IsNotExist(err) {

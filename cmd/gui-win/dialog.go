@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
+	"unsafe"
 	"github.com/demicloud/net-scope/internal/config"
 	"github.com/demicloud/net-scope/internal/sweep"
 )
@@ -682,5 +682,170 @@ func createDatabasesControls(hwnd HWND) {
 	createCtrl("BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cw-80, y, 80, 26, hwnd, idDBClose, inst)
+}
+
+// ---------------------------------------------------------------------------
+// About Dialog
+// ---------------------------------------------------------------------------
+
+const idAboutOK = 901
+
+var aboutHIcon HICON // 96×96 programmatic icon kept alive during the dialog
+
+// aboutIconWndProc is the WndProc for the small icon child window inside the
+// About dialog.  WM_PAINT draws the icon; WM_RBUTTONUP shows a context menu
+// with "Copy Image", which puts a CF_DIB bitmap onto the clipboard.
+var aboutIconWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_PAINT:
+		var ps PAINTSTRUCT
+		hdc := beginPaint(HWND(hwnd), &ps)
+		if aboutHIcon != 0 {
+			drawIconEx(hdc, 0, 0, aboutHIcon, 96, 96, 0, 0, DI_NORMAL)
+		}
+		endPaint(HWND(hwnd), &ps)
+		return 0
+	case WM_RBUTTONUP:
+		pt := getCursorPos()
+		menu := createPopupMenu()
+		appendMenu(menu, MF_STRING, IDM_CTX_COPY_ICON, "Copy Image")
+		trackPopupMenu(menu, TPM_RIGHTBUTTON, pt.X, pt.Y, HWND(hwnd))
+		destroyMenu(menu)
+		return 0
+	case WM_COMMAND:
+		if loword(wParam) == IDM_CTX_COPY_ICON {
+			copyIconToClipboard(HWND(hwnd), 256)
+		}
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		inst := getModuleHandle()
+		cW, cH := int32(390), int32(190)
+
+		registerDialogClass("NSAboutIcon", aboutIconWndProc)
+		createWindowEx(0, "NSAboutIcon", "",
+			WS_CHILD|WS_VISIBLE,
+			14, 14, 96, 96,
+			HWND(hwnd), 0, inst)
+
+		text := "NetScope " + version + "\n" +
+			"Network inspection and reconnaissance tool combining active\n" +
+			"probing, passive signal analysis, and change detection\n" +
+			"for LAN environments.\n\n" +
+			"Copyright \u00a9 2026 demicloud\n" +
+			"https://github.com/demicloud/net-scope"
+		createWindowEx(0, "STATIC", text,
+			WS_CHILD|WS_VISIBLE|SS_LEFT,
+			126, 14, cW-126-14, 130,
+			HWND(hwnd), 0, inst)
+
+		btnY, btnXs := dlgBottomRight(cW, cH, 1)
+		createWindowEx(0, "BUTTON", "OK",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
+			btnXs[0], btnY, 100, 26,
+			HWND(hwnd), HMENU(idAboutOK), inst)
+
+		dpi := getDpiForWindow(HWND(hwnd))
+		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
+		return 0
+	case WM_CTLCOLORSTATIC:
+		return ctlColorDialog(wParam)
+	case WM_COMMAND:
+		if loword(wParam) == idAboutOK {
+			closeModal(HWND(hwnd))
+		}
+		return 0
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+func showAboutDialog(parent HWND) {
+	aboutHIcon = createAppIcon(96)
+
+	registerDialogClass("NSAbout", aboutWndProc)
+
+	dlgW, dlgH := int32(390), int32(190)
+	inst := getModuleHandle()
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NSAbout", "About NetScope",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU,
+		CW_USEDEFAULT, CW_USEDEFAULT, dlgW, dlgH,
+		parent, 0, inst,
+	)
+	if err != nil || dlg == 0 {
+		destroyIcon(aboutHIcon)
+		aboutHIcon = 0
+		return
+	}
+
+	// Center over parent
+	pr := getWindowRect(parent)
+	dr := getWindowRect(dlg)
+	x := pr.Left + (pr.Right-pr.Left-(dr.Right-dr.Left))/2
+	y := pr.Top + (pr.Bottom-pr.Top-(dr.Bottom-dr.Top))/2
+	setWindowPos(dlg, 0, x, y, 0, 0, SWP_NOZORDER|SWP_NOSIZE|SWP_NOACTIVATE)
+
+	runModal(dlg, parent)
+
+	destroyIcon(aboutHIcon)
+	aboutHIcon = 0
+}
+
+// copyIconToClipboard renders the icon at sz×sz pixels and puts it on the
+// clipboard as CF_DIB (BITMAPINFOHEADER + 32-bpp BGR top-down pixel rows).
+func copyIconToClipboard(owner HWND, sz int) {
+	img := drawIcon(sz)
+	const hdrSize = 40
+	total := hdrSize + sz*sz*4
+
+	hMem := globalAlloc(GMEM_MOVEABLE, uintptr(total))
+	if hMem == 0 {
+		return
+	}
+	ptr := globalLock(hMem)
+	if ptr == 0 {
+		return
+	}
+	buf := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), total)
+	for i := range buf {
+		buf[i] = 0
+	}
+
+	pu32 := func(off int, v uint32) {
+		buf[off], buf[off+1], buf[off+2], buf[off+3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+	}
+	pu16 := func(off int, v uint16) { buf[off], buf[off+1] = byte(v), byte(v>>8) }
+	pu32(0, 40)                 // biSize
+	pu32(4, uint32(sz))         // biWidth
+	pu32(8, uint32(-int32(sz))) // biHeight (negative = top-down)
+	pu16(12, 1)                 // biPlanes
+	pu16(14, 32)                // biBitCount
+
+	off := hdrSize
+	for row := 0; row < sz; row++ {
+		for col := 0; col < sz; col++ {
+			c := img.RGBAAt(col, row)
+			buf[off+0] = c.B
+			buf[off+1] = c.G
+			buf[off+2] = c.R
+			buf[off+3] = 0
+			off += 4
+		}
+	}
+
+	globalUnlock(hMem)
+	openClipboard(owner)
+	emptyClipboard()
+	setClipboardData(CF_DIB, hMem)
+	closeClipboard()
 }
 

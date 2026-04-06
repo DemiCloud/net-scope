@@ -95,19 +95,21 @@ const (
 	COLOR_BTNFACE = 15 // system dialog/button background (light gray)
 
 	// Window messages
-	WM_NULL        = 0x0000
-	WM_CREATE      = 0x0001
-	WM_DESTROY     = 0x0002
-	WM_SIZE        = 0x0005
-	WM_CLOSE       = 0x0010
-	WM_SETFONT     = 0x0030
-	WM_KEYDOWN     = 0x0100
-	WM_COMMAND     = 0x0111
-	WM_NOTIFY      = 0x004E
+	WM_NULL           = 0x0000
+	WM_CREATE         = 0x0001
+	WM_DESTROY        = 0x0002
+	WM_SIZE           = 0x0005
+	WM_CLOSE          = 0x0010
+	WM_PAINT          = 0x000F
+	WM_SETFONT        = 0x0030
+	WM_KEYDOWN        = 0x0100
+	WM_COMMAND        = 0x0111
+	WM_NOTIFY         = 0x004E
+	WM_RBUTTONUP      = 0x0205
 	WM_CTLCOLOREDIT   = 0x0133
 	WM_CTLCOLORSTATIC = 0x0138
 	WM_DPICHANGED     = 0x02E0
-	WM_APP         = 0x8000
+	WM_APP            = 0x8000
 
 	// DPI awareness context value for Per-Monitor V2 (Windows 10 1703+).
 	DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(3) // -4
@@ -115,6 +117,8 @@ const (
 	// SetWindowPos flags
 	SWP_NOZORDER   = 0x0004
 	SWP_NOACTIVATE = 0x0010
+	SWP_NOSIZE     = 0x0001
+	SWP_NOMOVE     = 0x0002
 
 	// MessageBox flags and return values
 	MB_OK           = 0x00000000
@@ -240,18 +244,33 @@ const (
 	MF_ENABLED   = 0x00000000
 
 	// Track popup menu flags
-	TPM_LEFTALIGN = 0x0000
-	TPM_TOPALIGN  = 0x0000
-	TPM_RETURNCMD = 0x0100
+	TPM_LEFTALIGN  = 0x0000
+	TPM_TOPALIGN   = 0x0000
+	TPM_RIGHTALIGN = 0x0004
+	TPM_RIGHTBUTTON = 0x0002
+	TPM_RETURNCMD  = 0x0100
 
 	// Font / GDI
-	FW_NORMAL        = 400
+	FW_NORMAL         = 400
 	CLEARTYPE_QUALITY = 5
+
+	// DrawIconEx flags
+	DI_NORMAL    = 0x0003
+
+	// Clipboard formats
+	CF_DIB = 8
+
+	// GlobalAlloc flags
+	GMEM_MOVEABLE = 0x0002
 )
 
 // ---------------------------------------------------------------------------
 // Structs
 // ---------------------------------------------------------------------------
+
+// PAINTSTRUCT is the structure passed to BeginPaint/EndPaint.
+// Size on x64: 8 (HDC) + 4 (fErase) + 16 (RECT) + 4 + 4 + 32 (reserved) + 4 (padding) = 72.
+type PAINTSTRUCT [72]byte
 
 type WNDCLASSEX struct {
 	CbSize        uint32
@@ -443,6 +462,12 @@ var (
 	procSetFocus                     = modUser32.NewProc("SetFocus")
 	procIsWindow                     = modUser32.NewProc("IsWindow")
 	procIsChild                      = modUser32.NewProc("IsChild")
+	procBeginPaint                   = modUser32.NewProc("BeginPaint")
+	procEndPaint                     = modUser32.NewProc("EndPaint")
+	procGetDC                        = modUser32.NewProc("GetDC")
+	procReleaseDC                    = modUser32.NewProc("ReleaseDC")
+	procDrawIconEx                   = modUser32.NewProc("DrawIconEx")
+	procDestroyIcon                  = modUser32.NewProc("DestroyIcon")
 	procOpenClipboard                = modUser32.NewProc("OpenClipboard")
 	procCloseClipboard               = modUser32.NewProc("CloseClipboard")
 	procEmptyClipboard               = modUser32.NewProc("EmptyClipboard")
@@ -877,6 +902,67 @@ func isWindow(hwnd HWND) bool {
 func isChild(parent, hwnd HWND) bool {
 	r, _, _ := procIsChild.Call(uintptr(parent), uintptr(hwnd))
 	return r != 0
+}
+
+func beginPaint(hwnd HWND, ps *PAINTSTRUCT) uintptr {
+	r, _, _ := procBeginPaint.Call(uintptr(hwnd), uintptr(unsafe.Pointer(ps)))
+	return r
+}
+
+func endPaint(hwnd HWND, ps *PAINTSTRUCT) {
+	procEndPaint.Call(uintptr(hwnd), uintptr(unsafe.Pointer(ps)))
+}
+
+func getDC(hwnd HWND) uintptr {
+	r, _, _ := procGetDC.Call(uintptr(hwnd))
+	return r
+}
+
+func releaseDC(hwnd HWND, hdc uintptr) {
+	procReleaseDC.Call(uintptr(hwnd), hdc)
+}
+
+// drawIconEx renders hIcon into hdc at (x,y) sized cx×cy.
+// Pass 0 for ani (step) and bg (brush); flags = DI_NORMAL for normal rendering.
+func drawIconEx(hdc uintptr, x, y int32, hIcon HICON, cx, cy int32, ani uint32, bg HBRUSH, flags uint32) {
+	procDrawIconEx.Call(hdc, uintptr(x), uintptr(y), uintptr(hIcon),
+		uintptr(cx), uintptr(cy), uintptr(ani), uintptr(bg), uintptr(flags))
+}
+
+func destroyIcon(hIcon HICON) {
+	procDestroyIcon.Call(uintptr(hIcon))
+}
+
+func openClipboard(owner HWND) bool {
+	r, _, _ := procOpenClipboard.Call(uintptr(owner))
+	return r != 0
+}
+
+func closeClipboard() {
+	procCloseClipboard.Call()
+}
+
+func emptyClipboard() {
+	procEmptyClipboard.Call()
+}
+
+func setClipboardData(format uint32, hMem uintptr) uintptr {
+	r, _, _ := procSetClipboardData.Call(uintptr(format), hMem)
+	return r
+}
+
+func globalAlloc(flags uint32, size uintptr) uintptr {
+	r, _, _ := procGlobalAlloc.Call(uintptr(flags), size)
+	return r
+}
+
+func globalLock(hMem uintptr) uintptr {
+	r, _, _ := procGlobalLock.Call(hMem)
+	return r
+}
+
+func globalUnlock(hMem uintptr) {
+	procGlobalUnlock.Call(hMem)
 }
 
 func getConsoleWindow() HWND {

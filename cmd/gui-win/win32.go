@@ -87,6 +87,7 @@ const (
 	IDM_BCAST_COPY_IP    = 3031
 	IDM_BCAST_COPY_RAW   = 3032
 	IDM_CTX_VIEW_DETAILS = 3040
+	IDM_CTX_COPY_ICON    = 3050 // right-click icon in About dialog
 
 	// Base for the detect-subnet popup (up to 16 interfaces supported).
 	IDM_DETECT_BASE = 3100
