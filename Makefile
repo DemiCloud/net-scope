@@ -25,31 +25,31 @@ help: ## Show this help
 linux: fetch-oui ## Build unified binary for linux/amd64 → build/
 	mkdir -p build
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
-		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-sweep
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-sweep
 
 windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd64 → build/
 	mkdir -p build
 	GOOS=windows GOARCH=amd64 go build \
-		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-sweep
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-sweep
 
 fetch-oui: ## Download OUI JSON database for embedding (requires internet)
-	@if [ ! -f internal/sweep/oui.json ]; then \
+	@if [ ! -f internal/sweep/oui.json ] || [ $$(wc -c < internal/sweep/oui.json) -lt 1000 ]; then \
 		echo "Fetching OUI database…"; \
 		curl -fsSL --max-time 60 '$(OUI_URL)' -o internal/sweep/oui.json \
 			&& echo "OUI: $$(wc -c < internal/sweep/oui.json) bytes" \
-			|| (echo "OUI download failed — build will use stale/missing data"; exit 1); \
+			|| (echo "OUI download failed — build will use stub (no vendor lookup)"; exit 1); \
 	else \
-		echo "OUI: using cached internal/sweep/oui.json"; \
+		echo "OUI: using cached internal/sweep/oui.json ($$(wc -c < internal/sweep/oui.json) bytes)"; \
 	fi
 
 gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
 	go run ./cmd/gen-ico/ -o cmd/gui-win/icon.ico
 	go run ./cmd/gen-rsrc/ -dir cmd/gui-win
 
-bsd: ## Cross-compile unified binary for freebsd/amd64 (OPNsense) → build/
+bsd: fetch-oui ## Cross-compile unified binary for freebsd/amd64 (OPNsense) → build/
 	mkdir -p build
 	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
-		-ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,freebsd,amd64) ./cmd/cli
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,freebsd,amd64) ./cmd/cli
 
 all: linux windows bsd ## Build all platforms → build/
 
@@ -63,7 +63,7 @@ vet: ## Run go vet
 
 ## ── Release (stripped, trimpath, sha256 manifest) ───────────────────────────
 
-release: clean ## Build all platforms stripped → dist/ + checksums.txt
+release: clean fetch-oui ## Build all platforms stripped → dist/ + checksums.txt
 	mkdir -p dist
 	go mod tidy
 	@set -e; \
@@ -73,7 +73,7 @@ release: clean ## Build all platforms stripped → dist/ + checksums.txt
 		out=dist/$(NAME)_$${os}_$${arch}$${ext}; \
 		echo "  cli  $$os/$$arch → $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath \
-			-ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/net-sweep; \
+			-tags with_oui -ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/net-sweep; \
 	}; \
 	echo "==> Linux"; \
 	build_cli linux amd64; \
