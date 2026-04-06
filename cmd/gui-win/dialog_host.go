@@ -76,8 +76,6 @@ var (
 
 	// dialogProbeCtx is the context passed to all probe goroutines.
 	dialogProbeCtx context.Context
-
-	registerHostDetailOnce sync.Once
 )
 
 // probeTypeLabels is the ordered list shown in the Type combo.
@@ -93,10 +91,7 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		hdc := wParam
-		setBkMode(hdc, TRANSPARENT)
-		setTextColor(hdc, 0x00000000)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 
 	case WM_COMMAND:
 		switch loword(wParam) {
@@ -147,25 +142,9 @@ func hostDetailClose(hwnd HWND) {
 	closeModal(hwnd)
 }
 
-// ensureHostDetailClass registers the window class once per process.
-func ensureHostDetailClass() {
-	registerHostDetailOnce.Do(func() {
-		cn := utf16("NetSweepHostDetail")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   hostDetailWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
-}
-
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
-	ensureHostDetailClass()
+	registerDialogClass("NetSweepHostDetail", hostDetailWndProc)
 
 	// Reset probe state.
 	pendingProbeResultsMu.Lock()
@@ -615,8 +594,7 @@ const (
 )
 
 var (
-	hwndAllHostsList     HWND
-	registerAllHostsOnce sync.Once
+	hwndAllHostsList HWND
 )
 
 // allHostsSelectedIP returns the IP of the currently selected All-Hosts row, or "".
@@ -698,8 +676,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		setBkMode(wParam, TRANSPARENT)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 
 	case WM_COMMAND:
 		if loword(wParam) == idAllHostsClose {
@@ -769,18 +746,7 @@ func showAllHostsDialog(parent HWND) {
 		return
 	}
 
-	registerAllHostsOnce.Do(func() {
-		cn := utf16("NetSweepAllHosts")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   allHostsWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
+	registerDialogClass("NetSweepAllHosts", allHostsWndProc)
 
 	const dlgW, dlgH int32 = 480, 400
 	dlg, err := createWindowEx(
@@ -815,8 +781,7 @@ const (
 )
 
 var (
-	hwndPickCombo        HWND
-	registerPickHostOnce sync.Once
+	hwndPickCombo HWND
 )
 
 var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -887,18 +852,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // showPickHostDialog opens the Query Host dialog.
 // Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
-	registerPickHostOnce.Do(func() {
-		cn := utf16("NetSweepPickHost")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   pickHostWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
+	registerDialogClass("NetSweepPickHost", pickHostWndProc)
 
 	const dlgW, dlgH int32 = 460, 120
 	dlg, err := createWindowEx(

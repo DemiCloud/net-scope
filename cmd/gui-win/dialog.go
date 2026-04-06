@@ -6,64 +6,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/demicloud/net-sweep/internal/config"
 	"github.com/demicloud/net-sweep/internal/sweep"
 )
-
-// ---------------------------------------------------------------------------
-// Modal loop
-//
-// Win32 has no built-in "make this popup window modal" call for dynamically-
-// created windows (only for resource-template DialogBox). We simulate it:
-//   1. Disable the parent so it can't be interacted with.
-//   2. Run a nested message loop until closeModal() sets modalActive=false.
-//   3. closeModal() destroys the dialog and posts WM_NULL to parent so
-//      getMessage() returns and the loop condition is re-evaluated.
-// ---------------------------------------------------------------------------
-
-var (
-	modalActive bool
-	modalParent HWND
-)
-
-func runModal(dlg, parent HWND) {
-	modalActive = true
-	modalParent = parent
-	enableWindow(parent, false)
-	showWindow(dlg, SW_SHOW)
-	updateWindow(dlg)
-	setForegroundWindow(dlg)
-
-	var msg MSG
-	for modalActive && getMessage(&msg) {
-		translateMessage(&msg)
-		dispatchMessage(&msg)
-	}
-
-	// closeModal already re-enabled the parent and set focus;
-	// clear state here in case we exited the loop another way.
-	enableWindow(parent, true)
-	modalActive = false
-	modalParent = 0
-}
-
-// closeModal is safe to call from inside a dialog WndProc.
-func closeModal(dlg HWND) {
-	parent := modalParent
-	modalActive = false
-	destroyWindow(dlg)
-	// Re-enable and bring the parent back to the foreground before posting
-	// WM_NULL, so it doesn't disappear behind other windows.
-	enableWindow(parent, true)
-	setForegroundWindow(parent)
-	setFocus(parent)
-	postMessage(parent, WM_NULL, 0, 0) // wake up getMessage
-}
 
 // ---------------------------------------------------------------------------
 // Settings Dialog
@@ -79,19 +27,17 @@ const (
 )
 
 var (
-	hwndSettTimeout   HWND
-	hwndSettConcur    HWND
-	hwndSettPorts     HWND
-	hwndSettSNMP      HWND
-	hwndSettIface     HWND
-	hwndSettBcast     HWND
-	hwndSettPingFirst HWND
-	hwndSettBanner    HWND
+	hwndSettTimeout       HWND
+	hwndSettConcur        HWND
+	hwndSettPorts         HWND
+	hwndSettSNMP          HWND
+	hwndSettIface         HWND
+	hwndSettBcast         HWND
+	hwndSettPingFirst     HWND
+	hwndSettBanner        HWND
 	hwndSettNetBIOS       HWND
 	hwndSettPath          HWND
 	hwndSettDefaultTarget HWND
-
-	registerSettingsOnce sync.Once
 )
 
 var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -100,10 +46,7 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		createSettingsControls(HWND(hwnd))
 		return 0
 	case WM_CTLCOLORSTATIC:
-		hdc := wParam
-		setBkMode(hdc, TRANSPARENT)
-		setTextColor(hdc, 0x00000000)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idSettOK:
@@ -121,23 +64,8 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-func ensureSettingsClass() {
-	registerSettingsOnce.Do(func() {
-		cn := utf16("NetSweepSettings")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   settingsWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
-}
-
 func showSettingsDialog(parent HWND) {
-	ensureSettingsClass()
+	registerDialogClass("NetSweepSettings", settingsWndProc)
 
 	// Populate fields from the current in-memory config (appConfig), which
 	// reflects any changes already made this session.
@@ -378,18 +306,12 @@ const (
 	idCfgNeither = 703
 )
 
-var (
-	registerCfgLocOnce sync.Once
-	cfgLocResult       string // set by the dialog before closeModal
-)
+var cfgLocResult string // set by the dialog before closeModal
 
 var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_CTLCOLORSTATIC:
-		hdc := wParam
-		setBkMode(hdc, TRANSPARENT)
-		setTextColor(hdc, 0x00000000)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idCfgAppData:
@@ -411,23 +333,8 @@ var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-func ensureCfgLocClass() {
-	registerCfgLocOnce.Do(func() {
-		cn := utf16("NetSweepCfgLoc")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   cfgLocWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
-}
-
 func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
-	ensureCfgLocClass()
+	registerDialogClass("NetSweepCfgLoc", cfgLocWndProc)
 	cfgLocResult = "neither"
 
 	const dlgW, dlgH int32 = 520, 360
@@ -499,15 +406,10 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 
 const idFAQClose = 601
 
-var registerFAQOnce sync.Once
-
 var faqWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_CTLCOLORSTATIC:
-		hdc := wParam
-		setBkMode(hdc, TRANSPARENT)
-		setTextColor(hdc, 0x00000000)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 	case WM_COMMAND:
 		if loword(wParam) == idFAQClose {
 			closeModal(HWND(hwnd))
@@ -520,23 +422,8 @@ var faqWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uin
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-func ensureFAQClass() {
-	registerFAQOnce.Do(func() {
-		cn := utf16("NetSweepFAQ")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   faqWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
-}
-
 func showFAQDialog(parent HWND) {
-	ensureFAQClass()
+	registerDialogClass("NetSweepFAQ", faqWndProc)
 
 	const dlgW, dlgH int32 = 600, 560
 	dlg, err := createWindowEx(
@@ -683,9 +570,8 @@ const (
 )
 
 var (
-	hwndDBStatus    HWND
-	hwndDBDownload  HWND
-	registerDatabasesOnce sync.Once
+	hwndDBStatus   HWND
+	hwndDBDownload HWND
 )
 
 var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -694,10 +580,7 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		createDatabasesControls(HWND(hwnd))
 		return 0
 	case WM_CTLCOLORSTATIC:
-		hdc := wParam
-		setBkMode(hdc, TRANSPARENT)
-		setTextColor(hdc, 0x00000000)
-		return uintptr(getSysColorBrush(COLOR_BTNFACE))
+		return ctlColorDialog(wParam)
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idDBDownload:
@@ -731,23 +614,8 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-func ensureDatabasesClass() {
-	registerDatabasesOnce.Do(func() {
-		cn := utf16("NetSweepDatabases")
-		wc := WNDCLASSEX{
-			CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
-			LpfnWndProc:   databasesWndProc,
-			HInstance:     getModuleHandle(),
-			HbrBackground: HBRUSH(COLOR_BTNFACE + 1),
-			HCursor:       loadCursor(IDC_ARROW),
-			LpszClassName: cn,
-		}
-		registerClassEx(&wc)
-	})
-}
-
 func showDatabasesDialog(parent HWND) {
-	ensureDatabasesClass()
+	registerDialogClass("NetSweepDatabases", databasesWndProc)
 	const dlgW, dlgH int32 = 560, 330
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
