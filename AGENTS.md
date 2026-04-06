@@ -1,8 +1,10 @@
-# net-sweep — Agent / Contributor Instructions
+# NetScope — Agent / Contributor Instructions
 
 ## Project Overview
 
-net-sweep is a LAN host-discovery and port-scanner written in Go 1.25.
+NetScope (binary: `net-scope`) is a network inspection and reconnaissance tool combining
+active probing, passive signal analysis, and change detection for LAN environments.
+Written in Go 1.25.
 It produces a **single binary per platform** from `cmd/net-sweep/`:
 
 | Platform | Behaviour at launch |
@@ -86,7 +88,7 @@ toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
 - **Framework vs application split** — `cmd/gui-win/` is divided into framework
   files and application files:
   - `fw_win32.go` — all Win32 types, constants, DLL proc references, and
-    thin Go wrappers. Zero net-sweep logic. The goal is that `fw_*.go` files
+    thin Go wrappers. Zero NetScope application logic here. The goal is that `fw_*.go` files
     could be extracted into a standalone module in the future with no changes
     to their contents.
   - `fw_dialog.go` — modal loop (`runModal`/`closeModal`), `registerDialogClass`
@@ -97,6 +99,11 @@ toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
     `main.go`, `service.go`, `crash.go`, `icon.go`) are application code.
   - **Rule:** do not add application constants or logic to `fw_*.go` files.
     Do not add Win32 plumbing (proc vars, wrappers, structs) to application files.
+- **Before adding or fixing any GUI behaviour, ask: can this be a framework helper?**
+  If the same Win32 pattern will appear in more than one place (colour handling,
+  control layout, font application, message routing, etc.), add it to `fw_win32.go`
+  or `fw_dialog.go` first and consume it from there. Standardise and deduplicate
+  rather than copy-pasting into individual dialogs or WndProcs.
 - The modal dialog pattern uses `runModal` / `closeModal` in `fw_dialog.go`.
   `enableWindow(parent, true)` must be called **before** `destroyWindow` to
   avoid focus going to the desktop.

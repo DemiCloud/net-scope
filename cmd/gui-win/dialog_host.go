@@ -14,7 +14,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // ---------------------------------------------------------------------------
@@ -812,12 +812,13 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			WS_CHILD|WS_VISIBLE,
 			pad, pad+28, cW-pad*2, 16, HWND(hwnd), 0, inst)
 
+		btnY, btnXs := dlgBottomRight(cW, cH, 2)
 		createWindowEx(0, "BUTTON", "OK",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			cW-pad*2-100-4, cH-pad-26, 100, 26, HWND(hwnd), HMENU(idPickHostOK), inst)
+			btnXs[0], btnY, 100, 26, HWND(hwnd), HMENU(idPickHostOK), inst)
 		createWindowEx(0, "BUTTON", "Cancel",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			cW-pad-100, cH-pad-26, 100, 26, HWND(hwnd), HMENU(idPickHostCancel), inst)
+			btnXs[1], btnY, 100, 26, HWND(hwnd), HMENU(idPickHostCancel), inst)
 		return 0
 
 	case WM_COMMAND:
@@ -854,7 +855,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 func showPickHostDialog(parent HWND) {
 	registerDialogClass("NetSweepPickHost", pickHostWndProc)
 
-	const dlgW, dlgH int32 = 460, 120
+	const dlgW, dlgH int32 = 460, 145
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepPickHost", "Query Host",

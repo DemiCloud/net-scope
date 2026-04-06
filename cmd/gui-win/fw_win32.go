@@ -104,8 +104,9 @@ const (
 	WM_KEYDOWN     = 0x0100
 	WM_COMMAND     = 0x0111
 	WM_NOTIFY      = 0x004E
+	WM_CTLCOLOREDIT   = 0x0133
 	WM_CTLCOLORSTATIC = 0x0138
-	WM_DPICHANGED  = 0x02E0
+	WM_DPICHANGED     = 0x02E0
 	WM_APP         = 0x8000
 
 	// DPI awareness context value for Per-Monitor V2 (Windows 10 1703+).

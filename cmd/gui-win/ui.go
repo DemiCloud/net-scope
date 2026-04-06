@@ -14,8 +14,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/demicloud/net-sweep/internal/config"
-	"github.com/demicloud/net-sweep/internal/sweep"
+	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/sweep"
 )
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,9 @@ var (
 	hwndListWSD    HWND // WS-Discovery tab
 	hwndListDHCP   HWND // DHCP tab
 	hwndListNetwork HWND // Network tab — live broadcast stats
-	hwndListHealth HWND // Scan Report tab
+	hwndListHealth        HWND // Scan Report tab
+	hwndHealthPlaceholder HWND // empty-state overlay for Scan Report tab
+	scanEverCompleted     bool // true once the first scan has completed
 	hwndTabCtrl    HWND
 	hwndStatus     HWND
 )
@@ -79,6 +81,7 @@ var (
 	pendingMu      sync.Mutex
 	liveCount      int
 	lastStats      sweep.ScanStats // populated after scan completes
+	scanStartTime  time.Time       // set when scan begins, used for duration metric
 	listHasHosts  bool            // true once ≥1 alive host found in current/last scan
 	isScanning    bool            // true while a scan is in progress (UI thread only)
 
@@ -332,7 +335,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setTextColor(wParam, 0x00999999)
 			return uintptr(getSysColorBrush(COLOR_WINDOW))
 		}
-		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+		// Any other STATIC on the main window (e.g. "Target:" label) should
+		// blend with the COLOR_WINDOW background, not get the default
+		// COLOR_BTNFACE gray that defWindowProc would return.
+		setBkMode(wParam, TRANSPARENT)
+		return uintptr(getSysColorBrush(COLOR_WINDOW))
 
 	case WM_SERVICE_UP:
 		setWindowText(hwndElevLabel, statusForService())
@@ -428,6 +435,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWindow(hwndDHCPPlaceholder, SW_HIDE)
 			showWindow(hwndListNetwork, SW_HIDE)
 			showWindow(hwndListHealth, SW_HIDE)
+			showWindow(hwndHealthPlaceholder, SW_HIDE)
 			// Show/hide scan bar and reposition Hosts listview accordingly.
 			// On Hosts tab the scan bar is visible and the list sits below it;
 			// on all other tabs the list fills from just below the tab strip.
@@ -478,6 +486,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					showWindow(hwndListNetwork, SW_SHOW)
 				case 6:
 					showWindow(hwndListHealth, SW_SHOW)
+					if !scanEverCompleted {
+						showWindow(hwndHealthPlaceholder, SW_SHOW)
+					}
 				}
 			}
 		}
@@ -632,8 +643,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showVersionDialog(HWND(hwnd))
 		case IDM_HELP_ABOUT:
 			messageBox(HWND(hwnd),
-				"net-sweep\nFast LAN scanner.\n\nhttps://github.com/demicloud/net-sweep",
-				"About net-sweep", 0)
+				"NetScope "+version+"\n"+
+					"Network inspection and reconnaissance tool combining active\n"+
+					"probing, passive signal analysis, and change detection\n"+
+					"for LAN environments.\n\n"+
+					"Copyright \u00a9 2026 demicloud\n"+
+					"https://github.com/demicloud/net-scope",
+				"About NetScope", 0)
 		case IDM_HELP_CRASHLOG:
 			path := crashLogPath()
 			if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -765,10 +781,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		scanMu.Lock()
 		scanCancel = nil
 		scanMu.Unlock()
+		scanDuration := time.Since(scanStartTime)
+		scanEverCompleted = true
 		isScanning = false
 		setWindowText(hwndScan, "Scan")
 		setStatusPart(0, fmt.Sprintf("Hosts: %d found", liveCount))
-		setStatusPart(2, "Scan complete")
+		setStatusPart(2, fmt.Sprintf("Scan complete in %.1fs", scanDuration.Seconds()))
 		if !listHasHosts {
 			setWindowText(hwndListPlaceholder, "No hosts found — try widening the target range")
 			showWindow(hwndListPlaceholder, SW_SHOW)
@@ -777,7 +795,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingMu.Lock()
 		stats := lastStats
 		pendingMu.Unlock()
-		updateHealthTab(stats)
+		updateHealthTab(stats, scanDuration)
 		startARPPoll(HWND(hwnd))
 		return 0
 
@@ -896,8 +914,8 @@ func createControls(hwnd HWND) {
 	scanBarY := scale(elevBarH + tabCtrlH)
 	// [Target label] [target input ────────────────────────] [⟲] [Scan/Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
-	hwndTarget, _ = createWindowEx(0, "EDIT", initialTarget,
-		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,
+	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
+		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
 		scale(58), scanBarY+scale(6), scale(700), scale(22), hwnd, IDC_TARGET, inst)
 	hwndDetect, _ = createWindowEx(0, "BUTTON", "⟲",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(766), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
@@ -1008,9 +1026,13 @@ func createControls(hwnd HWND) {
 
 	// ---- scan report text area (hidden initially) ----
 	hwndListHealth, _ = createWindowEx(
-		WS_EX_CLIENTEDGE, "EDIT", healthPlaceholder,
+		WS_EX_CLIENTEDGE, "EDIT", "",
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		0, otherTop, 1160, 600, hwnd, 0, inst)
+	hwndHealthPlaceholder, _ = createWindowEx(0, "STATIC",
+		"Run a scan to populate this report",
+		WS_CHILD|SS_CENTER,
+		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
 	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
@@ -1092,6 +1114,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndDHCPPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
+	moveWindow(hwndHealthPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,6 +1188,7 @@ func startScan(hwnd HWND) {
 
 	isScanning = true
 	listHasHosts = false
+	scanStartTime = time.Now()
 	setWindowText(hwndScan, "Stop")
 	showWindow(hwndListPlaceholder, SW_HIDE)
 	setStatusPart(2, statusForService()+" — scanning")
@@ -1306,8 +1330,6 @@ func exportResults(hwnd HWND, format string) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const healthPlaceholder = "Run a scan to populate health statistics."
-
 // setStatusParts sets the right-edge pixel positions for the three status bar
 // parts. Pass p1, p2 as the right edge of part 0 and part 1; part 2 fills
 // the remainder (represented as -1).
@@ -1329,7 +1351,7 @@ func setStatus(s string) { setStatusPart(2, s) }
 // Called on the UI thread whenever a broadcast entry arrives or service state changes.
 func updateNetworkTab() {
 	text := fmt.Sprintf(
-		"net-sweep — Live Network Activity\r\n"+
+		"NetScope — Live Network Activity\r\n"+
 			"══════════════════════════════════════════\r\n\r\n"+
 			"  Sweep service          : %s\r\n\r\n"+
 			"  Broadcast listeners    : mDNS + SSDP (running since app start)\r\n"+
@@ -1350,27 +1372,30 @@ func updateNetworkTab() {
 }
 
 // updateHealthTab fills the Scan Report tab with stats from the last scan.
-func updateHealthTab(stats sweep.ScanStats) {
+func updateHealthTab(stats sweep.ScanStats, duration time.Duration) {
+	showWindow(hwndHealthPlaceholder, SW_HIDE)
 	arpLine := "None detected."
 	if stats.ARPAnomalies > 0 {
 		arpLine = fmt.Sprintf("%d — same IP seen with different MACs (possible duplicate IP or ARP spoofing). Investigate with 'arp -a'.", stats.ARPAnomalies)
 	}
 
 	text := fmt.Sprintf(
-		"net-sweep — Scan Report\r\n"+
+		"NetScope — Scan Report\r\n"+
 			"══════════════════════════════════════════\r\n\r\n"+
-			"  Hosts found            : %d\r\n"+
-			"  Packets sent           : %d\r\n"+
-			"  Replies received       : %d\r\n"+
-			"  Timeouts               : %d\r\n"+
-			"  Average latency        : %.2f ms\r\n\r\n"+
-			"  Hosts without PTR      : %d\r\n"+
-			"  ARP anomalies          : %s\r\n\r\n"+
+			"  Scan duration           : %.1f s\r\n"+
+			"  Hosts found             : %d\r\n"+
+			"  Packets sent            : %d\r\n"+
+			"  Replies received        : %d\r\n"+
+			"  Timeouts                : %d\r\n"+
+			"  Average latency         : %.2f ms\r\n\r\n"+
+			"  Hosts without PTR       : %d\r\n"+
+			"  ARP anomalies           : %s\r\n\r\n"+
 			"══════════════════════════════════════════\r\n"+
 			"Notes:\r\n"+
 			"  • Hosts without PTR: many networks have no reverse DNS. This is\r\n"+
 			"    normal and does not indicate a problem with the host.\r\n"+
 			"  • ARP anomalies are genuinely unusual and worth investigating.\r\n",
+		duration.Seconds(),
 		liveCount,
 		stats.PacketsSent,
 		stats.RepliesReceived,

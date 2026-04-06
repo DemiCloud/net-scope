@@ -1,4 +1,4 @@
-# net-sweep — Backlog
+# NetScope — Backlog
 
 ## Naming / UX
 
@@ -9,8 +9,8 @@
 
 ## Bugs
 
-- [ ] **Scanner tab — Target field background** — the Target text box appears with a different background colour from the rest of the toolbar strip; likely an unhandled WM_CTLCOLOREDIT on the scan bar; should match the window background
-- [ ] **Query Host — OK/Cancel buttons overlap** — buttons are incorrectly positioned in the current dialog layout; need layout fix
+- [x] **Scanner tab — Target field background** — fixed: switched to `WS_EX_CLIENTEDGE` and return `COLOR_WINDOW` for all unhandled `WM_CTLCOLORSTATIC` on the main window
+- [x] **Query Host — OK/Cancel buttons overlap** — fixed: taller dialog (145px) + new `dlgBottomRight` framework helper used for layout
 
 ## Query Host (redesign)
 
@@ -35,15 +35,15 @@
 - [ ] **Sortable columns** — single-click column header sorts rows; indicator (▲/▼) in header
 - [ ] **Column customisation** — drag to reorder, right-click header for "Edit Columns" dialog (show/hide, restore defaults)
 - [ ] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
-- [ ] **Broadcast tab empty-state overlays** — mDNS, SSDP, WSD, DHCP tabs should show a greyed-out "Listening — no traffic detected yet" placeholder (same style as Scanner tab) while empty
+- [x] **Broadcast tab empty-state overlays** — mDNS, SSDP, WSD, DHCP tabs all have greyed-out placeholders matching the Scanner tab style
 - [ ] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
 - [ ] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
 - [ ] **Explorer file icon** — embed RT_ICON + RT_GROUP_ICON in the `.syso` resource so the `.exe` shows the radar icon in Windows Explorer (requires dynamic gen-rsrc rewrite)
 - [ ] **Null-value dash alignment** — `—` placeholders in right-aligned columns (Latency, Ports) should render right-aligned; check whether LVCFMT is honoured or if custom draw is needed
-- [ ] **Publisher / company info** — populate product description, company name, and icon in the About/version dialog so the app looks professional
-- [ ] **"Databases" sub-menu** — replace the current single "Mac Vendors" menu item with a "Databases" sub-menu containing "Mac Vendors…" as the first entry; future diff/snapshot databases can be added here
-- [ ] **Scan Report empty-state overlay** — the Scan Report tab has no placeholder; add one matching the style of the other tabs
+- [x] **Publisher / company info** — About dialog now shows version, description, copyright, and GitHub URL
+- [x] **"Databases" sub-menu** — `Options > Databases > Mac Vendors…`; future database types slot in as siblings
+- [x] **Scan Report empty-state overlay** — `hwndHealthPlaceholder` STATIC shown until first scan completes, then hidden permanently
 - [ ] **Scan Report — scan duration metric** — record the wall-clock time from scan start to WM_SCAN_COMPLETE and display it in the Scan Report tab (e.g. "Scan completed in 4.2 s")
-- [ ] **Win32 internal framework cleanup** — audit `cmd/gui-win/` for duplicated scaffolding (dialog creation, layout helpers, font caching, etc.) and extract into a small internal framework; goal is zero copy-paste between dialogs
-- [ ] **README.md** — generate a project README covering build instructions, usage, screenshots, and contributing guidelines
+- [x] **Win32 internal framework cleanup** — `fw_win32.go` + `fw_dialog.go` extracted; `dlgBottomRight`, `registerDialogClass`, `ctlColorDialog` added; `win32.go` is now app-constants-only
+- [x] **Scan Report — scan duration metric** — wall-clock time shown in status bar and Scan Report tab
 - [ ] **GitHub Wiki / FAQ** — move the FAQ content to a GitHub Wiki page; update the Options → FAQ menu item to open the wiki URL in the default browser instead of showing the inline dialog; note: the GitHub Wiki lives in a separate companion repo (`<repo>.wiki.git`) — it is not part of the main repo's commit history, but can be cloned/edited independently

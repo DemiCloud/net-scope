@@ -112,3 +112,39 @@ func ctlColorDialog(hdc uintptr) uintptr {
 	setTextColor(hdc, 0x00000000)
 	return uintptr(getSysColorBrush(COLOR_BTNFACE))
 }
+
+// ---------------------------------------------------------------------------
+// Button layout helper
+// ---------------------------------------------------------------------------
+
+// dlgBottomRight calculates positions for n equal-width buttons in a
+// right-aligned row at the bottom of a dialog client area.
+//
+// Standard metrics used throughout the app:
+//   - button width  : 100 px
+//   - button height : 26 px
+//   - gap between   : 8 px
+//   - right / bottom padding: 10 px
+//
+// Returns the shared y position and slice of x positions (left-to-right,
+// so xs[0] is the leftmost / "OK" button and xs[n-1] is "Cancel").
+//
+// Usage:
+//
+//	y, xs := dlgBottomRight(cW, cH, 2)
+//	createWindowEx(..., xs[0], y, 100, 26, ..., HMENU(idOK), ...)
+//	createWindowEx(..., xs[1], y, 100, 26, ..., HMENU(idCancel), ...)
+func dlgBottomRight(cW, cH int32, n int) (y int32, xs []int32) {
+	const (
+		btnW int32 = 100
+		btnH int32 = 26
+		gap  int32 = 8
+		pad  int32 = 10
+	)
+	y = cH - pad - btnH
+	xs = make([]int32, n)
+	for i := 0; i < n; i++ {
+		xs[i] = cW - pad - btnW - int32(n-1-i)*(btnW+gap)
+	}
+	return
+}
