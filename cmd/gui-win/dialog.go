@@ -4,6 +4,7 @@ package guiwin
 
 import (
 	"bytes"
+	"image/color"
 	"image/png"
 	"os"
 	"strconv"
@@ -356,8 +357,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	y := int32(14)
 
 	createCtrl("STATIC",
-			
-	"No config file found. Choose where NetScope should save its settings.",
+				"No config file found. Choose where NetScope should save its settings.",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 20, dlg, 0, inst)
 	y += 30
 
@@ -673,8 +673,7 @@ func createDatabasesControls(hwnd HWND) {
 
 	createCtrl("STATIC",
 		"Download a fresh copy from maclookup.app (~7 MB). If the file exists it\r\n"+
-		
-	"is used instead of the built-in data; delete it to revert to the built-in copy.",
+			"is used instead of the built-in data; delete it to revert to the built-in copy.",
 		WS_CHILD|WS_VISIBLE, lx, y, cw, 36, hwnd, 0, inst)
 	y += 46
 
@@ -738,16 +737,11 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 			HWND(hwnd), 0, inst)
 
 		text := "NetScope  " + version + "\r\n\r\n" +
-		
-	"Network inspection & reconnaissance\r\n" +
-		
-	"for LAN environments.\r\n\r\n" +
-		
-	"Active probing · Passive signal analysis\r\n" +
-		
-	"Change detection across scans\r\n\r\n" +
-		
-	"github.com/demicloud/net-scope"
+			"Network inspection & reconnaissance\r\n" +
+			"for LAN environments.\r\n\r\n" +
+			"Active probing · Passive signal analysis\r\n" +
+			"Change detection across scans\r\n\r\n" +
+			"github.com/demicloud/net-scope"
 		createWindowEx(0, "STATIC", text,
 			WS_CHILD|WS_VISIBLE|SS_LEFT,
 			126, 14, cW-126-14, 130,
@@ -820,6 +814,25 @@ func showAboutDialog(parent HWND) {
 // transparent) in BI_RGB mode, so receivers see an empty image.
 func copyIconToClipboard(owner HWND, sz int) {
 	img := drawIcon(sz)
+
+	// Composite the circular icon over the solid dark-navy background so the
+	// pasted image has no transparent (white) corners in destination apps.
+	bgR, bgG, bgB := uint8(10), uint8(20), uint8(40)
+	for y := 0; y < sz; y++ {
+		for x := 0; x < sz; x++ {
+			c := img.RGBAAt(x, y)
+			if c.A == 255 {
+				continue
+			}
+			a := float64(c.A) / 255.0
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(float64(c.R)*a + float64(bgR)*(1-a)),
+				G: uint8(float64(c.G)*a + float64(bgG)*(1-a)),
+				B: uint8(float64(c.B)*a + float64(bgB)*(1-a)),
+				A: 255,
+			})
+		}
+	}
 
 	// ── PNG encoding ────────────────────────────────────────────────────────
 	var pngBuf bytes.Buffer
