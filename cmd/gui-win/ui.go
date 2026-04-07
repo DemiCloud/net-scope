@@ -518,6 +518,42 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
+		// Double-click on mDNS / SSDP / WSD lists → host detail dialog (col 0 = IP).
+		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP || hdr.IdFrom == IDC_LIST_WSD) &&
+			hdr.Code == NM_DBLCLK {
+			var hwndSrc HWND
+			switch hdr.IdFrom {
+			case IDC_LIST_MDNS:
+				hwndSrc = hwndListMDNS
+			case IDC_LIST_SSDP:
+				hwndSrc = hwndListSSDP
+			case IDC_LIST_WSD:
+				hwndSrc = hwndListWSD
+			}
+			row := int32(sendMessage(hwndSrc, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+			if row >= 0 {
+				ip := listViewGetCellText(hwndSrc, row, 0)
+				if ip != "" {
+					showHostDetailDialog(HWND(hwnd), ip)
+				}
+			}
+			return 0
+		}
+		// Double-click on DHCP list → host detail dialog.
+		// Prefer Offered IP (col 6), fall back to Client IP (col 4).
+		if hdr.IdFrom == IDC_LIST_DHCP && hdr.Code == NM_DBLCLK {
+			row := int32(sendMessage(hwndListDHCP, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+			if row >= 0 {
+				ip := listViewGetCellText(hwndListDHCP, row, 6) // Offered IP
+				if ip == "" || ip == "—" {
+					ip = listViewGetCellText(hwndListDHCP, row, 4) // Client IP
+				}
+				if ip != "" && ip != "—" {
+					showHostDetailDialog(HWND(hwnd), ip)
+				}
+			}
+			return 0
+		}
 		// Right-click on host list → context menu.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_RCLICK {
 			pt := getCursorPos()
