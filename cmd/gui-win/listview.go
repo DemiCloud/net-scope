@@ -208,8 +208,25 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	// col 2: service type prettified ("_ipp._tcp" → "IPP Printer")
 	setSubItem(hwnd, row, 2, mdnsPrettyType(svc.Type))
 
-	// col 3: best device/model label: fn → ty → md/model
-	device := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "md", txtOr(txt, "model", "—"))))
+	// col 3: best device/model label, enriched with manufacturer and serial
+	deviceName := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "md", txtOr(txt, "model", ""))))
+	var deviceParts []string
+	if m := txtOr(txt, "manufacturer", txtOr(txt, "integrator", "")); m != "" {
+		deviceParts = append(deviceParts, m)
+	}
+	if deviceName != "" {
+		deviceParts = append(deviceParts, deviceName)
+	}
+	if sn := txt["serialnumber"]; sn != "" {
+		deviceParts = append(deviceParts, "SN:"+sn)
+	}
+	if fv := txt["fv"]; fv != "" {
+		deviceParts = append(deviceParts, "FW:"+fv)
+	}
+	device := "—"
+	if len(deviceParts) > 0 {
+		device = strings.Join(deviceParts, " ")
+	}
 	setSubItem(hwnd, row, 3, device)
 
 	// col 4: decoded capabilities (Color · Scan · Duplex · …)
@@ -296,11 +313,14 @@ func mdnsCapabilities(txt map[string]string) string {
 func mdnsNotes(txt map[string]string) string {
 	return extraTXT(txt,
 		// decoded into Device/Model column
-		"fn", "ty", "md", "model",
+		"fn", "ty", "md", "model", "manufacturer", "integrator", "serialnumber", "fv",
 		// decoded into Capabilities column
 		"color", "scan", "duplex", "fax", "print_wfds", "mopria-certified",
 		// version / protocol boilerplate
 		"ve", "srcvers", "txtvers",
+		// AirPlay protocol fields — opaque hex or internal protocol state
+		"features", "flags", "rsf", "gcgl", "acl", "fex", "at",
+		"protovers", "gid", "deviceid",
 		// opaque identifiers / binary blobs
 		"pdl", "urf", "uuid", "pk", "psi", "ic", "ca", "bs",
 		"id", "cd", "rm", "nf", "pi", "st",

@@ -443,6 +443,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if tab == 0 {
 				showWindow(hwndTarget, SW_SHOW)
 				showWindow(hwndDetect, SW_SHOW)
+				showWindow(hwndScan, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
@@ -462,6 +463,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			} else {
 				showWindow(hwndTarget, SW_HIDE)
 				showWindow(hwndDetect, SW_HIDE)
+				showWindow(hwndScan, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -650,6 +652,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_SCAN:
 			if isScanning {
 				stopScan()
+				// Reset UI immediately — don't wait for WM_SCAN_COMPLETE,
+				// which may be delayed (especially for service scans).
+				isScanning = false
+				setWindowText(hwndScan, "Scan")
+				setStatusPart(2, "Scan stopped")
 			} else {
 				startScan(HWND(hwnd))
 			}
