@@ -141,12 +141,18 @@ func Run(v, target string) {
 
 	var msg MSG
 	for getMessage(&msg) {
-		// Ctrl+A → select all in whichever edit box is focused.
+		// Ctrl+A → select all in the focused control.
+		// If a listview is focused, select all rows; otherwise select all text
+		// in the focused edit box.
 		if msg.Message == WM_KEYDOWN &&
 			msg.WParam == VK_KEY_A &&
 			getKeyState(VK_CONTROL) < 0 {
-			sendMessage(msg.HWnd, EM_SETSEL, 0, ^uintptr(0))
-			// Don't dispatch — we've handled it.
+			switch msg.HWnd {
+			case hwndList, hwndListMDNS, hwndListSSDP, hwndListWSD, hwndListDHCP:
+				listViewSelectAll(msg.HWnd)
+			default:
+				sendMessage(msg.HWnd, EM_SETSEL, 0, ^uintptr(0))
+			}
 			continue
 		}
 		// Enter in the target box → trigger Scan (or Stop if scanning).
