@@ -24,6 +24,8 @@ const (
 	WM_DHCP_EVENT    = WM_APP + 8  // DHCP packet from elevated service
 	WM_HOST_ENRICH   = WM_APP + 9  // background enrichment: NetBIOS / ARP arrived
 	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
+	WM_PROXY_VALID   = WM_APP + 11 // proxy connectivity test succeeded
+	WM_PROXY_FAIL    = WM_APP + 12 // proxy connectivity test failed (wParam = error index)
 )
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,7 @@ const (
 	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button
 	IDC_LIST_NETWORK = 114 // Network tab text pane
 	IDC_DETECT       = 115 // detect local subnet button
+	IDC_PROXY_CHECK  = 117 // "Proxy Mode" checkbox in global options bar
 )
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,10 @@ func Run(v, target string) {
 	}
 	noConfigFile = (cfgPath == "")
 
+	// Proxy mode is session-only but defaults to active when a proxy address
+	// is already saved in settings, so the user's intent is preserved on relaunch.
+	proxyEnabled = appConfig.Scan.SOCKSProxy != ""
+
 	if target != "" {
 		initialTarget = target
 	} else if appConfig.Scan.DefaultTarget != "" {
