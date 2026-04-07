@@ -479,6 +479,7 @@ var (
 	procShowWindow                   = modUser32.NewProc("ShowWindow")
 	procUpdateWindow                 = modUser32.NewProc("UpdateWindow")
 	procGetClientRect                = modUser32.NewProc("GetClientRect")
+	procAdjustWindowRectEx           = modUser32.NewProc("AdjustWindowRectEx")
 	procMoveWindow                   = modUser32.NewProc("MoveWindow")
 	procSendMessageW                 = modUser32.NewProc("SendMessageW")
 	procPostMessageW                 = modUser32.NewProc("PostMessageW")
@@ -635,6 +636,21 @@ func getClientRect(hwnd HWND) RECT {
 
 func moveWindow(hwnd HWND, x, y, w, h int32) {
 	procMoveWindow.Call(uintptr(hwnd), uintptr(x), uintptr(y), uintptr(w), uintptr(h), 1)
+}
+
+// adjustWindowRectEx converts a desired client rectangle into the outer window
+// rectangle required to achieve that client area, accounting for the title bar,
+// border, and extended styles. Pass the window style flags and extended style
+// flags used when creating the window. hasMenu should be true if the window has
+// a menu bar.
+func adjustWindowRectEx(clientRect RECT, style, exStyle uint32, hasMenu bool) RECT {
+	r := clientRect
+	menu := uintptr(0)
+	if hasMenu {
+		menu = 1
+	}
+	procAdjustWindowRectEx.Call(uintptr(unsafe.Pointer(&r)), uintptr(style), menu, uintptr(exStyle))
+	return r
 }
 
 func sendMessage(hwnd HWND, msg uint32, wParam, lParam uintptr) uintptr {
