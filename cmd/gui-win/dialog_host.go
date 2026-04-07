@@ -447,9 +447,11 @@ func hostDetailRunAll(hwnd HWND) {
 func startProbe(hwnd HWND, ip string, spec sweep.ProbeSpec) {
 	atomic.AddInt32(&activeProbes, 1)
 	ctx := dialogProbeCtx
+	// Use the proxy dialer if one is configured in the current app config.
+	dial, _ := sweep.MakeDialFunc(appConfig.Scan.SOCKSProxy)
 	go func() {
 		defer atomic.AddInt32(&activeProbes, -1)
-		res := sweep.RunProbe(ctx, ip, spec, 3*time.Second)
+		res := sweep.RunProbe(ctx, ip, spec, 3*time.Second, dial)
 		pendingProbeResultsMu.Lock()
 		idx := len(pendingProbeResults)
 		pendingProbeResults = append(pendingProbeResults, res)

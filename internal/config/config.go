@@ -59,6 +59,11 @@ type ScanConfig struct {
 	// NetBIOS enables NetBIOS Name Service queries (UDP 137) for Windows host names.
 	NetBIOS bool `toml:"netbios"`
 
+	// SOCKSProxy routes all TCP scan traffic through a SOCKS5 proxy.
+	// Format: "host:port" e.g. "127.0.0.1:1080".
+	// When set, ARP, ICMP, mDNS, SSDP, WSD, NetBIOS, and SNMP are disabled.
+	SOCKSProxy string `toml:"socks_proxy"`
+
 	// DefaultTarget is pre-filled in the GUI target box on startup.
 	// Example: "192.168.1.0/24"
 	DefaultTarget string `toml:"default_target"`
@@ -133,6 +138,7 @@ func (c Config) ToSweepConfig() sweep.Config {
 		Interface:       c.Scan.Interface,
 		BannerGrab:      c.Scan.BannerGrab,
 		NetBIOS:         c.Scan.NetBIOS,
+		SOCKSProxy:      c.Scan.SOCKSProxy,
 	}
 }
 

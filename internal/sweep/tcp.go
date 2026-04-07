@@ -9,7 +9,7 @@ import (
 )
 
 // scanPorts dials each port concurrently and returns the open ones, sorted.
-func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration) []int {
+func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration, dial DialFunc) []int {
 	type result struct {
 		port int
 		open bool
@@ -19,8 +19,7 @@ func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duratio
 	for _, port := range ports {
 		go func(p int) {
 			addr := fmt.Sprintf("%s:%d", ip, p)
-			d := net.Dialer{Timeout: timeout}
-			conn, err := d.DialContext(ctx, "tcp", addr)
+			conn, err := dialOrDirect(dial)(ctx, "tcp", addr)
 			if err == nil {
 				conn.Close()
 				ch <- result{p, true}
