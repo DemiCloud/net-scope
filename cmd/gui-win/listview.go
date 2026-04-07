@@ -320,20 +320,22 @@ func mdnsNotes(txt map[string]string) string {
 	)
 }
 
-// mdnsRawClipboardText builds a JSON array of {"ip":"...","data":{...}} objects
-// for the selected mDNS rows, for use in "Copy raw data".
+// mdnsRawClipboardText builds a JSON array of {"ip":"...","data":[...]} objects
+// for the selected mDNS rows. Data contains the unmodified TXT record strings
+// as received from the host, suitable for debugging or bug reports.
 func mdnsRawClipboardText(hwndSrc HWND, rows []int32) string {
 	type entry struct {
-		IP   string            `json:"ip"`
-		Data map[string]string `json:"data"`
+		IP   string   `json:"ip"`
+		Data []string `json:"data"`
 	}
 	entries := make([]entry, 0, len(rows))
 	for _, r := range rows {
 		ip := listViewGetCellText(hwndSrc, r, 0)
-		entries = append(entries, entry{
-			IP:   ip,
-			Data: parseTXTMap(mdnsRaw[r]),
-		})
+		records := mdnsRaw[r]
+		if records == nil {
+			records = []string{}
+		}
+		entries = append(entries, entry{IP: ip, Data: records})
 	}
 	b, _ := json.MarshalIndent(entries, "", "    ")
 	return string(b)
