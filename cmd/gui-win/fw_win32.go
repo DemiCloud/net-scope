@@ -106,11 +106,21 @@ const (
 	WM_KEYDOWN        = 0x0100
 	WM_COMMAND        = 0x0111
 	WM_NOTIFY         = 0x004E
+	WM_MOUSEMOVE      = 0x0200
+	WM_LBUTTONDOWN    = 0x0201
+	WM_LBUTTONUP      = 0x0202
 	WM_RBUTTONUP      = 0x0205
+	WM_CAPTURECHANGED = 0x0215
 	WM_CTLCOLOREDIT   = 0x0133
 	WM_CTLCOLORSTATIC = 0x0138
 	WM_DPICHANGED     = 0x02E0
 	WM_APP            = 0x8000
+
+	// Mouse wParam button/modifier flags
+	MK_LBUTTON = 0x0001
+
+	// SetWindowLongPtrW nIndex values
+	GWLP_WNDPROC = ^uintptr(3) // -4
 
 	// DPI awareness context value for Per-Monitor V2 (Windows 10 1703+).
 	DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ^uintptr(3) // -4
@@ -208,9 +218,13 @@ const (
 	LVM_GETHEADER               = LVM_FIRST + 31
 	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
 	LVNI_SELECTED                = 0x0002
+	LVM_GETITEMRECT              = LVM_FIRST + 14
 	LVM_SETITEMSTATE             = LVM_FIRST + 43
+	LVM_SETSELECTIONMARK         = LVM_FIRST + 67
 	LVIS_FOCUSED                 = 0x0001
 	LVIS_SELECTED                = 0x0002
+	LVIR_BOUNDS                  = 0
+	LVHT_ONITEM                  = 0x000E // LVHT_ONITEMICON | LVHT_ONITEMLABEL | LVHT_ONITEMSTATEICON
 	LVN_KEYDOWN                  = uint32(0xFFFFFF65) // LVN_FIRST - 55
 	LVCF_FMT                     = 0x0001
 	LVCF_WIDTH                   = 0x0002
@@ -234,6 +248,7 @@ const (
 	EM_SETSEL = 0x00B1
 
 	// Virtual keys
+	VK_SHIFT   = 0x10
 	VK_CONTROL = 0x11
 	VK_RETURN  = 0x0D
 	VK_ESCAPE  = 0x1B
@@ -499,6 +514,10 @@ var (
 	procReleaseDC                    = modUser32.NewProc("ReleaseDC")
 	procDrawIconEx                   = modUser32.NewProc("DrawIconEx")
 	procDestroyIcon                  = modUser32.NewProc("DestroyIcon")
+	procSetWindowLongPtrW            = modUser32.NewProc("SetWindowLongPtrW")
+	procCallWindowProcW              = modUser32.NewProc("CallWindowProcW")
+	procSetCapture                   = modUser32.NewProc("SetCapture")
+	procReleaseCapture               = modUser32.NewProc("ReleaseCapture")
 	procOpenClipboard                = modUser32.NewProc("OpenClipboard")
 	procCloseClipboard               = modUser32.NewProc("CloseClipboard")
 	procEmptyClipboard               = modUser32.NewProc("EmptyClipboard")
@@ -687,6 +706,30 @@ func getWindowRect(hwnd HWND) RECT {
 
 func destroyWindow(hwnd HWND) {
 	procDestroyWindow.Call(uintptr(hwnd))
+}
+
+// setWindowLongPtr replaces an attribute of the specified window. Returns the
+// previous value of the attribute, or 0 on failure.
+func setWindowLongPtr(hwnd HWND, index uintptr, val uintptr) uintptr {
+	r, _, _ := procSetWindowLongPtrW.Call(uintptr(hwnd), index, val)
+	return r
+}
+
+// callWindowProc passes a message to the specified window procedure. Used when
+// subclassing a window to forward messages to the original procedure.
+func callWindowProc(proc uintptr, hwnd HWND, msg uint32, wParam, lParam uintptr) uintptr {
+	r, _, _ := procCallWindowProcW.Call(proc, uintptr(hwnd), uintptr(msg), wParam, lParam)
+	return r
+}
+
+// setCapture sets the mouse capture to hwnd so that all mouse input goes to it.
+func setCapture(hwnd HWND) {
+	procSetCapture.Call(uintptr(hwnd))
+}
+
+// releaseCapture releases the mouse capture from the current window.
+func releaseCapture() {
+	procReleaseCapture.Call()
 }
 
 // centerOnParent repositions dlg so it is centered over parent on screen.
