@@ -1245,13 +1245,20 @@ func showProtocolHandlersDialog(parent HWND) {
 		rowH int32 = 30
 		y0   int32 = 36
 	)
-	dlgW := int32(640)
-	dlgH := y0 + n*rowH + 4 + 26 + 26 + pad*2
+	const (
+		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
+	)
+	clientW := int32(640)
+	clientH := y0 + n*rowH + 4 + 26 + 26 + pad
+	outer := adjustWindowRectEx(RECT{0, 0, clientW, clientH}, dlgStyle, dlgExStyle, false)
+	dlgW := outer.Right - outer.Left
+	dlgH := outer.Bottom - outer.Top
 
 	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
+		dlgExStyle,
 		"NetSweepProtoHandlers", "Protocol Handlers",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		dlgStyle,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
 	)
