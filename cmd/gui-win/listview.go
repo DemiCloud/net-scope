@@ -888,3 +888,36 @@ func cmpStrDash(a, b string) int {
 	}
 	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
 }
+
+// ---------------------------------------------------------------------------
+// Hosts ListView — column visibility
+// ---------------------------------------------------------------------------
+
+// colDefaultLogicalWidths holds the 96-DPI logical pixel width for each column.
+// Must match the widths passed to listViewAddColumn/Fmt in createControls.
+var colDefaultLogicalWidths = [10]int32{40, 120, 160, 145, 140, 90, 70, 110, 300, 200}
+
+// colVisible tracks whether each column is visible; all true by default.
+var colVisible = [10]bool{true, true, true, true, true, true, true, true, true, true}
+
+// setColumnVisible shows or hides a column by setting its width to 0 or its
+// default scaled width. col 0 (Status) should not be hidden.
+func setColumnVisible(col int32, visible bool) {
+	if col < 0 || int(col) >= len(colVisible) {
+		return
+	}
+	colVisible[col] = visible
+	w := int32(0)
+	if visible {
+		w = scale(colDefaultLogicalWidths[col])
+	}
+	sendMessage(hwndList, LVM_SETCOLUMNWIDTH, uintptr(col), uintptr(uint32(w)))
+}
+
+// restoreAllColumns resets all columns to visible with their default widths.
+func restoreAllColumns() {
+	for i := int32(0); i < int32(len(colVisible)); i++ {
+		colVisible[i] = true
+		sendMessage(hwndList, LVM_SETCOLUMNWIDTH, uintptr(i), uintptr(uint32(scale(colDefaultLogicalWidths[i]))))
+	}
+}

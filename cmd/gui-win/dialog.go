@@ -896,3 +896,102 @@ func copyIconToClipboard(owner HWND, sz int) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Edit Columns dialog
+// ---------------------------------------------------------------------------
+
+// editColsChecks holds the HWND of each column's checkbox (indexed by col).
+// Col 0 (Status) is always visible and has no checkbox.
+var editColsChecks [10]HWND
+
+func showEditColumnsDialog(parent HWND) {
+	registerDialogClass("NetScopeEditCols", syscall.NewCallback(editColsWndProc))
+
+	const w, h = 270, 330
+	aw, ah := scale(w), scale(h)
+	dlg, _ := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetScopeEditCols", "Edit Columns",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU,
+		0, 0, aw, ah, parent, 0, getModuleHandle(),
+	)
+	centerWindowOver(dlg, parent)
+	runModal(dlg, parent)
+}
+
+func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		sendMessage(HWND(hwnd), WM_SETFONT, uintptr(appFont), 1)
+
+		// One checkbox per column 1–9 (col 0 "Status" is always visible).
+		for col := int32(1); col <= 9; col++ {
+			y := scale(12) + (col-1)*scale(26)
+			editColsChecks[col], _ = createWindowEx(0, "BUTTON", hostsColTitles[col],
+				WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX,
+				scale(12), y, scale(240), scale(22),
+				HWND(hwnd), HMENU(IDC_EDITCOLS_COL_BASE+int(col)), getModuleHandle())
+			sendMessage(editColsChecks[col], WM_SETFONT, uintptr(appFont), 1)
+			check := BST_UNCHECKED
+			if colVisible[col] {
+				check = BST_CHECKED
+			}
+			sendMessage(editColsChecks[col], BM_SETCHECK, uintptr(check), 0)
+		}
+
+		// Button row: Restore Defaults left, Cancel + OK right.
+		cr := getClientRect(HWND(hwnd))
+		btnY, xs := dlgBottomRight(cr.Right-cr.Left, cr.Bottom-cr.Top, 2)
+		// OK (xs[0]) and Cancel (xs[1])
+		okHwnd, _ := createWindowEx(0, "BUTTON", "OK",
+			WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
+			xs[0], btnY, scale(100), scale(26),
+			HWND(hwnd), HMENU(IDC_EDITCOLS_OK), getModuleHandle())
+		sendMessage(okHwnd, WM_SETFONT, uintptr(appFont), 1)
+		cancelHwnd, _ := createWindowEx(0, "BUTTON", "Cancel",
+			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+			xs[1], btnY, scale(100), scale(26),
+			HWND(hwnd), HMENU(IDC_EDITCOLS_CANCEL), getModuleHandle())
+		sendMessage(cancelHwnd, WM_SETFONT, uintptr(appFont), 1)
+		// Restore Defaults — left side
+		restoreHwnd, _ := createWindowEx(0, "BUTTON", "Restore Defaults",
+			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+			scale(10), btnY, scale(120), scale(26),
+			HWND(hwnd), HMENU(IDC_EDITCOLS_RESTORE), getModuleHandle())
+		sendMessage(restoreHwnd, WM_SETFONT, uintptr(appFont), 1)
+		return 0
+
+	case WM_COMMAND:
+		id := int32(wParam & 0xFFFF)
+		switch id {
+		case IDC_EDITCOLS_OK:
+			// Apply checkbox states to column visibility.
+			for col := int32(1); col <= 9; col++ {
+				if editColsChecks[col] != 0 {
+					chk := sendMessage(editColsChecks[col], BM_GETCHECK, 0, 0)
+					setColumnVisible(col, chk == BST_CHECKED)
+				}
+			}
+			closeModal(HWND(hwnd))
+		case IDC_EDITCOLS_CANCEL:
+			closeModal(HWND(hwnd))
+		case IDC_EDITCOLS_RESTORE:
+			// Check all checkboxes (UI only; not applied until OK).
+			for col := int32(1); col <= 9; col++ {
+				if editColsChecks[col] != 0 {
+					sendMessage(editColsChecks[col], BM_SETCHECK, BST_CHECKED, 0)
+				}
+			}
+		}
+		return 0
+
+	case WM_CTLCOLORSTATIC:
+		return ctlColorDialog(wParam)
+
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+}
+

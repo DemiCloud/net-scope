@@ -91,6 +91,19 @@ const (
 
 	// Base for the detect-subnet popup (up to 16 interfaces supported).
 	IDM_DETECT_BASE = 3100
+
+	// Header right-click menu
+	IDM_HEADER_EDIT_COLS = 3200
+
+	// Edit Columns dialog control IDs
+	IDC_EDITCOLS_OK      = 451
+	IDC_EDITCOLS_CANCEL  = 452
+	IDC_EDITCOLS_RESTORE = 453
+	// Checkbox IDs: IDC_EDITCOLS_COL_BASE + col, for col 1..9
+	IDC_EDITCOLS_COL_BASE = 460
+
+	// Additional button style (plain push, no default border)
+	BS_PUSHBUTTON = 0x0000
 )
 
 // ---------------------------------------------------------------------------

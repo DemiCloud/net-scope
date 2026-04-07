@@ -191,6 +191,7 @@ const (
 	LVS_EX_FULLROWSELECT = 0x00000020
 	LVS_EX_GRIDLINES     = 0x00000001
 	LVS_EX_DOUBLEBUFFER  = 0x00010000
+	LVS_EX_HEADERDRAGDROP = 0x00000010
 	LVM_FIRST                    = 0x1000
 	LVM_INSERTCOLUMN             = LVM_FIRST + 97
 	LVM_SETCOLUMN                = LVM_FIRST + 96
@@ -202,6 +203,8 @@ const (
 	LVM_GETITEMTEXT              = LVM_FIRST + 115
 	LVM_GETNEXTITEM              = LVM_FIRST + 12
 	LVM_GETITEMCOUNT             = LVM_FIRST + 4
+	LVM_GETHEADER               = LVM_FIRST + 31
+	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
 	LVNI_SELECTED                = 0x0002
 	LVCF_FMT                     = 0x0001
 	LVCF_WIDTH                   = 0x0002
@@ -674,6 +677,16 @@ func centerOnParent(dlg, parent HWND, w, h int32) {
 	x := (pr.Left + pr.Right - w) / 2
 	y := (pr.Top + pr.Bottom - h) / 2
 	moveWindow(dlg, x, y, w, h)
+}
+
+// centerWindowOver repositions dlg so it is centered over parent, reading dlg's
+// current size from its window rect. Call after the window has been created but
+// before it is shown.
+func centerWindowOver(dlg, parent HWND) {
+	dr := getWindowRect(dlg)
+	w := dr.Right - dr.Left
+	h := dr.Bottom - dr.Top
+	centerOnParent(dlg, parent, w, h)
 }
 
 func utf16(s string) *uint16 {

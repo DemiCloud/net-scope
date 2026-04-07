@@ -42,6 +42,7 @@ var (
 var (
 	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
 	hwndMain       HWND
+	headerHwnd     HWND  // header control of hwndList, for right-click detection
 	// Elevation bar (top strip)
 	hwndElevLabel  HWND // service status label
 	hwndServiceBtn HWND // "Elevate sweep service" button (hidden when already elevated)
@@ -510,6 +511,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			applyHostsSort()
 			return 0
 		}
+		// Right-click on ListView header → Edit Columns menu.
+		if headerHwnd != 0 && hdr.HwndFrom == uintptr(headerHwnd) && hdr.Code == NM_RCLICK {
+			pt := getCursorPos()
+			hmenu := createPopupMenu()
+			appendMenu(hmenu, MF_STRING, IDM_HEADER_EDIT_COLS, "Edit Columns…")
+			cmd := trackPopupMenu(hmenu, TPM_RIGHTBUTTON|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
+			destroyMenu(hmenu)
+			if int32(cmd) == IDM_HEADER_EDIT_COLS {
+				showEditColumnsDialog(HWND(hwnd))
+			}
+			return 0
+		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
 			row := int32(sendMessage(hwndList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
@@ -943,7 +956,8 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
+	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
 	listViewAddColumn(hwndList, colStatus,   "●",              scale(40))
 	listViewAddColumn(hwndList, colIP,       "IP Address",     scale(120))
 	listViewAddColumn(hwndList, colHost,     "Hostname",       scale(160))
