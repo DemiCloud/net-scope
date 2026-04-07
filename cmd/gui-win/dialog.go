@@ -900,20 +900,41 @@ func copyIconToClipboard(owner HWND, sz int) {
 // Edit Columns dialog
 // ---------------------------------------------------------------------------
 
-// editColsChecks holds the HWND of each column's checkbox (indexed by col).
-// Col 0 (Status) is always visible and has no checkbox.
+// editColsChecks holds the HWND of each checkbox (indexed by column number).
+// Col 0 has no checkbox; it is always visible.  The array is large enough for
+// the widest tab (10 columns for the Hosts tab).
 var editColsChecks [10]HWND
 
-func showEditColumnsDialog(parent HWND) {
+// editColsDlgState holds the parameters for the currently-open Edit Columns
+// dialog.  Set by showEditColumnsDialog before runModal; read by the WndProc.
+var editColsDlgState struct {
+	hwndLV    HWND
+	colTitles []string
+	colVis    []bool  // slice into the tab's actual visibility array; mutated in-place
+	defWidths []int32 // 96-DPI logical widths
+}
+
+// showEditColumnsDialog opens the generic Edit Columns dialog for any tab.
+// hwndLV is the listview to manage; colTitles, colVis, defWidths describe its
+// columns.  colVis is mutated when the user presses OK.
+func showEditColumnsDialog(parent, hwndLV HWND, colTitles []string, colVis []bool, defWidths []int32) {
+	editColsDlgState.hwndLV = hwndLV
+	editColsDlgState.colTitles = colTitles
+	editColsDlgState.colVis = colVis
+	editColsDlgState.defWidths = defWidths
+
 	registerDialogClass("NetScopeEditCols", syscall.NewCallback(editColsWndProc))
 
-	const w, h = 360, 330
-	aw, ah := scale(w), scale(h)
+	// Height: 12px top padding + one 26px row per checkbox (cols 1..n-1) +
+	// 80px footer (title bar + button row + padding).
+	n := int32(len(colTitles))
+	const dlgW int32 = 360
+	dlgH := 12 + (n-1)*26 + 80
 	dlg, _ := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetScopeEditCols", "Edit Columns",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU,
-		0, 0, aw, ah, parent, 0, getModuleHandle(),
+		0, 0, scale(dlgW), scale(dlgH), parent, 0, getModuleHandle(),
 	)
 	centerWindowOver(dlg, parent)
 	runModal(dlg, parent)
@@ -923,26 +944,30 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_CREATE:
 		sendMessage(HWND(hwnd), WM_SETFONT, uintptr(appFont), 1)
+		n := int32(len(editColsDlgState.colTitles))
 
-		// One checkbox per column 1–9 (col 0 "Status" is always visible).
-		for col := int32(1); col <= 9; col++ {
+		// One checkbox per column 1..n-1 (col 0 is always visible).
+		for col := int32(1); col < n; col++ {
 			y := scale(12) + (col-1)*scale(26)
-			editColsChecks[col], _ = createWindowEx(0, "BUTTON", hostsColTitles[col],
+			editColsChecks[col], _ = createWindowEx(0, "BUTTON", editColsDlgState.colTitles[col],
 				WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX,
 				scale(12), y, scale(240), scale(22),
 				HWND(hwnd), HMENU(IDC_EDITCOLS_COL_BASE+int(col)), getModuleHandle())
 			sendMessage(editColsChecks[col], WM_SETFONT, uintptr(appFont), 1)
 			check := BST_UNCHECKED
-			if colVisible[col] {
+			if editColsDlgState.colVis[col] {
 				check = BST_CHECKED
 			}
 			sendMessage(editColsChecks[col], BM_SETCHECK, uintptr(check), 0)
+		}
+		// Clear any stale handles from a previous invocation with more columns.
+		for i := int(n); i < len(editColsChecks); i++ {
+			editColsChecks[i] = 0
 		}
 
 		// Button row: Restore Defaults left, Cancel + OK right.
 		cr := getClientRect(HWND(hwnd))
 		btnY, leftXs, rightXs := dlgButtonRowSplit(cr.Right-cr.Left, cr.Bottom-cr.Top, 1, 2)
-		// OK (rightXs[0]) and Cancel (rightXs[1])
 		okHwnd, _ := createWindowEx(0, "BUTTON", "OK",
 			WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
 			rightXs[0], btnY, 100, 26,
@@ -953,7 +978,6 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 			rightXs[1], btnY, 100, 26,
 			HWND(hwnd), HMENU(IDC_EDITCOLS_CANCEL), getModuleHandle())
 		sendMessage(cancelHwnd, WM_SETFONT, uintptr(appFont), 1)
-		// Restore Defaults — left side
 		restoreHwnd, _ := createWindowEx(0, "BUTTON", "Restore Defaults",
 			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
 			leftXs[0], btnY, 100, 26,
@@ -963,21 +987,26 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 
 	case WM_COMMAND:
 		id := int32(wParam & 0xFFFF)
+		n := int32(len(editColsDlgState.colTitles))
 		switch id {
 		case IDC_EDITCOLS_OK:
-			// Apply checkbox states to column visibility.
-			for col := int32(1); col <= 9; col++ {
+			for col := int32(1); col < n; col++ {
 				if editColsChecks[col] != 0 {
 					chk := sendMessage(editColsChecks[col], BM_GETCHECK, 0, 0)
-					setColumnVisible(col, chk == BST_CHECKED)
+					setLVColumnVisible(
+						editColsDlgState.hwndLV,
+						editColsDlgState.defWidths,
+						editColsDlgState.colVis,
+						col, chk == BST_CHECKED,
+					)
 				}
 			}
 			closeModal(HWND(hwnd))
 		case IDC_EDITCOLS_CANCEL:
 			closeModal(HWND(hwnd))
 		case IDC_EDITCOLS_RESTORE:
-			// Check all checkboxes (UI only; not applied until OK).
-			for col := int32(1); col <= 9; col++ {
+			// Tick all checkboxes in the UI; actual reset happens on OK.
+			for col := int32(1); col < n; col++ {
 				if editColsChecks[col] != 0 {
 					sendMessage(editColsChecks[col], BM_SETCHECK, BST_CHECKED, 0)
 				}

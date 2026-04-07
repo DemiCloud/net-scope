@@ -486,35 +486,26 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 		}
-		// Column header click → sort hosts (asc → desc → unsorted → …).
-		if hdr.IdFrom == IDC_LIST && hdr.Code == LVN_COLUMNCLICK {
+		// Column header click → sort (all tabs).
+		if hdr.Code == LVN_COLUMNCLICK {
 			nm := (*NMLISTVIEW)(unsafe.Pointer(lParam)) //nolint:govet
-			col := nm.ISubItem
-			if col == sortCol {
-				if sortAsc {
-					sortAsc = false // asc → desc
-				} else {
-					sortCol = -1 // desc → unsorted
-				}
-			} else {
-				sortCol = col
-				sortAsc = true
+			if handleListColumnClick(hdr.IdFrom, nm.ISubItem) {
+				return 0
 			}
-			updateSortIndicators()
-			applyHostsSort()
-			return 0
 		}
-		// Right-click on ListView header → Edit Columns menu.
-		if headerHwnd != 0 && hdr.HwndFrom == uintptr(headerHwnd) && hdr.Code == NM_RCLICK {
-			pt := getCursorPos()
-			hmenu := createPopupMenu()
-			appendMenu(hmenu, MF_STRING, IDM_HEADER_EDIT_COLS, "Edit Columns…")
-			cmd := trackPopupMenu(hmenu, TPM_RIGHTBUTTON|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
-			destroyMenu(hmenu)
-			if int32(cmd) == IDM_HEADER_EDIT_COLS {
-				showEditColumnsDialog(HWND(hwnd))
+		// Right-click on any listview header → Edit Columns menu.
+		if hdr.Code == NM_RCLICK {
+			if info, ok := headerInfos[HWND(hdr.HwndFrom)]; ok {
+				pt := getCursorPos()
+				hmenu := createPopupMenu()
+				appendMenu(hmenu, MF_STRING, IDM_HEADER_EDIT_COLS, "Edit Columns…")
+				cmd := trackPopupMenu(hmenu, TPM_RIGHTBUTTON|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
+				destroyMenu(hmenu)
+				if int32(cmd) == IDM_HEADER_EDIT_COLS {
+					showEditColumnsDialog(HWND(hwnd), info.hwndLV, info.colTitles, info.colVis, info.defWidths)
+				}
+				return 0
 			}
-			return 0
 		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
@@ -999,16 +990,15 @@ func createControls(hwnd HWND) {
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
 	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
-	listViewAddColumn(hwndList, colStatus,   "●",              scale(40))
-	listViewAddColumn(hwndList, colIP,       "IP Address",     scale(120))
-	listViewAddColumn(hwndList, colHost,     "Hostname",       scale(160))
-	listViewAddColumn(hwndList, colMAC,      "MAC",            scale(145))
-	listViewAddColumn(hwndList, colVendor,   "Vendor",         scale(140))
-	listViewAddColumn(hwndList, colOS,       "OS",             scale(90))
-	listViewAddColumnFmt(hwndList, colLatency,  "Latency",     scale(70),  LVCFMT_RIGHT)
-	listViewAddColumnFmt(hwndList, colPorts,    "Ports",       scale(110), LVCFMT_RIGHT)
-	listViewAddColumn(hwndList, colBanner,   "Banners / SNMP", scale(300))
-	listViewAddColumn(hwndList, colServices, "Services",       scale(200))
+	// Columns come from hostsColTitles + colDefaultLogicalWidths (single source of truth).
+	for i, title := range hostsColTitles {
+		if i == int(colLatency) || i == int(colPorts) {
+			listViewAddColumnFmt(hwndList, int32(i), title, scale(colDefaultLogicalWidths[i]), LVCFMT_RIGHT)
+		} else {
+			listViewAddColumn(hwndList, int32(i), title, scale(colDefaultLogicalWidths[i]))
+		}
+	}
+	headerInfos[headerHwnd] = &lvHeaderInfo{hwndList, hostsColTitles[:], colVisible[:], colDefaultLogicalWidths[:]}
 
 	// ---- empty-state placeholder (sits on top of hwndList when no hosts) ----
 	hwndListPlaceholder, _ = createWindowEx(0, "STATIC",
@@ -1021,13 +1011,12 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
-	listViewAddColumn(hwndListMDNS, 0, "IP",           scale(120))
-	listViewAddColumn(hwndListMDNS, 1, "Name",         scale(210))
-	listViewAddColumn(hwndListMDNS, 2, "Service",      scale(130))
-	listViewAddColumn(hwndListMDNS, 3, "Device/Model", scale(180))
-	listViewAddColumn(hwndListMDNS, 4, "Capabilities", scale(170))
-	listViewAddColumn(hwndListMDNS, 5, "Notes",        scale(300))
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	for i, title := range mdnsColTitles {
+		listViewAddColumn(hwndListMDNS, int32(i), title, scale(mdnsDefWidths[i]))
+	}
+	headerInfos[HWND(sendMessage(hwndListMDNS, LVM_GETHEADER, 0, 0))] =
+		&lvHeaderInfo{hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths}
 	hwndMDNSPlaceholder, _ = createWindowEx(0, "STATIC",
 		"Listening — no mDNS traffic detected yet",
 		WS_CHILD|SS_CENTER,
@@ -1038,12 +1027,12 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
-	listViewAddColumn(hwndListSSDP, 0, "IP",       scale(120))
-	listViewAddColumn(hwndListSSDP, 1, "Server",   scale(220))
-	listViewAddColumn(hwndListSSDP, 2, "Type",     scale(160))
-	listViewAddColumn(hwndListSSDP, 3, "Services", scale(280))
-	listViewAddColumn(hwndListSSDP, 4, "Location", scale(300))
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	for i, title := range ssdpColTitles {
+		listViewAddColumn(hwndListSSDP, int32(i), title, scale(ssdpDefWidths[i]))
+	}
+	headerInfos[HWND(sendMessage(hwndListSSDP, LVM_GETHEADER, 0, 0))] =
+		&lvHeaderInfo{hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths}
 	hwndSSDPPlaceholder, _ = createWindowEx(0, "STATIC",
 		"Listening — no SSDP traffic detected yet",
 		WS_CHILD|SS_CENTER,
@@ -1054,12 +1043,12 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
-	listViewAddColumn(hwndListWSD, 0, "IP",            scale(120))
-	listViewAddColumn(hwndListWSD, 1, "Types",         scale(180))
-	listViewAddColumn(hwndListWSD, 2, "Transport URLs", scale(300))
-	listViewAddColumn(hwndListWSD, 3, "Scopes",        scale(200))
-	listViewAddColumn(hwndListWSD, 4, "Endpoint UUID", scale(280))
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	for i, title := range wsdColTitles {
+		listViewAddColumn(hwndListWSD, int32(i), title, scale(wsdDefWidths[i]))
+	}
+	headerInfos[HWND(sendMessage(hwndListWSD, LVM_GETHEADER, 0, 0))] =
+		&lvHeaderInfo{hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths}
 	hwndWSDPlaceholder, _ = createWindowEx(0, "STATIC",
 		"Listening — no WS-Discovery traffic detected yet",
 		WS_CHILD|SS_CENTER,
@@ -1070,15 +1059,12 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
-	listViewAddColumn(hwndListDHCP, 0, "Time",         scale(75))
-	listViewAddColumn(hwndListDHCP, 1, "Type",         scale(90))
-	listViewAddColumn(hwndListDHCP, 2, "Client MAC",   scale(140))
-	listViewAddColumn(hwndListDHCP, 3, "Hostname",     scale(160))
-	listViewAddColumn(hwndListDHCP, 4, "Client IP",    scale(120))
-	listViewAddColumn(hwndListDHCP, 5, "Requested IP", scale(120))
-	listViewAddColumn(hwndListDHCP, 6, "Offered IP",   scale(120))
-	listViewAddColumn(hwndListDHCP, 7, "Server IP",    scale(120))
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	for i, title := range dhcpColTitles {
+		listViewAddColumn(hwndListDHCP, int32(i), title, scale(dhcpDefWidths[i]))
+	}
+	headerInfos[HWND(sendMessage(hwndListDHCP, LVM_GETHEADER, 0, 0))] =
+		&lvHeaderInfo{hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths}
 	hwndDHCPPlaceholder, _ = createWindowEx(0, "STATIC",
 		"Listening — no DHCP traffic detected yet (requires elevation)",
 		WS_CHILD|SS_CENTER,
@@ -1532,15 +1518,15 @@ func copyToClipboard(hwnd HWND, text string) {
 func listViewInfoFor(idFrom uintptr) (hw HWND, numCols int32, headers []string) {
 	switch idFrom {
 	case IDC_LIST:
-		return hwndList, 10, hostsColTitles[:]
+		return hwndList, int32(len(hostsColTitles)), hostsColTitles[:]
 	case IDC_LIST_MDNS:
-		return hwndListMDNS, 6, []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes"}
+		return hwndListMDNS, int32(len(mdnsColTitles)), mdnsColTitles
 	case IDC_LIST_SSDP:
-		return hwndListSSDP, 5, []string{"IP", "Name", "Type", "Services", "Location"}
+		return hwndListSSDP, int32(len(ssdpColTitles)), ssdpColTitles
 	case IDC_LIST_WSD:
-		return hwndListWSD, 5, []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID"}
+		return hwndListWSD, int32(len(wsdColTitles)), wsdColTitles
 	case IDC_LIST_DHCP:
-		return hwndListDHCP, 8, []string{"Time", "Type", "Client MAC", "Hostname", "Client IP", "Requested IP", "Offered IP", "Server IP"}
+		return hwndListDHCP, int32(len(dhcpColTitles)), dhcpColTitles
 	}
 	return 0, 0, nil
 }
