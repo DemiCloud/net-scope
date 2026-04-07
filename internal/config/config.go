@@ -62,6 +62,13 @@ type ScanConfig struct {
 	// DefaultTarget is pre-filled in the GUI target box on startup.
 	// Example: "192.168.1.0/24"
 	DefaultTarget string `toml:"default_target"`
+
+	// ProtocolHandlers maps protocol names to custom launch commands.
+	// Supported keys: "http", "https", "ssh", "rdp", "ftp", "telnet", "smb".
+	// Each value is a command template where %s is replaced by the host IP.
+	// An empty or missing key falls back to the OS default handler.
+	// Example: {"ssh": "putty.exe -ssh %s", "rdp": "mstsc.exe /v:%s"}
+	ProtocolHandlers map[string]string `toml:"protocol_handlers"`
 }
 
 // Default returns the built-in defaults. Used when no config file exists

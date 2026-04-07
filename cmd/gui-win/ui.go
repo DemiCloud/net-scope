@@ -1522,6 +1522,41 @@ func menuItem(menu HMENU, id uintptr, label string, enabled bool) {
 	appendMenu(menu, flags, id, label)
 }
 
+// openProtocol launches a connection to ip using the named protocol.
+// If a custom command template is configured (appConfig.Scan.ProtocolHandlers),
+// that is used; otherwise the OS default handler is invoked.
+// %s in the custom command is replaced by the IP address.
+func openProtocol(hwnd HWND, ip string, protocol string) {
+	custom := appConfig.Scan.ProtocolHandlers[protocol]
+	if custom != "" {
+		cmd := strings.ReplaceAll(custom, "%s", ip)
+		parts := strings.SplitN(cmd, " ", 2)
+		exe := parts[0]
+		args := ""
+		if len(parts) > 1 {
+			args = parts[1]
+		}
+		shellExecute(hwnd, "open", exe, args, "", SW_SHOW)
+		return
+	}
+	switch protocol {
+	case "http":
+		shellExecute(hwnd, "open", "http://"+ip, "", "", SW_SHOW)
+	case "https":
+		shellExecute(hwnd, "open", "https://"+ip, "", "", SW_SHOW)
+	case "ssh":
+		shellExecute(hwnd, "open", "ssh://"+ip, "", "", SW_SHOW)
+	case "rdp":
+		shellExecute(hwnd, "open", "mstsc.exe", "/v:"+ip, "", SW_SHOW)
+	case "ftp":
+		shellExecute(hwnd, "open", "ftp://"+ip, "", "", SW_SHOW)
+	case "telnet":
+		shellExecute(hwnd, "open", "telnet://"+ip, "", "", SW_SHOW)
+	case "smb":
+		shellExecute(hwnd, "open", `\\`+ip, "", "", SW_SHOW)
+	}
+}
+
 // copyToClipboard places text on the Windows clipboard as CF_UNICODETEXT.
 func copyToClipboard(hwnd HWND, text string) {
 	utf16, err := syscall.UTF16FromString(text)
@@ -1570,9 +1605,19 @@ func listViewInfoFor(idFrom uintptr) (hw HWND, numCols int32, headers []string) 
 
 func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	ip := r.IP.String()
+	selCount := len(listViewGetSelectedRows(hwndList))
 
 	menu := createPopupMenu()
 	defer destroyMenu(menu)
+
+	if selCount > 1 {
+		// Multi-selection: only bulk-applicable items.
+		appendCopyAsSubmenu(menu)
+		cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
+		rows := listViewGetSelectedRows(hwndList)
+		handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:])
+		return
+	}
 
 	// ── Connect submenu ──────────────────────────────────────────────────────
 	hConn := createPopupMenu()
@@ -1607,19 +1652,19 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	}
 	switch cmd {
 	case IDM_CTX_OPEN_HTTP:
-		shellExecute(parent, "open", "http://"+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "http")
 	case IDM_CTX_OPEN_HTTPS:
-		shellExecute(parent, "open", "https://"+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "https")
 	case IDM_CTX_OPEN_SSH:
-		shellExecute(parent, "open", "ssh://"+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "ssh")
 	case IDM_CTX_OPEN_RDP:
-		shellExecute(parent, "open", "mstsc.exe", "/v:"+ip, "", SW_SHOW)
+		openProtocol(parent, ip, "rdp")
 	case IDM_CTX_OPEN_FTP:
-		shellExecute(parent, "open", "ftp://"+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "ftp")
 	case IDM_CTX_OPEN_TELNET:
-		shellExecute(parent, "open", "telnet://"+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "telnet")
 	case IDM_CTX_OPEN_SMB:
-		shellExecute(parent, "open", `\\`+ip, "", "", SW_SHOW)
+		openProtocol(parent, ip, "smb")
 	case IDM_CTX_PING:
 		shellExecute(parent, "open", "cmd.exe",
 			"/c ping "+ip+" && pause", "", SW_SHOW)
