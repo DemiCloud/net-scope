@@ -209,7 +209,9 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	setSubItem(hwnd, row, 2, mdnsPrettyType(svc.Type))
 
 	// col 3: best device/model label, enriched with manufacturer and serial
-	deviceName := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "md", txtOr(txt, "model", ""))))
+	// Note: RAOP (_raop._tcp) uses md= for metadata types ("0,1,2"), not model;
+	// the correct model key for RAOP/AirPlay devices is am= (Apple model).
+	deviceName := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "am", txtOr(txt, "md", txtOr(txt, "model", "")))))
 	var deviceParts []string
 	if m := txtOr(txt, "manufacturer", txtOr(txt, "integrator", "")); m != "" {
 		deviceParts = append(deviceParts, m)
@@ -313,7 +315,7 @@ func mdnsCapabilities(txt map[string]string) string {
 func mdnsNotes(txt map[string]string) string {
 	return extraTXT(txt,
 		// decoded into Device/Model column
-		"fn", "ty", "md", "model", "manufacturer", "integrator", "serialnumber", "fv",
+		"fn", "ty", "am", "md", "model", "manufacturer", "integrator", "serialnumber", "fv",
 		// decoded into Capabilities column
 		"color", "scan", "duplex", "fax", "print_wfds", "mopria-certified",
 		// version / protocol boilerplate
