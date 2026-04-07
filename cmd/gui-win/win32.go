@@ -48,7 +48,6 @@ const (
 	IDC_LIST_NETWORK  = 114 // Network tab text pane
 	IDC_DETECT        = 115 // detect local subnet button
 	IDC_PROXY_CHECK   = 117 // "Proxy Mode" checkbox in global options bar
-	IDC_SERVICE_STATUS = 119 // service/elevation state STATIC label (bottom-right overlay)
 )
 
 // ---------------------------------------------------------------------------
@@ -113,9 +112,9 @@ const (
 	IDC_EDITCOLS_COL_BASE = 460
 
 	// Status bar part indices
-	statusPartHosts = 0 // "Ready" / "Hosts: N found"
-	statusPartBcast = 1 // "Broadcast: …" or "Proxy mode: …"
-	statusPartScan  = 2 // scan state / progress
+	statusPartHosts   = 0 // "Ready" / "Hosts: N found"
+	statusPartScan    = 1 // scan state / progress
+	statusPartService = 2 // service / elevation state (rightmost, fixed width)
 
 	// Additional button style (plain push, no default border)
 	BS_PUSHBUTTON = 0x0000

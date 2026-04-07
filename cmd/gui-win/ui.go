@@ -22,14 +22,7 @@ import (
 // Global UI handles / resources
 // ---------------------------------------------------------------------------
 
-// Status bar service-state indicator brushes — created in createControls, used
-// in WM_CTLCOLORSTATIC for the hwndServiceStatus overlay label.
 // Win32 COLORREF is 0x00BBGGRR (low byte = red).
-var (
-	brushElevGrey  HBRUSH // service not running  — light grey  RGB(235,235,235)
-	brushElevAmber HBRUSH // running, unelevated  — light blue  RGB(205,243,255)
-	brushElevGreen HBRUSH // running, elevated    — light green RGB(212,237,218)
-)
 
 // proxyEnabled is set at runtime (session-only; never touches the config file).
 // It defaults to true when a SOCKS5 proxy is already configured in settings,
@@ -48,9 +41,8 @@ var (
 	hwndMain       HWND
 	headerHwnd     HWND  // header control of hwndList, for right-click detection
 	// Global options bar (top strip, replaces old elevation bar)
-	hwndServiceBtn    HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
-	hwndProxyCheck    HWND // "Proxy Mode" checkbox
-	hwndServiceStatus HWND // service/elevation STATIC label overlaid on status bar (bottom-right)
+	hwndServiceBtn  HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
+	hwndProxyCheck  HWND // "Proxy Mode" checkbox
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
@@ -314,24 +306,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		// Service-state overlay: green / amber / grey matching the old top strip.
-		if HWND(lParam) == hwndServiceStatus && brushElevGrey != 0 {
-			hdc := wParam
-			var bg, fg uint32
-			var brush HBRUSH
-			switch {
-			case serviceRunning() && serviceElevated:
-				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
-			case serviceRunning():
-				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // blue/amber
-			default:
-				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
-			}
-			setBkMode(hdc, OPAQUE)
-			setTextColor(hdc, fg)
-			setBkColor(hdc, bg)
-			return uintptr(brush)
-		}
 		// Placeholder text gets gray color, white background matching the listview.
 		if HWND(lParam) == hwndListPlaceholder ||
 			HWND(lParam) == hwndMDNSPlaceholder ||
@@ -758,7 +732,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				// which may be delayed (especially for service scans).
 				isScanning = false
 				setWindowText(hwndScan, "Scan")
-				setStatusPart(statusPartScan, "Scan stopped")
+		setStatusPart(statusPartScan, "Scan stopped")
 			} else {
 				startScan(HWND(hwnd))
 			}
@@ -856,7 +830,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				bcastMDNS++
 			}
 			bcastCount++
-			setStatusPart(statusPartBcast, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
 			updateNetworkTab()
 			// Registry: append service to the host's ExtraServices list.
 			en := ensureHostEntry(e.ip)
@@ -1052,10 +1025,6 @@ func createControls(hwnd HWND) {
 	} else if proxyEnabled {
 		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_CHECKED, 0)
 	}
-	// Brushes for the service-state indicator in the status bar owner-draw.
-	brushElevGrey  = createSolidBrush(0x00EBEBEB) // light grey
-	brushElevAmber = createSolidBrush(0x00CDF3FF) // light blue/amber
-	brushElevGreen = createSolidBrush(0x00DAEDD4) // light green
 
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
@@ -1218,22 +1187,12 @@ func createControls(hwnd HWND) {
 		WS_CHILD|SS_CENTER,
 		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
-	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
+	// ---- status bar — 3 parts: Hosts | Scan state | Service state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
-	setStatusParts(200, 400)
+	setStatusParts(scale(150), -scale(160))
 	setStatusPart(statusPartHosts, "Ready")
-	if proxyEnabled {
-		setStatusPart(statusPartBcast, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
-	} else {
-		setStatusPart(statusPartBcast, "Broadcast: listening…")
-	}
 	setStatusPart(statusPartScan, "Enter a target and click Scan")
-
-	// ---- service state overlay — STATIC label positioned over the rightmost ~200px
-	//      of the status bar; coloured via WM_CTLCOLORSTATIC (green / amber / grey). ----
-	hwndServiceStatus, _ = createWindowEx(0, "STATIC", statusForService(),
-		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
-		0, 0, scale(200), scale(20), hwnd, IDC_SERVICE_STATUS, inst)
+	setStatusPart(statusPartService, statusForService())
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
 	// Use the actual window DPI (set above) so the font is correct on all monitors.
@@ -1264,14 +1223,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
-	// 3 text parts (Hosts | Broadcast | Scan state), each roughly 1/3 wide.
-	svcPartW := scale(200)
-	p1 := (width - svcPartW) / 3
-	p2 := p1 * 2
-	setStatusParts(p1, p2)
-
-	// Service-state STATIC overlay: sits over the rightmost svcPartW of the status bar.
-	moveWindow(hwndServiceStatus, width-svcPartW, height-statusH, svcPartW, statusH)
+	// 3 parts: Hosts (fixed 150px) | Scan state (fills) | Service (fixed 160px right).
+	setStatusParts(scale(150), -scale(160))
 
 	// Global options bar: Elevate Sensor on the left, Proxy Mode checkbox on the right.
 	moveWindow(hwndServiceBtn, scale(8), scale(3), scale(160), scale(26))
@@ -1394,7 +1347,7 @@ func startScan(hwnd HWND) {
 	scanStartTime = time.Now()
 	setWindowText(hwndScan, "Stop")
 	showWindow(hwndListPlaceholder, SW_HIDE)
-	setStatusPart(statusPartScan, statusForService()+" — scanning")
+	setStatusPart(statusPartScan, "Scanning…")
 
 	// Route all scans through the persistent sensor service.
 	if serviceRunning() {
@@ -1484,10 +1437,8 @@ func applyProxyMode(hwnd HWND, enable bool) {
 	proxyEnabled = enable
 	if enable {
 		stopBroadcastListener()
-		setStatusPart(statusPartBcast, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
 	} else {
 		startBroadcastListener()
-		setStatusPart(statusPartBcast, "Broadcast: listening…")
 	}
 	// Refresh placeholder text for broadcast tabs that are currently visible.
 	proxyMsg := "Not available in proxy mode"
@@ -1594,25 +1545,23 @@ func exportResults(hwnd HWND, format string) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// setStatusParts sets the right-edge pixel positions for the three status bar
-// parts. Pass p1, p2 as the right edge of part 0 and part 1; part 2 fills
-// the remainder (represented as -1).
+// setStatusParts sets the right-edge pixel positions for the 3 status bar parts.
+// p1 = right edge of Hosts part; p2 = right edge of Scan part (-N means N pixels
+// from the right edge, so the Service part is always a fixed width from the right).
 func setStatusParts(p1, p2 int32) {
 	parts := [3]int32{p1, p2, -1}
 	sendMessage(hwndStatus, SB_SETPARTS, 3, uintptr(unsafe.Pointer(&parts[0])))
 }
 
-// setStatusPart sets the text of one status bar part (0=Hosts, 1=Broadcast, 2=State).
+// setStatusPart sets the text of one status bar part (0=Hosts, 1=Scan, 2=Service).
 func setStatusPart(part uintptr, s string) {
 	p, _ := syscall.UTF16PtrFromString(s)
 	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
 }
 
-// refreshServiceStatePart updates the service-state overlay label text and
-// forces a repaint so the WM_CTLCOLORSTATIC colour responds immediately.
+// refreshServiceStatePart updates the service state text in the status bar.
 func refreshServiceStatePart() {
-	setWindowText(hwndServiceStatus, statusForService())
-	invalidateRect(hwndServiceStatus, nil, true)
+	setStatusPart(statusPartService, statusForService())
 }
 
 // setStatus is a convenience wrapper that updates the scan-state part.

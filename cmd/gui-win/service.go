@@ -4,7 +4,6 @@ package guiwin
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -218,7 +217,7 @@ func startDHCPCapture(hwnd HWND) {
 	_ = enc.Encode(sweep.ServiceCmd{Cmd: "dhcp-start"})
 }
 
-// statusForService returns a status bar string describing the service state.
+// statusForService returns a short label for the service-state overlay.
 func statusForService() string {
 	serviceMu.Lock()
 	defer serviceMu.Unlock()
@@ -226,7 +225,7 @@ func statusForService() string {
 		return "Service: starting…"
 	}
 	if serviceElevated {
-		return fmt.Sprintf("Service: ✔ elevated (ARP + ICMP active)")
+		return "Service: running (Admin)"
 	}
-	return "Service: running (user mode — TCP only)"
+	return "Service: running (User)"
 }
