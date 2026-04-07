@@ -3,6 +3,7 @@
 package guiwin
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -319,14 +320,23 @@ func mdnsNotes(txt map[string]string) string {
 	)
 }
 
-// getMDNSRawText returns a human-readable dump of the raw TXT records stored
-// for row, for use in "Copy raw data".
-func getMDNSRawText(row int32) string {
-	records, ok := mdnsRaw[row]
-	if !ok || len(records) == 0 {
-		return "(no TXT records)"
+// mdnsRawClipboardText builds a JSON array of {"ip":"...","data":{...}} objects
+// for the selected mDNS rows, for use in "Copy raw data".
+func mdnsRawClipboardText(hwndSrc HWND, rows []int32) string {
+	type entry struct {
+		IP   string            `json:"ip"`
+		Data map[string]string `json:"data"`
 	}
-	return strings.Join(records, "\n")
+	entries := make([]entry, 0, len(rows))
+	for _, r := range rows {
+		ip := listViewGetCellText(hwndSrc, r, 0)
+		entries = append(entries, entry{
+			IP:   ip,
+			Data: parseTXTMap(mdnsRaw[r]),
+		})
+	}
+	b, _ := json.MarshalIndent(entries, "", "    ")
+	return string(b)
 }
 
 // ---------------------------------------------------------------------------
