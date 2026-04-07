@@ -604,11 +604,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				case IDM_BCAST_COPY_RAW:
 					switch hdr.IdFrom {
 					case IDC_LIST_MDNS:
-						var parts []string
-						for _, r := range rows {
-							parts = append(parts, getMDNSRawText(r))
-						}
-						copyToClipboard(HWND(hwnd), strings.Join(parts, "\n---\n"))
+						copyToClipboard(HWND(hwnd), mdnsRawClipboardText(hwndSrc, rows))
 					case IDC_LIST_WSD:
 						seen := map[string]bool{}
 						var parts []string
