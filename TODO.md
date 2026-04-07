@@ -32,6 +32,9 @@
 
 ## GUI (Windows)
 
+- [ ] **Elevation state → status bar** — remove the green "ARP + ICMP active" banner that currently appears at the top of the window when elevation is acquired; instead, reflect the elevated scan mode (ARP + ICMP active) directly in the status bar with a green-accented indicator; this eliminates a redundant UI element and fixes the conflicting state where "Service Running – TCP only: Scanning" overwrites scan-progress text in the same bar
+- [ ] **Scanner tab — "Show Active Only" toggle** — add a checkbox (or toolbar toggle button) to the Scanner tab that hides all unresponsive (red/dead) rows; when enabled only live hosts are visible; toggling off restores the full list; helps usability on /24+ scans where dead IPs bury active devices; consider defaulting to enabled after a scan completes
+- [ ] **Scanner tab — inline search/filter** — text input above the result list that filters visible rows by IP, MAC address, hostname, or vendor as the user types; Ctrl+F focuses it; complements (or supersedes) the planned "View All Hosts" live filter for the main scanner view; useful once host counts grow past ~20
 - [ ] **Sortable columns** — single-click column header sorts rows; indicator (▲/▼) in header
 - [ ] **Column customisation** — drag to reorder, right-click header for "Edit Columns" dialog (show/hide, restore defaults)
 - [ ] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
