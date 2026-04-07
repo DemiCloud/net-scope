@@ -67,11 +67,12 @@ const (
 	CS_HREDRAW = 0x0002
 	CS_VREDRAW = 0x0001
 
-	// Edit styles
+	// Edit styles and notifications
 	ES_AUTOHSCROLL = 0x0080
 	ES_MULTILINE   = 0x0004
 	ES_AUTOVSCROLL = 0x0040
 	ES_READONLY    = 0x0800
+	EN_CHANGE      = 0x0300
 
 	// Static styles
 	SS_LEFT        = 0x0000
@@ -208,6 +209,7 @@ const (
 	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
 	LVNI_SELECTED                = 0x0002
 	LVM_SETITEMSTATE             = LVM_FIRST + 43
+	LVIS_FOCUSED                 = 0x0001
 	LVIS_SELECTED                = 0x0002
 	LVN_KEYDOWN                  = uint32(0xFFFFFF65) // LVN_FIRST - 55
 	LVCF_FMT                     = 0x0001

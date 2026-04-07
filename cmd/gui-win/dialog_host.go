@@ -775,14 +775,72 @@ func showAllHostsDialog(parent HWND) {
 // Works even when no scan has been run.
 
 const (
-	idPickHostCombo  = 710
+	idPickHostEdit   = 710
+	idPickHostList   = 713
 	idPickHostOK     = 711
 	idPickHostCancel = 712
 )
 
 var (
-	hwndPickCombo HWND
+	hwndPickEdit HWND
+	hwndPickList HWND
 )
+
+// pickHostRepopulate filters hwndPickList to rows whose IP or hostname
+// contains filter (case-insensitive). An empty filter shows all hosts.
+func pickHostRepopulate(filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwndPickList, LVM_DELETEALLITEMS, 0, 0)
+	for _, ip := range allHostIPs() {
+		name := ""
+		if e, ok := hostRegistry[ip]; ok {
+			name = e.Result.Hostname
+			if name == "" {
+				name = e.Result.NetBIOS
+			}
+		}
+		if filter != "" {
+			if !strings.Contains(strings.ToLower(ip), filter) &&
+				!strings.Contains(strings.ToLower(name), filter) {
+				continue
+			}
+		}
+		p := utf16(ip)
+		item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+		row := int32(sendMessage(hwndPickList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+		if row >= 0 {
+			setSubItem(hwndPickList, row, 1, name)
+		}
+	}
+	// Auto-select first row so Enter immediately works.
+	if sendMessage(hwndPickList, LVM_GETITEMCOUNT, 0, 0) > 0 {
+		item := LVITEM{State: LVIS_SELECTED | LVIS_FOCUSED, StateMask: LVIS_SELECTED | LVIS_FOCUSED}
+		sendMessage(hwndPickList, LVM_SETITEMSTATE, 0, uintptr(unsafe.Pointer(&item)))
+	}
+}
+
+// pickHostSelectedIP returns the IP of the selected row, or "".
+func pickHostSelectedIP() string {
+	row := int32(sendMessage(hwndPickList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	if row < 0 {
+		return ""
+	}
+	return listViewGetCellText(hwndPickList, row, 0)
+}
+
+// pickHostConfirm resolves the best IP from the dialog: selected list row
+// first, then the typed text (which may be a raw IP not in the registry).
+func pickHostConfirm(hwnd HWND) {
+	ip := pickHostSelectedIP()
+	if ip == "" {
+		ip = strings.TrimSpace(getWindowText(hwndPickEdit))
+	}
+	if ip == "" {
+		return
+	}
+	closeModal(HWND(hwnd))
+	showHostDetailDialog(hwndMain, ip)
+}
 
 var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
@@ -791,57 +849,66 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		r := getClientRect(HWND(hwnd))
 		cW, cH := r.Right, r.Bottom
 		const pad int32 = 10
+		const editH int32 = 24
+		const btnH int32 = 26
 
-		createWindowEx(0, "STATIC", "Host or IP:",
-			WS_CHILD|WS_VISIBLE,
-			pad, pad+4, 90, 16, HWND(hwnd), 0, inst)
-		// CBS_DROPDOWN lets the user type a free-form IP in addition to
-		// selecting a previously discovered host from the drop-down list.
-		hwndPickCombo, _ = createWindowEx(0, "COMBOBOX", "",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWN|CBS_AUTOHSCROLL,
-			pad+94, pad, cW-pad*2-94, 300, HWND(hwnd), HMENU(idPickHostCombo), inst)
+		// Filter / freeform edit field at the top.
+		hwndPickEdit, _ = createWindowEx(
+			WS_EX_CLIENTEDGE, "EDIT", "",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
+			pad, pad, cW-pad*2, editH, HWND(hwnd), HMENU(idPickHostEdit), inst)
 
-		// Pre-populate known session hosts as shortcuts (may be empty).
-		for _, ip := range allHostIPs() {
-			label := hostDisplayName(ip)
-			p, _ := syscall.UTF16PtrFromString(label)
-			sendMessage(hwndPickCombo, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(p)))
-		}
-		// Hint label
-		createWindowEx(0, "STATIC", "Enter any IP or hostname — or pick a discovered host from the list.",
-			WS_CHILD|WS_VISIBLE,
-			pad, pad+28, cW-pad*2, 16, HWND(hwnd), 0, inst)
+		// Filtered listview fills the middle.
+		listTop := pad + editH + pad/2
+		listH := cH - listTop - pad - btnH - pad
+		hwndPickList, _ = createWindowEx(0, WC_LISTVIEW, "",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
+			pad, listTop, cW-pad*2, listH, HWND(hwnd), HMENU(idPickHostList), inst)
+		sendMessage(hwndPickList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		listViewAddColumn(hwndPickList, 0, "IP", 140)
+		listViewAddColumn(hwndPickList, 1, "Hostname", cW-pad*2-140-4)
 
 		btnY, btnXs := dlgBottomRight(cW, cH, 2)
 		createWindowEx(0, "BUTTON", "OK",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			btnXs[0], btnY, 100, 26, HWND(hwnd), HMENU(idPickHostOK), inst)
+			btnXs[0], btnY, 100, btnH, HWND(hwnd), HMENU(idPickHostOK), inst)
 		createWindowEx(0, "BUTTON", "Cancel",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			btnXs[1], btnY, 100, 26, HWND(hwnd), HMENU(idPickHostCancel), inst)
+			btnXs[1], btnY, 100, btnH, HWND(hwnd), HMENU(idPickHostCancel), inst)
+
+		// Populate list with all hosts on open; focus the edit field.
+		pickHostRepopulate("")
+		setFocus(hwndPickEdit)
 		return 0
 
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idPickHostOK:
-			// Read directly from the combo's edit field (works for both typed and selected).
-			ip := strings.TrimSpace(getWindowText(hwndPickCombo))
-			// If the user picked a "ip — hostname" display label, extract just the IP.
-			if i := strings.Index(ip, " "); i > 0 {
-				candidate := ip[:i]
-				if strings.Contains(candidate, ".") || strings.Contains(candidate, ":") {
-					ip = candidate
-				}
-			}
-			if ip == "" {
-				return 0
-			}
-			closeModal(HWND(hwnd))
-			showHostDetailDialog(hwndMain, ip)
+			pickHostConfirm(HWND(hwnd))
 		case idPickHostCancel:
 			closeModal(HWND(hwnd))
+		case idPickHostEdit:
+			if hiword(wParam) == EN_CHANGE {
+				pickHostRepopulate(getWindowText(hwndPickEdit))
+			}
 		}
 		return 0
+
+	case WM_NOTIFY:
+		hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
+		if hdr.IdFrom == idPickHostList {
+			if hdr.Code == NM_DBLCLK {
+				pickHostConfirm(HWND(hwnd))
+			}
+			if hdr.Code == LVN_KEYDOWN {
+				kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam)) //nolint:govet
+				if kd.WVKey == VK_RETURN {
+					pickHostConfirm(HWND(hwnd))
+				}
+			}
+		}
+		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
@@ -855,7 +922,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 func showPickHostDialog(parent HWND) {
 	registerDialogClass("NetSweepPickHost", pickHostWndProc)
 
-	const dlgW, dlgH int32 = 460, 145
+	const dlgW, dlgH int32 = 460, 360
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepPickHost", "Query Host",
