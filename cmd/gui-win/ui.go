@@ -36,7 +36,7 @@ var (
 	headerHwnd     HWND  // header control of hwndList, for right-click detection
 	// Elevation bar (top strip)
 	hwndElevLabel  HWND // service status label
-	hwndServiceBtn HWND // "Elevate sensor service" button (disabled once service reports it is elevated)
+	hwndServiceBtn HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
@@ -976,8 +976,8 @@ func createControls(hwnd HWND) {
 	hwndElevLabel, _ = createWindowEx(0, "STATIC", "Service: starting…",
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
 		scale(8), 0, scale(740), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
-	// "Elevate sensor service" button — disabled once service reports it is elevated.
-	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate sensor service",
+	// "Elevate Sensor" button — disabled once service reports it is elevated.
+	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate Sensor",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		scale(756), scale(3), scale(200), scale(26), hwnd, IDC_SERVICE_BTN, inst)
 	if elevated {
@@ -1447,7 +1447,7 @@ func updateNetworkTab() {
 	text := fmt.Sprintf(
 		"NetScope — Live Network Activity\r\n"+
 			"══════════════════════════════════════════\r\n\r\n"+
-			"  Sensor service         : %s\r\n\r\n"+  
+			"  Sensor                 : %s\r\n\r\n"+  
 			"  Broadcast listeners    : mDNS + SSDP (running since app start)\r\n"+
 			"  mDNS services seen     : %d\r\n"+
 			"  SSDP devices seen      : %d\r\n"+
