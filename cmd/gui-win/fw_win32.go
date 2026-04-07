@@ -206,6 +206,9 @@ const (
 	LVM_GETHEADER               = LVM_FIRST + 31
 	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
 	LVNI_SELECTED                = 0x0002
+	LVM_SETITEMSTATE             = LVM_FIRST + 43
+	LVIS_SELECTED                = 0x0002
+	LVN_KEYDOWN                  = uint32(0xFFFFFF65) // LVN_FIRST - 55
 	LVCF_FMT                     = 0x0001
 	LVCF_WIDTH                   = 0x0002
 	LVCF_TEXT                    = 0x0004
@@ -232,6 +235,7 @@ const (
 	VK_RETURN  = 0x0D
 	VK_ESCAPE  = 0x1B
 	VK_KEY_A   = 0x41
+	VK_KEY_C   = 0x43
 
 	// Tab control
 	WC_TABCONTROL   = "SysTabControl32"
@@ -380,6 +384,15 @@ type NMLISTVIEW struct {
 	Hdr      NMHDR
 	IItem    int32
 	ISubItem int32
+}
+
+// NMLVKEYDOWN is sent via WM_NOTIFY with code LVN_KEYDOWN when a key is
+// pressed while a ListView has focus.
+type NMLVKEYDOWN struct {
+	Hdr   NMHDR
+	WVKey uint16
+	_     [2]byte // padding
+	Flags uint32
 }
 
 // LVHITTESTINFO is passed to LVM_HITTEST.
@@ -632,6 +645,13 @@ func messageBox(hwnd HWND, text, caption string, flags uint32) int32 {
 	return int32(r)
 }
 
+// getKeyState returns the state of the given virtual key. The high-order bit
+// is set (value < 0 as int16) if the key is currently pressed.
+func getKeyState(vk int) int16 {
+	r, _, _ := procGetKeyState.Call(uintptr(vk))
+	return int16(r)
+}
+
 func getModuleHandle() HINSTANCE {
 	r, _, _ := procGetModuleHandleW.Call(0)
 	return HINSTANCE(r)
@@ -654,11 +674,6 @@ func createStatusWindow(parent HWND, id uintptr, text string) HWND {
 		id,
 	)
 	return HWND(r)
-}
-
-func getKeyState(vk uintptr) bool {
-	r, _, _ := procGetKeyState.Call(vk)
-	return uint16(r)&0x8000 != 0
 }
 
 func getWindowRect(hwnd HWND) RECT {
@@ -1002,4 +1017,17 @@ func globalUnlock(hMem uintptr) {
 func getConsoleWindow() HWND {
 	r, _, _ := procGetConsoleWindow.Call()
 	return HWND(r)
+}
+
+// ---------------------------------------------------------------------------
+// DPI / scaling
+// ---------------------------------------------------------------------------
+
+// currentDPI is the DPI of the monitor containing the main window.
+// Updated in WM_DPICHANGED; initialised from GetDpiForWindow in WM_CREATE.
+var currentDPI uint32 = 96
+
+// scale converts a 96-DPI logical pixel value to the current physical pixel value.
+func scale(n int32) int32 {
+	return int32(uint32(n) * currentDPI / 96)
 }

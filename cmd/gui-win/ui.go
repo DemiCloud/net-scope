@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,15 +20,6 @@ import (
 // ---------------------------------------------------------------------------
 // Global UI handles / resources
 // ---------------------------------------------------------------------------
-
-// currentDPI is the DPI of the monitor containing the main window.
-// Updated in WM_DPICHANGED; initialised from GetDpiForWindow in WM_CREATE.
-var currentDPI uint32 = 96
-
-// scale converts a 96-DPI logical pixel value to the current physical pixel value.
-func scale(n int32) int32 {
-	return int32(uint32(n) * currentDPI / 96)
-}
 
 // Elevation bar status brushes — created in createControls, used in WM_CTLCOLORSTATIC.
 // Win32 COLORREF is 0x00BBGGRR (low byte = red).
@@ -551,49 +541,72 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
-		// Right-click on mDNS list → copy menu.
-		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP || hdr.IdFrom == IDC_LIST_WSD) && hdr.Code == NM_RCLICK {
-			isMDNS := hdr.IdFrom == IDC_LIST_MDNS
-			hwndSrc := hwndListSSDP
-			numCols := int32(5)
-			if isMDNS {
-				hwndSrc = hwndListMDNS
-				numCols = 6
-			} else if hdr.IdFrom == IDC_LIST_WSD {
-				hwndSrc = hwndListWSD
-				numCols = 5
+		// Right-click on mDNS / SSDP / WSD / DHCP lists → copy menu.
+		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP ||
+			hdr.IdFrom == IDC_LIST_WSD || hdr.IdFrom == IDC_LIST_DHCP) && hdr.Code == NM_RCLICK {
+			hwndSrc, numCols, headers := listViewInfoFor(hdr.IdFrom)
+			if hwndSrc == 0 {
+				return 0
 			}
 			pt := getCursorPos()
 			cpt := POINT{X: pt.X, Y: pt.Y}
 			procScreenToClient.Call(uintptr(hwndSrc), uintptr(unsafe.Pointer(&cpt)))
 			htInfo := LVHITTESTINFO{Pt: cpt}
-			row := int32(sendMessage(hwndSrc, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo))))
-			if row >= 0 {
-				menu := createPopupMenu()
-				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_IP, "Copy IP")
-				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_ROW, "Copy row (tab-separated)")
+			sendMessage(hwndSrc, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo)))
+			// Use selected rows; fall back to the hovered row if nothing is selected.
+			rows := listViewGetSelectedRows(hwndSrc)
+			if len(rows) == 0 && htInfo.IItem >= 0 {
+				rows = []int32{htInfo.IItem}
+			}
+			menu := createPopupMenu()
+			if len(rows) > 0 {
+				appendCopyAsSubmenu(menu)
+			}
+			hasRaw := hdr.IdFrom != IDC_LIST_DHCP
+			if hasRaw && htInfo.IItem >= 0 {
+				if len(rows) > 0 {
+					appendMenu(menu, MF_SEPARATOR, 0, "")
+				}
 				appendMenu(menu, MF_STRING, IDM_BCAST_COPY_RAW, "Copy raw data")
-				cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
-				destroyMenu(menu)
+			}
+			cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
+			destroyMenu(menu)
+			if !handleCopyAsCmd(HWND(hwnd), hwndSrc, cmd, rows, numCols, headers) {
 				switch cmd {
-				case IDM_BCAST_COPY_IP:
-					copyToClipboard(HWND(hwnd), listViewGetCellText(hwndSrc, row, 0))
-				case IDM_BCAST_COPY_ROW:
-					copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndSrc, row, numCols))
 				case IDM_BCAST_COPY_RAW:
-					if isMDNS {
-						copyToClipboard(HWND(hwnd), getMDNSRawText(row))
-					} else if hdr.IdFrom == IDC_LIST_WSD {
-						ip := listViewGetCellText(hwndSrc, row, 0)
+					switch hdr.IdFrom {
+					case IDC_LIST_MDNS:
+						copyToClipboard(HWND(hwnd), getMDNSRawText(htInfo.IItem))
+					case IDC_LIST_WSD:
+						ip := listViewGetCellText(hwndSrc, htInfo.IItem, 0)
 						copyToClipboard(HWND(hwnd), getWSDRawText(ip))
-					} else {
-						ip := listViewGetCellText(hwndSrc, row, 0)
+					case IDC_LIST_SSDP:
+						ip := listViewGetCellText(hwndSrc, htInfo.IItem, 0)
 						copyToClipboard(HWND(hwnd), getSSDPRawText(ip))
 					}
 				}
 			}
 			return 0
 		}
+		// Ctrl+A / Ctrl+C in any ListView.
+		if hdr.Code == LVN_KEYDOWN {
+			kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam))
+			if getKeyState(VK_CONTROL) < 0 {
+				switch kd.WVKey {
+				case VK_KEY_A:
+					listViewSelectAll(HWND(hdr.HwndFrom))
+					return 0
+				case VK_KEY_C:
+					hw, nc, hdrs := listViewInfoFor(hdr.IdFrom)
+					if hw != 0 {
+						rows := listViewGetSelectedRows(hw)
+						handleCopyAsCmd(HWND(hwnd), hw, IDM_COPY_AS_TSV, rows, nc, hdrs)
+					}
+					return 0
+				}
+			}
+		}
+		// LVN_KEYDOWN is handled above; fall through to custom draw.
 		// Custom draw: alternating row backgrounds, dim dead rows, colour ●/✕ status dot.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_CUSTOMDRAW {
 			cd := (*NMLVCUSTOMDRAW)(unsafe.Pointer(lParam)) //nolint:govet
@@ -1493,6 +1506,24 @@ func copyToClipboard(hwnd HWND, text string) {
 
 // showHostContextMenu builds and tracks a context menu for the given Result at
 // screen coordinates (x, y).
+// listViewInfoFor returns the HWND, column count, and canonical header strings
+// for the list-view identified by its control ID. Returns zero HWND if unknown.
+func listViewInfoFor(idFrom uintptr) (hw HWND, numCols int32, headers []string) {
+	switch idFrom {
+	case IDC_LIST:
+		return hwndList, 10, hostsColTitles[:]
+	case IDC_LIST_MDNS:
+		return hwndListMDNS, 6, []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes"}
+	case IDC_LIST_SSDP:
+		return hwndListSSDP, 5, []string{"IP", "Name", "Type", "Services", "Location"}
+	case IDC_LIST_WSD:
+		return hwndListWSD, 5, []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID"}
+	case IDC_LIST_DHCP:
+		return hwndListDHCP, 8, []string{"Time", "Type", "Client MAC", "Hostname", "Client IP", "Requested IP", "Offered IP", "Server IP"}
+	}
+	return 0, 0, nil
+}
+
 func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	ip := r.IP.String()
 
@@ -1520,16 +1551,16 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 
 	// ── Copy ─────────────────────────────────────────────────────────────────
-	hCopy := createPopupMenu()
-	menuItem(hCopy, IDM_CTX_COPY_IP,   "IP address",       r.IP != nil)
-	menuItem(hCopy, IDM_CTX_COPY_MAC,  "MAC address",      r.MAC != nil)
-	menuItem(hCopy, IDM_CTX_COPY_HOST, "Hostname",         r.Hostname != "")
-	menuItem(hCopy, IDM_CTX_COPY_ROW,  "Full row (tab-separated)", true)
-	appendMenu(menu, MF_POPUP, uintptr(hCopy), "Copy")
+	menuItem(menu, IDM_CTX_COPY_IP, "Copy IP", r.IP != nil)
+	appendCopyAsSubmenu(menu) // copies all selected rows in chosen format
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 	menuItem(menu, IDM_CTX_VIEW_DETAILS, "View details\u2026", true)
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
+	rows := listViewGetSelectedRows(hwndList)
+	if handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:]) {
+		return
+	}
 	switch cmd {
 	case IDM_CTX_OPEN_HTTP:
 		shellExecute(parent, "open", "http://"+ip, "", "", SW_SHOW)
@@ -1553,27 +1584,6 @@ func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
 			"/k ping -t "+ip, "", SW_SHOW)
 	case IDM_CTX_COPY_IP:
 		copyToClipboard(parent, ip)
-	case IDM_CTX_COPY_MAC:
-		if r.MAC != nil {
-			copyToClipboard(parent, r.MAC.String())
-		}
-	case IDM_CTX_COPY_HOST:
-		copyToClipboard(parent, r.Hostname)
-	case IDM_CTX_COPY_ROW:
-		ports := ""
-		for i, p := range r.OpenPorts {
-			if i > 0 {
-				ports += ","
-			}
-			ports += fmt.Sprintf("%d", p)
-		}
-		mac := ""
-		if r.MAC != nil {
-			mac = r.MAC.String()
-		}
-		copyToClipboard(parent, strings.Join([]string{
-			ip, r.Hostname, mac, r.Vendor, string(r.OS), ports,
-		}, "\t"))
 	case IDM_CTX_VIEW_DETAILS:
 		showHostDetailDialog(parent, ip)
 	}

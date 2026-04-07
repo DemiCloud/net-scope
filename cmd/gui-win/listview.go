@@ -700,6 +700,150 @@ func listViewGetRowTSV(hwnd HWND, row, numCols int32) string {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-row copy helpers
+// ---------------------------------------------------------------------------
+
+// listViewSelectAll selects every row in hwnd.
+func listViewSelectAll(hwnd HWND) {
+	item := LVITEM{
+		State:     LVIS_SELECTED,
+		StateMask: LVIS_SELECTED,
+	}
+	sendMessage(hwnd, LVM_SETITEMSTATE, ^uintptr(0), uintptr(unsafe.Pointer(&item)))
+}
+
+// listViewGetSelectedRows returns the row indices of all selected items.
+func listViewGetSelectedRows(hwnd HWND) []int32 {
+	var rows []int32
+	row := int32(sendMessage(hwnd, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	for row >= 0 {
+		rows = append(rows, row)
+		row = int32(sendMessage(hwnd, LVM_GETNEXTITEM, uintptr(row), LVNI_SELECTED))
+	}
+	return rows
+}
+
+// listViewFormatTSV formats rows as tab-separated values with a header row.
+func listViewFormatTSV(hwnd HWND, rows []int32, numCols int32, headers []string) string {
+	var sb strings.Builder
+	sb.WriteString(strings.Join(headers, "\t"))
+	for _, row := range rows {
+		sb.WriteByte('\n')
+		sb.WriteString(listViewGetRowTSV(hwnd, row, numCols))
+	}
+	return sb.String()
+}
+
+// listViewFormatCSV formats rows as RFC 4180 CSV with a header row.
+func listViewFormatCSV(hwnd HWND, rows []int32, numCols int32, headers []string) string {
+	csvQ := func(s string) string {
+		if strings.ContainsAny(s, ",\"\r\n") {
+			return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+		}
+		return s
+	}
+	quotedHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		quotedHeaders[i] = csvQ(h)
+	}
+	var sb strings.Builder
+	sb.WriteString(strings.Join(quotedHeaders, ","))
+	for _, row := range rows {
+		sb.WriteString("\r\n")
+		for c := int32(0); c < numCols; c++ {
+			if c > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(csvQ(listViewGetCellText(hwnd, row, c)))
+		}
+	}
+	return sb.String()
+}
+
+// listViewFormatJSON formats rows as a JSON array of objects.
+// Header strings are normalized to snake_case JSON keys.
+func listViewFormatJSON(hwnd HWND, rows []int32, numCols int32, headers []string) string {
+	jsonQ := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `"`, `\"`)
+		s = strings.ReplaceAll(s, "\n", `\n`)
+		s = strings.ReplaceAll(s, "\r", `\r`)
+		s = strings.ReplaceAll(s, "\t", `\t`)
+		return `"` + s + `"`
+	}
+	headerToKey := func(h string) string {
+		h = strings.ToLower(h)
+		var b strings.Builder
+		prev := '_'
+		for _, r := range h {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+				prev = r
+			} else if prev != '_' {
+				b.WriteByte('_')
+				prev = '_'
+			}
+		}
+		return strings.Trim(b.String(), "_")
+	}
+	keys := make([]string, len(headers))
+	for i, h := range headers {
+		keys[i] = headerToKey(h)
+	}
+	var sb strings.Builder
+	sb.WriteString("[\n")
+	for i, row := range rows {
+		sb.WriteString("  {")
+		for c := int32(0); c < numCols; c++ {
+			if c > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(jsonQ(keys[c]))
+			sb.WriteString(": ")
+			sb.WriteString(jsonQ(listViewGetCellText(hwnd, row, c)))
+		}
+		sb.WriteByte('}')
+		if i < len(rows)-1 {
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('\n')
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+// handleCopyAsCmd executes an IDM_COPY_AS_* command for a ListView.
+// Returns true if cmd was a recognised copy-as command, false otherwise.
+// If rows is empty the copy is skipped silently.
+func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, headers []string) bool {
+	if len(rows) == 0 {
+		return cmd == IDM_COPY_AS_TSV || cmd == IDM_COPY_AS_CSV || cmd == IDM_COPY_AS_JSON
+	}
+	switch cmd {
+	case IDM_COPY_AS_TSV:
+		copyToClipboard(parent, listViewFormatTSV(hwnd, rows, numCols, headers))
+	case IDM_COPY_AS_CSV:
+		copyToClipboard(parent, listViewFormatCSV(hwnd, rows, numCols, headers))
+	case IDM_COPY_AS_JSON:
+		copyToClipboard(parent, listViewFormatJSON(hwnd, rows, numCols, headers))
+	default:
+		return false
+	}
+	return true
+}
+
+// appendCopyAsSubmenu appends a "Copy as…" MF_POPUP submenu carrying
+// IDM_COPY_AS_TSV / IDM_COPY_AS_CSV / IDM_COPY_AS_JSON to menu.
+// The returned HMENU is owned by menu and must not be destroyed separately.
+func appendCopyAsSubmenu(menu HMENU) {
+	hSub := createPopupMenu()
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_TSV,  "Tab-separated (for spreadsheet)")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_CSV,  "CSV (with header row)")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_JSON, "JSON")
+	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
+}
+
+// ---------------------------------------------------------------------------
 // Hosts ListView — sortable columns
 // ---------------------------------------------------------------------------
 

@@ -907,7 +907,7 @@ var editColsChecks [10]HWND
 func showEditColumnsDialog(parent HWND) {
 	registerDialogClass("NetScopeEditCols", syscall.NewCallback(editColsWndProc))
 
-	const w, h = 270, 330
+	const w, h = 360, 330
 	aw, ah := scale(w), scale(h)
 	dlg, _ := createWindowEx(
 		WS_EX_DLGMODALFRAME,
@@ -941,22 +941,22 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 
 		// Button row: Restore Defaults left, Cancel + OK right.
 		cr := getClientRect(HWND(hwnd))
-		btnY, xs := dlgBottomRight(cr.Right-cr.Left, cr.Bottom-cr.Top, 2)
-		// OK (xs[0]) and Cancel (xs[1])
+		btnY, leftXs, rightXs := dlgButtonRowSplit(cr.Right-cr.Left, cr.Bottom-cr.Top, 1, 2)
+		// OK (rightXs[0]) and Cancel (rightXs[1])
 		okHwnd, _ := createWindowEx(0, "BUTTON", "OK",
 			WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
-			xs[0], btnY, scale(100), scale(26),
+			rightXs[0], btnY, 100, 26,
 			HWND(hwnd), HMENU(IDC_EDITCOLS_OK), getModuleHandle())
 		sendMessage(okHwnd, WM_SETFONT, uintptr(appFont), 1)
 		cancelHwnd, _ := createWindowEx(0, "BUTTON", "Cancel",
 			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-			xs[1], btnY, scale(100), scale(26),
+			rightXs[1], btnY, 100, 26,
 			HWND(hwnd), HMENU(IDC_EDITCOLS_CANCEL), getModuleHandle())
 		sendMessage(cancelHwnd, WM_SETFONT, uintptr(appFont), 1)
 		// Restore Defaults — left side
 		restoreHwnd, _ := createWindowEx(0, "BUTTON", "Restore Defaults",
 			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-			scale(10), btnY, scale(120), scale(26),
+			leftXs[0], btnY, 100, 26,
 			HWND(hwnd), HMENU(IDC_EDITCOLS_RESTORE), getModuleHandle())
 		sendMessage(restoreHwnd, WM_SETFONT, uintptr(appFont), 1)
 		return 0

@@ -95,6 +95,11 @@ const (
 	// Header right-click menu
 	IDM_HEADER_EDIT_COLS = 3200
 
+	// "Copy as…" context-menu IDs — used on every list-view tab.
+	IDM_COPY_AS_TSV  = 3210 // tab-separated with header row
+	IDM_COPY_AS_CSV  = 3211 // RFC 4180 CSV with header row
+	IDM_COPY_AS_JSON = 3212 // JSON array of objects
+
 	// Edit Columns dialog control IDs
 	IDC_EDITCOLS_OK      = 451
 	IDC_EDITCOLS_CANCEL  = 452

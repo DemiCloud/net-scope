@@ -144,7 +144,7 @@ func Run(v, target string) {
 		// Ctrl+A → select all in whichever edit box is focused.
 		if msg.Message == WM_KEYDOWN &&
 			msg.WParam == VK_KEY_A &&
-			getKeyState(VK_CONTROL) {
+			getKeyState(VK_CONTROL) < 0 {
 			sendMessage(msg.HWnd, EM_SETSEL, 0, ^uintptr(0))
 			// Don't dispatch — we've handled it.
 			continue

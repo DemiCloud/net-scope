@@ -148,3 +148,30 @@ func dlgBottomRight(cW, cH int32, n int) (y int32, xs []int32) {
 	}
 	return
 }
+
+// dlgButtonRowSplit calculates footer button positions for dialogs that have
+// buttons on both sides: leftN equal-width buttons flush-left (e.g. "Restore
+// Defaults") and rightN equal-width buttons flush-right (e.g. OK + Cancel).
+//
+// Returns the shared y position, leftXs (index 0 = leftmost), rightXs (index
+// 0 = leftmost of the right group, which is the primary action button).
+//
+// Standard button size: 100 × 26 logical pixels (pass those to createWindowEx).
+func dlgButtonRowSplit(cW, cH int32, leftN, rightN int) (y int32, leftXs, rightXs []int32) {
+	const (
+		btnW int32 = 100
+		btnH int32 = 26
+		gap  int32 = 8
+		pad  int32 = 10
+	)
+	y = cH - pad - btnH
+	leftXs = make([]int32, leftN)
+	for i := 0; i < leftN; i++ {
+		leftXs[i] = pad + int32(i)*(btnW+gap)
+	}
+	rightXs = make([]int32, rightN)
+	for i := 0; i < rightN; i++ {
+		rightXs[i] = cW - pad - btnW - int32(rightN-1-i)*(btnW+gap)
+	}
+	return
+}
