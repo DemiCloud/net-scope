@@ -127,6 +127,7 @@ func Run(v, target string) {
 
 	hHelp := createPopupMenu()
 	appendMenu(hHelp, MF_STRING, IDM_HELP_FAQ, "&Help / FAQ…")
+	appendMenu(hHelp, MF_STRING, IDM_HELP_CONN_HANDLERS, "&Connection Handlers…")
 	appendMenu(hHelp, MF_SEPARATOR, 0, "")
 	appendMenu(hHelp, MF_STRING, IDM_HELP_VERSION, "&Version Info")
 	appendMenu(hHelp, MF_STRING, IDM_HELP_ABOUT, "&About")
