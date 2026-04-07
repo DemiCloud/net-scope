@@ -2,9 +2,9 @@
 
 ## Naming / UX
 
-- [ ] **Rename "Hosts" tab → "Scanner"** — clearer intent; "Hosts" is ambiguous with the Hosts menu
-- [ ] **Tools menu** (replaces current Hosts menu) — contains "View All Hosts…" and "Query Host…" (rename from "View Host…"); keeps probe utility accessible even with no active scan
-- [ ] **"Query Host" available without a scan** — the host detail / probe dialog should work against any manually typed IP; useful for querying game servers, public hosts, etc. on arbitrary subnets
+- [x] **Rename "Hosts" tab → "Scanner"** — clearer intent; "Hosts" is ambiguous with the Hosts menu
+- [x] **Tools menu** (replaces current Hosts menu) — contains "View All Hosts…" and "Query Host…" (rename from "View Host…"); keeps probe utility accessible even with no active scan
+- [x] **"Query Host" available without a scan** — the host detail / probe dialog should work against any manually typed IP; useful for querying game servers, public hosts, etc. on arbitrary subnets
 - [ ] **Nicer text-only dialogs** (FAQ, Help, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
 
 ## Bugs
@@ -39,11 +39,11 @@
 - [ ] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
 - [ ] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
 - [ ] **Explorer file icon** — embed RT_ICON + RT_GROUP_ICON in the `.syso` resource so the `.exe` shows the radar icon in Windows Explorer (requires dynamic gen-rsrc rewrite)
-- [ ] **Null-value dash alignment** — `—` placeholders in right-aligned columns (Latency, Ports) should render right-aligned; check whether LVCFMT is honoured or if custom draw is needed
+- [x] **Null-value dash alignment** — verified: Latency and Ports columns use `LVCF_FMT | LVCFMT_RIGHT`; hide/show only changes width so format is preserved; custom draw returns `CDRF_NEWFONT` (not `CDRF_SKIPDEFAULT`) so Win32 still applies alignment; no fix needed
 - [x] **Publisher / company info** — About dialog now shows version, description, copyright, and GitHub URL
 - [x] **"Databases" sub-menu** — `Options > Databases > Mac Vendors…`; future database types slot in as siblings
 - [x] **Scan Report empty-state overlay** — `hwndHealthPlaceholder` STATIC shown until first scan completes, then hidden permanently
 - [ ] **Scan Report — scan duration metric** — record the wall-clock time from scan start to WM_SCAN_COMPLETE and display it in the Scan Report tab (e.g. "Scan completed in 4.2 s")
 - [x] **Win32 internal framework cleanup** — `fw_win32.go` + `fw_dialog.go` extracted; `dlgBottomRight`, `registerDialogClass`, `ctlColorDialog` added; `win32.go` is now app-constants-only
 - [x] **Scan Report — scan duration metric** — wall-clock time shown in status bar and Scan Report tab
-- [ ] **GitHub Wiki / FAQ** — move the FAQ content to a GitHub Wiki page; update the Options → FAQ menu item to open the wiki URL in the default browser instead of showing the inline dialog; note: the GitHub Wiki lives in a separate companion repo (`<repo>.wiki.git`) — it is not part of the main repo's commit history, but can be cloned/edited independently
+- [x] **GitHub Wiki / FAQ** — FAQ content moved to `.wiki/FAQ.md`; `Options → Help / FAQ…` now opens `https://github.com/demicloud/net-scope/wiki/FAQ` in the default browser via `ShellExecute`; inline dialog and `faqText` constant removed

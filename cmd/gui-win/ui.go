@@ -36,7 +36,7 @@ var (
 	headerHwnd     HWND  // header control of hwndList, for right-click detection
 	// Elevation bar (top strip)
 	hwndElevLabel  HWND // service status label
-	hwndServiceBtn HWND // "Elevate sweep service" button (hidden when already elevated)
+	hwndServiceBtn HWND // "Elevate sensor service" button (disabled once service reports it is elevated)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
@@ -399,7 +399,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
 		}
 		startBroadcastListener()
-		// Start the sweep service immediately (user-level, no UAC).
+		// Start the sensor service immediately (user-level, no UAC).
 		go startService(HWND(hwnd))
 		return 0
 
@@ -976,8 +976,8 @@ func createControls(hwnd HWND) {
 	hwndElevLabel, _ = createWindowEx(0, "STATIC", "Service: starting…",
 		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
 		scale(8), 0, scale(740), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
-	// "Elevate sweep service" button — disabled once service reports it is elevated.
-	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate sweep service",
+	// "Elevate sensor service" button — disabled once service reports it is elevated.
+	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate sensor service",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		scale(756), scale(3), scale(200), scale(26), hwnd, IDC_SERVICE_BTN, inst)
 	if elevated {
@@ -1287,7 +1287,7 @@ func startScan(hwnd HWND) {
 	showWindow(hwndListPlaceholder, SW_HIDE)
 	setStatusPart(2, statusForService()+" — scanning")
 
-	// Route all scans through the persistent sweep service.
+	// Route all scans through the persistent sensor service.
 	if serviceRunning() {
 		sendScanViaService(hwnd, target, scanCfg)
 		return
@@ -1447,7 +1447,7 @@ func updateNetworkTab() {
 	text := fmt.Sprintf(
 		"NetScope — Live Network Activity\r\n"+
 			"══════════════════════════════════════════\r\n\r\n"+
-			"  Sweep service          : %s\r\n\r\n"+
+			"  Sensor service         : %s\r\n\r\n"+  
 			"  Broadcast listeners    : mDNS + SSDP (running since app start)\r\n"+
 			"  mDNS services seen     : %d\r\n"+
 			"  SSDP devices seen      : %d\r\n"+

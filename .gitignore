@@ -5,6 +5,9 @@
 # Downloaded data files (fetched at build time, not tracked)
 internal/sweep/oui.json
 
+# GitHub Wiki (separate companion repo, cloned locally)
+.wiki/
+
 # Claude Code local settings
 .claude/
 
