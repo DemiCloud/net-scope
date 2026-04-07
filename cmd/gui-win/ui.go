@@ -22,22 +22,34 @@ import (
 // Global UI handles / resources
 // ---------------------------------------------------------------------------
 
-// Elevation bar status brushes — created in createControls, used in WM_CTLCOLORSTATIC.
+// Status bar service-state indicator brushes — created in createControls, used
+// both in WM_DRAWITEM (owner-drawn status bar part) and WM_CTLCOLORSTATIC.
 // Win32 COLORREF is 0x00BBGGRR (low byte = red).
 var (
 	brushElevGrey  HBRUSH // service not running  — light grey  RGB(235,235,235)
-	brushElevAmber HBRUSH // running, unelevated  — light amber RGB(255,243,205)
+	brushElevAmber HBRUSH // running, unelevated  — light blue  RGB(205,243,255)
 	brushElevGreen HBRUSH // running, elevated    — light green RGB(212,237,218)
+)
+
+// proxyEnabled is set at runtime (session-only; never touches the config file).
+// It defaults to true when a SOCKS5 proxy is already configured in settings,
+// meaning the proxy starts active on launch if one is saved.
+var proxyEnabled bool
+
+// pendingProxyErrors carries error strings from proxy connectivity test goroutines
+// back to the UI thread via WM_PROXY_FAIL.
+var (
+	pendingProxyErrors  []string
+	pendingProxyErrMu   sync.Mutex
 )
 
 var (
 	appFont        HFONT // Segoe UI 9pt — shared by main window and all dialogs
 	hwndMain       HWND
 	headerHwnd     HWND  // header control of hwndList, for right-click detection
-	// Elevation bar (top strip)
-	hwndElevLabel   HWND // service status label
+	// Global options bar (top strip, replaces old elevation bar)
 	hwndServiceBtn  HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
-	hwndProxyBanner HWND // proxy-mode indicator bar (visible when SOCKS5 proxy is configured)
+	hwndProxyCheck  HWND // "Proxy Mode" checkbox
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
@@ -267,21 +279,12 @@ func stopARPPoll() {
 // ---------------------------------------------------------------------------
 
 const (
-	toolbarH = 38 // legacy constant (kept for dialogs that reference it)
-	elevBarH = 32 // elevation status strip at very top
-	proxyBarH = 24 // proxy-mode indicator bar (only occupies space when proxy is configured)
-	scanBarH = 36 // scan controls bar (shown only on Hosts tab)
-	tabCtrlH = 26 // height of the tab row
+	toolbarH  = 38 // legacy constant (kept for dialogs that reference it)
+	optionsBarH = 32 // global options bar at very top (Elevate Sensor + Proxy Mode)
+	elevBarH    = optionsBarH // alias kept so WM_SIZE calculations compile unchanged
+	scanBarH  = 36 // scan controls bar (shown only on Hosts tab)
+	tabCtrlH  = 26 // height of the tab row
 )
-
-// proxyBarOffset returns the vertical offset added by the proxy banner bar.
-// It is non-zero only when a SOCKS5 proxy is configured in appConfig.
-func proxyBarOffset() int32 {
-	if appConfig.Scan.SOCKSProxy != "" {
-		return scale(proxyBarH)
-	}
-	return 0
-}
 
 // ---------------------------------------------------------------------------
 // WndProc
@@ -310,32 +313,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		// Colour the elevation status strip based on service state.
-		if HWND(lParam) == hwndElevLabel && brushElevGrey != 0 {
-			hdc := wParam
-			var bg, fg uint32
-			var brush HBRUSH
-			switch {
-			case serviceRunning() && serviceElevated:
-				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
-			case serviceRunning():
-				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // amber
-			default:
-				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
-			}
-			setBkMode(hdc, OPAQUE)
-			setTextColor(hdc, fg)
-			setBkColor(hdc, bg)
-			return uintptr(brush)
-		}
-		// Proxy banner: amber/blue — same as service-running-unelevated color.
-		if HWND(lParam) == hwndProxyBanner {
-			hdc := wParam
-			setBkMode(hdc, OPAQUE)
-			setTextColor(hdc, 0x00046485)
-			setBkColor(hdc, 0x00CDF3FF)
-			return uintptr(brushElevAmber)
-		}
 		// Placeholder text gets gray color, white background matching the listview.
 		if HWND(lParam) == hwndListPlaceholder ||
 			HWND(lParam) == hwndMDNSPlaceholder ||
@@ -352,8 +329,37 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		setBkMode(wParam, TRANSPARENT)
 		return uintptr(getSysColorBrush(COLOR_WINDOW))
 
+	case WM_DRAWITEM:
+		// Owner-draw the service-state part (part 3) of the status bar.
+		dis := (*DRAWITEMSTRUCT)(unsafe.Pointer(lParam)) //nolint:govet
+		if dis.CtlID == IDC_STATUS && dis.ItemAction == ODA_DRAWENTIRE {
+			var bg, fg uint32
+			var brush HBRUSH
+			switch {
+			case serviceRunning() && serviceElevated:
+				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
+			case serviceRunning():
+				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // blue/amber
+			default:
+				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
+			}
+			rc := dis.RcItem
+			fillRect(dis.HDC, &rc, brush)
+			oldFont := selectObject(dis.HDC, uintptr(appFont))
+			setBkColor(dis.HDC, bg)
+			setBkMode(dis.HDC, OPAQUE)
+			setTextColor(dis.HDC, fg)
+			text := statusForService()
+			rc.Left += scale(6) // small left padding
+			drawText(dis.HDC, text, &rc, DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX)
+			selectObject(dis.HDC, oldFont)
+			return 1
+		}
+		return 0
+
 	case WM_SERVICE_UP:
-		setWindowText(hwndElevLabel, statusForService())
+		// Repaint the owner-drawn service-state part of the status bar.
+		sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
 		if serviceElevated {
 			enableWindow(hwndServiceBtn, false)
 			// Start passive DHCP capture in the elevated service.
@@ -363,7 +369,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_SERVICE_DOWN:
-		setWindowText(hwndElevLabel, "Service: not running")
+		// Repaint the owner-drawn service-state part of the status bar.
+		sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
 		return 0
 
 	case WM_DHCP_EVENT:
@@ -413,13 +420,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CREATE:
+		// proxyEnabled is initialised before the window is created (in Run());
+		// it defaults to true when a SOCKS5 address is saved in settings.
 		createControls(HWND(hwnd))
 		if noConfigFile {
 			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
 		}
-		// Broadcast listener is not useful in proxy mode (mDNS/SSDP/WSD are
-		// link-local and cannot be observed from a remote network via SOCKS5).
-		if appConfig.Scan.SOCKSProxy == "" {
+		// Broadcast listener is not useful in proxy mode.
+		if !proxyEnabled {
 			startBroadcastListener()
 		}
 		// Start the sensor service immediately (user-level, no UAC).
@@ -463,7 +471,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				r := getClientRect(hwndMain)
 				statusR := getClientRect(hwndStatus)
 				statusH := statusR.Bottom - statusR.Top
-				hostsTop := scale(elevBarH+tabCtrlH+scanBarH) + proxyBarOffset()
+				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 				listH := (r.Bottom - r.Top) - hostsTop - statusH
 				if listH < 0 {
 					listH = 0
@@ -481,22 +489,22 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
-					if bcastMDNS == 0 {
+					if bcastMDNS == 0 || proxyEnabled {
 						showWindow(hwndMDNSPlaceholder, SW_SHOW)
 					}
 				case 2:
 					showWindow(hwndListSSDP, SW_SHOW)
-					if bcastSSDP == 0 {
+					if bcastSSDP == 0 || proxyEnabled {
 						showWindow(hwndSSDPPlaceholder, SW_SHOW)
 					}
 				case 3:
 					showWindow(hwndListWSD, SW_SHOW)
-					if bcastWSD == 0 {
+					if bcastWSD == 0 || proxyEnabled {
 						showWindow(hwndWSDPlaceholder, SW_SHOW)
 					}
 				case 4:
 					showWindow(hwndListDHCP, SW_SHOW)
-					if bcastDHCP == 0 {
+					if bcastDHCP == 0 || proxyEnabled {
 						showWindow(hwndDHCPPlaceholder, SW_SHOW)
 					}
 				case 5:
@@ -727,6 +735,29 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_SERVICE_BTN:
 			// Spawn elevated service via UAC. Existing service is stopped first.
 			go elevateService(HWND(hwnd))
+		case IDC_PROXY_CHECK:
+			nowChecked := sendMessage(hwndProxyCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
+			if nowChecked {
+				// Test connectivity to the proxy before enabling.
+				setStatusPart(2, "Testing proxy connection…")
+				enableWindow(hwndProxyCheck, false)
+				proxyAddr := appConfig.Scan.SOCKSProxy
+				go func() {
+					conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
+					if err != nil {
+						pendingProxyErrMu.Lock()
+						idx := len(pendingProxyErrors)
+						pendingProxyErrors = append(pendingProxyErrors, err.Error())
+						pendingProxyErrMu.Unlock()
+						postMessage(HWND(hwnd), WM_PROXY_FAIL, uintptr(idx), 0)
+						return
+					}
+					conn.Close()
+					postMessage(HWND(hwnd), WM_PROXY_VALID, 0, 0)
+				}()
+			} else {
+				applyProxyMode(HWND(hwnd), false)
+			}
 		case IDC_DETECT:
 			detectSubnet(HWND(hwnd))
 		case IDC_SCAN:
@@ -783,6 +814,26 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if savePath != "" {
 			_ = config.SaveTo(appConfig, savePath)
 		}
+		return 0
+
+	case WM_PROXY_VALID:
+		// Proxy connectivity test succeeded — apply proxy mode.
+		enableWindow(hwndProxyCheck, true)
+		applyProxyMode(HWND(hwnd), true)
+		return 0
+
+	case WM_PROXY_FAIL:
+		// Proxy connectivity test failed — uncheck and show error.
+		pendingProxyErrMu.Lock()
+		errMsg := ""
+		if int(wParam) < len(pendingProxyErrors) {
+			errMsg = pendingProxyErrors[int(wParam)]
+		}
+		pendingProxyErrMu.Unlock()
+		enableWindow(hwndProxyCheck, true)
+		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_UNCHECKED, 0)
+		setStatusPart(2, "Enter a target and click Scan")
+		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
 		return 0
 
 	case WM_BCAST_SVC:
@@ -993,39 +1044,32 @@ func createControls(hwnd HWND) {
 		currentDPI = dpi
 	}
 
-	// ---- elevation status bar (top strip) ----
-	// Label spans from the left margin up to the service button; the button
-	// sits to the right. They don't overlap, so no z-order paint conflict.
-	hwndElevLabel, _ = createWindowEx(0, "STATIC", "Service: starting…",
-		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
-		scale(8), 0, scale(740), scale(elevBarH), hwnd, IDC_ELEV_LABEL, inst)
-	// "Elevate Sensor" button — disabled once service reports it is elevated.
+	// ---- global options bar (top strip) ----
+	// "Elevate Sensor" button on the left.
 	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate Sensor",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		scale(756), scale(3), scale(200), scale(26), hwnd, IDC_SERVICE_BTN, inst)
+		scale(8), scale(3), scale(160), scale(26), hwnd, IDC_SERVICE_BTN, inst)
 	if elevated {
 		enableWindow(hwndServiceBtn, false)
 	}
-	// Brushes for the elevation status strip (long-lived; also freed on exit).
+	// "Proxy Mode" checkbox on the right; grayed if no proxy is configured.
+	hwndProxyCheck, _ = createWindowEx(0, "BUTTON", "Proxy Mode",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		scale(180), scale(5), scale(120), scale(22), hwnd, IDC_PROXY_CHECK, inst)
+	if appConfig.Scan.SOCKSProxy == "" {
+		enableWindow(hwndProxyCheck, false)
+	} else if proxyEnabled {
+		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_CHECKED, 0)
+	}
+	// Brushes for the service-state indicator in the status bar owner-draw.
 	brushElevGrey  = createSolidBrush(0x00EBEBEB) // light grey
 	brushElevAmber = createSolidBrush(0x00CDF3FF) // light blue/amber
 	brushElevGreen = createSolidBrush(0x00DAEDD4) // light green
 
-	// ---- proxy mode banner (shown below elevation bar when SOCKS5 proxy is set) ----
-	proxyLabel := ""
-	proxyStyle := uint32(WS_CHILD | SS_LEFT | SS_CENTERIMAGE)
-	if appConfig.Scan.SOCKSProxy != "" {
-		proxyLabel = "  SOCKS5 Proxy Mode: " + appConfig.Scan.SOCKSProxy +
-			"   \u2014   ARP \u00b7 ICMP \u00b7 mDNS \u00b7 SSDP \u00b7 WSD \u00b7 DHCP \u00b7 NetBIOS \u00b7 SNMP unavailable"
-		proxyStyle |= WS_VISIBLE
-	}
-	hwndProxyBanner, _ = createWindowEx(0, "STATIC", proxyLabel, proxyStyle,
-		0, scale(elevBarH), scale(1160), scale(proxyBarH), hwnd, 0, inst)
-
 	// ---- tab control ----
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|TCS_FLATBUTTONS,
-		0, scale(elevBarH)+proxyBarOffset(), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
+		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Scanner")
 	insertTab(hwndTabCtrl, 1, "mDNS")
 	insertTab(hwndTabCtrl, 2, "SSDP")
@@ -1035,7 +1079,7 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 6, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
-	scanBarY := scale(elevBarH+tabCtrlH) + proxyBarOffset()
+	scanBarY := scale(elevBarH + tabCtrlH)
 	// [Target label] [target input ────────────────────────] [⟲] [Scan/Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
@@ -1047,9 +1091,9 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
 	// Hosts listview starts below the scan bar.
-	hostsTop := scale(elevBarH+tabCtrlH+scanBarH) + proxyBarOffset()
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 	// All other panes start just below the tab strip (no scan bar).
-	otherTop := scale(elevBarH+tabCtrlH) + proxyBarOffset()
+	otherTop := scale(elevBarH + tabCtrlH)
 
 	// ---- hosts listview (visible) ----
 	hwndList, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1089,7 +1133,7 @@ func createControls(hwnd HWND) {
 		&lvHeaderInfo{hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths}
 	hwndMDNSPlaceholder, _ = createWindowEx(0, "STATIC",
 		func() string {
-			if appConfig.Scan.SOCKSProxy != "" {
+			if proxyEnabled {
 				return "Not available in proxy mode  (mDNS is link-local multicast, not routable over SOCKS5)"
 			}
 			return "Listening — no mDNS traffic detected yet"
@@ -1111,7 +1155,7 @@ func createControls(hwnd HWND) {
 		&lvHeaderInfo{hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths}
 	hwndSSDPPlaceholder, _ = createWindowEx(0, "STATIC",
 		func() string {
-			if appConfig.Scan.SOCKSProxy != "" {
+			if proxyEnabled {
 				return "Not available in proxy mode  (SSDP is link-local multicast, not routable over SOCKS5)"
 			}
 			return "Listening — no SSDP traffic detected yet"
@@ -1133,7 +1177,7 @@ func createControls(hwnd HWND) {
 		&lvHeaderInfo{hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths}
 	hwndWSDPlaceholder, _ = createWindowEx(0, "STATIC",
 		func() string {
-			if appConfig.Scan.SOCKSProxy != "" {
+			if proxyEnabled {
 				return "Not available in proxy mode  (WS-Discovery is link-local multicast, not routable over SOCKS5)"
 			}
 			return "Listening — no WS-Discovery traffic detected yet"
@@ -1155,7 +1199,7 @@ func createControls(hwnd HWND) {
 		&lvHeaderInfo{hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths}
 	hwndDHCPPlaceholder, _ = createWindowEx(0, "STATIC",
 		func() string {
-			if appConfig.Scan.SOCKSProxy != "" {
+			if proxyEnabled {
 				return "Not available in proxy mode  (DHCP capture requires local network interface access)"
 			}
 			return "Listening — no DHCP traffic detected yet (requires elevation)"
@@ -1165,7 +1209,7 @@ func createControls(hwnd HWND) {
 
 	// ---- network text area (hidden initially) ----
 	networkInitialText := "Waiting for broadcast traffic…"
-	if appConfig.Scan.SOCKSProxy != "" {
+	if proxyEnabled {
 		networkInitialText = "Not available in proxy mode  (network-layer traffic cannot be captured over SOCKS5)"
 	}
 	hwndListNetwork, _ = createWindowEx(
@@ -1183,19 +1227,19 @@ func createControls(hwnd HWND) {
 		WS_CHILD|SS_CENTER,
 		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
-	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
+	// ---- status bar — 4 parts: Hosts | Broadcast | Scan state | Service state ----
+	// Part 3 is owner-drawn (SBT_OWNERDRAW) so the parent can colour it.
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
-	// Parts: first two fixed-width, last part fills the remainder (-1).
-	// We set widths after the window is shown (resizeControls will re-set them),
-	// but initialise now so text is visible immediately.
-	setStatusParts(400, 650)
+	setStatusParts(200, 400, 600)
 	setStatusPart(0, "Ready")
-	if appConfig.Scan.SOCKSProxy != "" {
+	if proxyEnabled {
 		setStatusPart(1, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
 	} else {
 		setStatusPart(1, "Broadcast: listening…")
 	}
 	setStatusPart(2, "Enter a target and click Scan")
+	// Part 3 is owner-drawn; lParam=0 since we read state from globals in WM_DRAWITEM.
+	sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
 	// Use the actual window DPI (set above) so the font is correct on all monitors.
@@ -1226,24 +1270,29 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
-	p1 := width / 3
-	p2 := p1 * 2
-	setStatusParts(p1, p2)
+	// 4 parts: Hosts | Broadcast | Scan state (fills) | Service state (fixed right)
+	svcPartW := scale(200)
+	p1 := width / 5
+	p2 := width * 2 / 5
+	p3 := width - svcPartW
+	if p3 < p2 {
+		p3 = p2
+	}
+	setStatusParts(p1, p2, p3)
 
-	// Elevation bar: label stretches up to the service button.
-	moveWindow(hwndElevLabel, scale(8), 0, width-scale(220), scale(elevBarH))
-	moveWindow(hwndServiceBtn, width-scale(212), scale(3), scale(204), scale(26))
-	moveWindow(hwndProxyBanner, 0, scale(elevBarH), width, proxyBarOffset())
-	moveWindow(hwndTabCtrl, 0, scale(elevBarH)+proxyBarOffset(), width, scale(tabCtrlH))
+	// Global options bar: Elevate Sensor on the left, Proxy Mode checkbox on the right.
+	moveWindow(hwndServiceBtn, scale(8), scale(3), scale(160), scale(26))
+	moveWindow(hwndProxyCheck, scale(180), scale(5), scale(120), scale(22))
+	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
 	// Scan bar: target stretches, detect + scan/stop buttons anchor to right.
-	scanBarY := scale(elevBarH+tabCtrlH) + proxyBarOffset()
+	scanBarY := scale(elevBarH + tabCtrlH)
 	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(228), scale(22))
 	moveWindow(hwndDetect, width-scale(162), scanBarY+scale(5), scale(34), scale(24))
 	moveWindow(hwndScan, width-scale(120), scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts tab: list sits below the scan bar.
-	hostsTop := scale(elevBarH+tabCtrlH+scanBarH) + proxyBarOffset()
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 	hostsH := height - hostsTop - statusH
 	if hostsH < 0 {
 		hostsH = 0
@@ -1253,7 +1302,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndListPlaceholder, 0, hostsTop+(hostsH-scale(20))/2, width, scale(20))
 
 	// All other panes fill from just below the tab strip.
-	otherTop := scale(elevBarH+tabCtrlH) + proxyBarOffset()
+	otherTop := scale(elevBarH + tabCtrlH)
 	otherH := height - otherTop - statusH
 	if otherH < 0 {
 		otherH = 0
@@ -1306,6 +1355,10 @@ func startScan(hwnd HWND) {
 	scanCfg := appCfg.ToSweepConfig()
 	// Disable per-scan mDNS/SSDP; background listener handles those continuously.
 	scanCfg.BroadcastListen = 0
+	// Honour runtime proxy toggle: clear the proxy address if mode is disabled.
+	if !proxyEnabled {
+		scanCfg.SOCKSProxy = ""
+	}
 
 	// Expand target first so we can pre-populate the list.
 	hosts, err := sweep.ExpandTarget(target)
@@ -1432,6 +1485,67 @@ func stopScan() {
 	}
 }
 
+// applyProxyMode toggles proxy mode on or off at runtime (session-only;
+// does not write to the config file).  Called from the UI thread only.
+func applyProxyMode(hwnd HWND, enable bool) {
+	proxyEnabled = enable
+	if enable {
+		stopBroadcastListener()
+		setStatusPart(1, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
+	} else {
+		startBroadcastListener()
+		setStatusPart(1, "Broadcast: listening\u2026")
+	}
+	// Refresh placeholder text for broadcast tabs that are currently visible.
+	proxyMsg := "Not available in proxy mode"
+	setWindowText(hwndMDNSPlaceholder, func() string {
+		if enable {
+			return proxyMsg + "  (mDNS is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening \u2014 no mDNS traffic detected yet"
+	}())
+	setWindowText(hwndSSDPPlaceholder, func() string {
+		if enable {
+			return proxyMsg + "  (SSDP is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening \u2014 no SSDP traffic detected yet"
+	}())
+	setWindowText(hwndWSDPlaceholder, func() string {
+		if enable {
+			return proxyMsg + "  (WS-Discovery is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening \u2014 no WS-Discovery traffic detected yet"
+	}())
+	setWindowText(hwndDHCPPlaceholder, func() string {
+		if enable {
+			return proxyMsg + "  (DHCP capture requires local network interface access)"
+		}
+		return "Listening \u2014 no DHCP traffic detected yet (requires elevation)"
+	}())
+	setWindowText(hwndListNetwork, func() string {
+		if enable {
+			return proxyMsg + "  (network-layer traffic cannot be captured over SOCKS5)"
+		}
+		return "Waiting for broadcast traffic\u2026"
+	}())
+	// Force broadcast-tab placeholders visible if proxy is now on and a tab is active.
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	if enable && tab >= 1 && tab <= 4 {
+		switch tab {
+		case 1:
+			showWindow(hwndMDNSPlaceholder, SW_SHOW)
+		case 2:
+			showWindow(hwndSSDPPlaceholder, SW_SHOW)
+		case 3:
+			showWindow(hwndWSDPlaceholder, SW_SHOW)
+		case 4:
+			showWindow(hwndDHCPPlaceholder, SW_SHOW)
+		}
+	}
+}
+
+
+
 // exportResults saves the current results to a JSON or CSV file via a Save dialog.
 func exportResults(hwnd HWND, format string) {
 	pendingMu.Lock()
@@ -1490,9 +1604,11 @@ func exportResults(hwnd HWND, format string) {
 // setStatusParts sets the right-edge pixel positions for the three status bar
 // parts. Pass p1, p2 as the right edge of part 0 and part 1; part 2 fills
 // the remainder (represented as -1).
-func setStatusParts(p1, p2 int32) {
-	parts := [3]int32{p1, p2, -1}
-	sendMessage(hwndStatus, SB_SETPARTS, 3, uintptr(unsafe.Pointer(&parts[0])))
+func setStatusParts(p1, p2, p3 int32) {
+	// 4 parts: p0→p1 = Hosts, p1→p2 = Broadcast, p2→p3 = Scan state,
+	// p3→end = Service state (owner-drawn).
+	parts := [4]int32{p1, p2, p3, -1}
+	sendMessage(hwndStatus, SB_SETPARTS, 4, uintptr(unsafe.Pointer(&parts[0])))
 }
 
 // setStatusPart sets the text of one status bar part (0=Hosts, 1=Broadcast, 2=State).

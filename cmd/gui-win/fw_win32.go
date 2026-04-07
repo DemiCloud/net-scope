@@ -141,6 +141,8 @@ const (
 	IDYES           = 6
 	IDNO            = 7
 
+	WM_DRAWITEM         = 0x002B // owner-draw control/menu needs painting
+
 	// Owner-draw / custom-draw
 	NM_CUSTOMDRAW       = uint32(0xFFFFFFF4) // NM_FIRST(0) - 12
 	NM_RCLICK           = uint32(0xFFFFFFFB) // NM_FIRST(0) - 5
@@ -239,8 +241,12 @@ const (
 	LVN_COLUMNCLICK = uint32(0xFFFFFF94) // LVN_FIRST - 8
 
 	// StatusBar
-	SB_SETTEXT  = 0x040B
-	SB_SETPARTS = 0x0404
+	SB_SETTEXT    = 0x040B
+	SB_SETPARTS   = 0x0404
+	SBT_OWNERDRAW = 0x1000 // part drawn by parent via WM_DRAWITEM
+
+	// DrawItem action flags (WM_DRAWITEM ItemAction)
+	ODA_DRAWENTIRE = 0x0001
 
 	// Button notification
 	BN_CLICKED = 0
@@ -342,6 +348,20 @@ type NMHDR struct {
 	IdFrom   uintptr
 	Code     uint32
 	_        [4]byte
+}
+
+// DRAWITEMSTRUCT is sent in the lParam of WM_DRAWITEM for owner-drawn controls.
+type DRAWITEMSTRUCT struct {
+	CtlType    uint32
+	CtlID      uint32
+	ItemID     uint32
+	ItemAction uint32
+	ItemState  uint32
+	// Go aligns the next pointer-sized field to 8 bytes automatically (4-byte gap here on 64-bit).
+	HwndItem   HWND
+	HDC        uintptr
+	RcItem     RECT
+	ItemData   uintptr
 }
 
 // TCITEM is used to insert/query tab control items.
@@ -506,6 +526,7 @@ var (
 	procGetSysColorBrush             = modUser32.NewProc("GetSysColorBrush")
 	procFillRect                     = modUser32.NewProc("FillRect")
 	procDrawTextW                    = modUser32.NewProc("DrawTextW")
+	procInvalidateRect               = modUser32.NewProc("InvalidateRect")
 	procEnumChildWindows             = modUser32.NewProc("EnumChildWindows")
 	procLoadIconW                    = modUser32.NewProc("LoadIconW")
 	procCreateIconFromResourceEx     = modUser32.NewProc("CreateIconFromResourceEx")
@@ -536,6 +557,7 @@ var (
 	procCreateFontW      = modGdi32.NewProc("CreateFontW")
 	procCreateSolidBrush = modGdi32.NewProc("CreateSolidBrush")
 	procDeleteObject     = modGdi32.NewProc("DeleteObject")
+	procSelectObject     = modGdi32.NewProc("SelectObject")
 	procSetBkColor       = modGdi32.NewProc("SetBkColor")
 	procSetTextColor     = modGdi32.NewProc("SetTextColor")
 	procSetBkMode        = modGdi32.NewProc("SetBkMode")
@@ -968,6 +990,27 @@ func drawText(hdc uintptr, text string, rc *RECT, format uint32) {
 func getSysColorBrush(colorIndex int) HBRUSH {
 	r, _, _ := procGetSysColorBrush.Call(uintptr(colorIndex))
 	return HBRUSH(r)
+}
+
+// selectObject selects an object (pen, brush, font, …) into a DC and returns
+// the previously selected object of the same type.
+func selectObject(hdc, obj uintptr) uintptr {
+	r, _, _ := procSelectObject.Call(hdc, obj)
+	return r
+}
+
+// invalidateRect marks a rectangle (or the entire client area when rc is nil)
+// as needing repaint. If erase is true, the background is erased first.
+func invalidateRect(hwnd HWND, rc *RECT, erase bool) {
+	var eraseInt uintptr
+	if erase {
+		eraseInt = 1
+	}
+	var rcPtr uintptr
+	if rc != nil {
+		rcPtr = uintptr(unsafe.Pointer(rc))
+	}
+	procInvalidateRect.Call(uintptr(hwnd), rcPtr, eraseInt)
 }
 
 // getSaveFileName shows a "Save As" dialog. Returns the chosen path or "".
