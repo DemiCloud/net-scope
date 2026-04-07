@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -576,13 +577,33 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				case IDM_BCAST_COPY_RAW:
 					switch hdr.IdFrom {
 					case IDC_LIST_MDNS:
-						copyToClipboard(HWND(hwnd), getMDNSRawText(htInfo.IItem))
+						var parts []string
+						for _, r := range rows {
+							parts = append(parts, getMDNSRawText(r))
+						}
+						copyToClipboard(HWND(hwnd), strings.Join(parts, "\n---\n"))
 					case IDC_LIST_WSD:
-						ip := listViewGetCellText(hwndSrc, htInfo.IItem, 0)
-						copyToClipboard(HWND(hwnd), getWSDRawText(ip))
+						seen := map[string]bool{}
+						var parts []string
+						for _, r := range rows {
+							ip := listViewGetCellText(hwndSrc, r, 0)
+							if !seen[ip] {
+								seen[ip] = true
+								parts = append(parts, getWSDRawText(ip))
+							}
+						}
+						copyToClipboard(HWND(hwnd), strings.Join(parts, "\n---\n"))
 					case IDC_LIST_SSDP:
-						ip := listViewGetCellText(hwndSrc, htInfo.IItem, 0)
-						copyToClipboard(HWND(hwnd), getSSDPRawText(ip))
+						seen := map[string]bool{}
+						var parts []string
+						for _, r := range rows {
+							ip := listViewGetCellText(hwndSrc, r, 0)
+							if !seen[ip] {
+								seen[ip] = true
+								parts = append(parts, getSSDPRawText(ip))
+							}
+						}
+						copyToClipboard(HWND(hwnd), strings.Join(parts, "\n---\n"))
 					}
 				}
 			}
@@ -976,7 +997,7 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
 	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
 	listViewAddColumn(hwndList, colStatus,   "●",              scale(40))
 	listViewAddColumn(hwndList, colIP,       "IP Address",     scale(120))
@@ -1000,7 +1021,7 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
 	listViewAddColumn(hwndListMDNS, 0, "IP",           scale(120))
 	listViewAddColumn(hwndListMDNS, 1, "Name",         scale(210))
 	listViewAddColumn(hwndListMDNS, 2, "Service",      scale(130))
@@ -1017,7 +1038,7 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
 	listViewAddColumn(hwndListSSDP, 0, "IP",       scale(120))
 	listViewAddColumn(hwndListSSDP, 1, "Server",   scale(220))
 	listViewAddColumn(hwndListSSDP, 2, "Type",     scale(160))
@@ -1033,7 +1054,7 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
 	listViewAddColumn(hwndListWSD, 0, "IP",            scale(120))
 	listViewAddColumn(hwndListWSD, 1, "Types",         scale(180))
 	listViewAddColumn(hwndListWSD, 2, "Transport URLs", scale(300))
@@ -1049,7 +1070,7 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_MARQUEESELECT)
 	listViewAddColumn(hwndListDHCP, 0, "Time",         scale(75))
 	listViewAddColumn(hwndListDHCP, 1, "Type",         scale(90))
 	listViewAddColumn(hwndListDHCP, 2, "Client MAC",   scale(140))

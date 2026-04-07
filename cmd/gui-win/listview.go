@@ -202,32 +202,25 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 
 	txt := parseTXTMap(svc.Details)
 
-	// col 1: instance name with DNS label escapes removed
-	setSubItem(hwnd, row, 1, mdnsUnescapeName(svc.Name))
+	// col 1: instance name with DNS label escapes and RAOP MAC-prefix removed
+	setSubItem(hwnd, row, 1, mdnsCleanName(svc.Name))
 
 	// col 2: service type prettified ("_ipp._tcp" → "IPP Printer")
 	setSubItem(hwnd, row, 2, mdnsPrettyType(svc.Type))
 
-	// col 3: best device/model label, enriched with manufacturer and serial
+	// col 3: best device/model label.
 	// Note: RAOP (_raop._tcp) uses md= for metadata types ("0,1,2"), not model;
 	// the correct model key for RAOP/AirPlay devices is am= (Apple model).
 	deviceName := txtOr(txt, "fn", txtOr(txt, "ty", txtOr(txt, "am", txtOr(txt, "md", txtOr(txt, "model", "")))))
-	var deviceParts []string
-	if m := txtOr(txt, "manufacturer", txtOr(txt, "integrator", "")); m != "" {
-		deviceParts = append(deviceParts, m)
-	}
-	if deviceName != "" {
-		deviceParts = append(deviceParts, deviceName)
-	}
-	if sn := txt["serialnumber"]; sn != "" {
-		deviceParts = append(deviceParts, "SN:"+sn)
-	}
-	if fv := txt["fv"]; fv != "" {
-		deviceParts = append(deviceParts, "FW:"+fv)
-	}
 	device := "—"
-	if len(deviceParts) > 0 {
-		device = strings.Join(deviceParts, " ")
+	if deviceName != "" {
+		mfr := txtOr(txt, "manufacturer", txtOr(txt, "integrator", ""))
+		// Only prepend manufacturer when the device name doesn't already start with it.
+		if mfr != "" && !strings.HasPrefix(strings.ToLower(deviceName), strings.ToLower(mfr)) {
+			device = mfr + " " + deviceName
+		} else {
+			device = deviceName
+		}
 	}
 	setSubItem(hwnd, row, 3, device)
 
@@ -238,9 +231,23 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
 	setSubItem(hwnd, row, 5, mdnsNotes(txt))
 }
 
-// mdnsUnescapeName removes DNS label backslash escapes so "EPSON\ ET-2850"
-// renders as "EPSON ET-2850".
-func mdnsUnescapeName(s string) string {
+// mdnsCleanName removes DNS label backslash escapes and strips the leading
+// MAC-address prefix used in RAOP instance names ("AABBCCDDEEFF@Name" → "Name").
+func mdnsCleanName(s string) string {
+	// Strip RAOP MAC prefix: 12 hex digits followed by '@'.
+	if len(s) > 13 && s[12] == '@' {
+		allHex := true
+		for _, c := range s[:12] {
+			if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+				allHex = false
+				break
+			}
+		}
+		if allHex {
+			s = s[13:]
+		}
+	}
+	// Remove DNS label backslash escapes so "EPSON\ ET-2850" → "EPSON ET-2850".
 	if !strings.ContainsRune(s, '\\') {
 		return s
 	}
@@ -839,8 +846,8 @@ func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, 
 // The returned HMENU is owned by menu and must not be destroyed separately.
 func appendCopyAsSubmenu(menu HMENU) {
 	hSub := createPopupMenu()
-	appendMenu(hSub, MF_STRING, IDM_COPY_AS_TSV,  "Tab-separated (for spreadsheet)")
-	appendMenu(hSub, MF_STRING, IDM_COPY_AS_CSV,  "CSV (with header row)")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_TSV,  "Tab Delimited")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_CSV,  "CSV")
 	appendMenu(hSub, MF_STRING, IDM_COPY_AS_JSON, "JSON")
 	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
 }
