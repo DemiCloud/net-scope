@@ -71,6 +71,35 @@ toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
 
 ---
 
+## Git Workflow
+
+**After every meaningful change, make a commit.** This applies to:
+
+- Bug fixes (including single-line corrections)
+- New features or behaviour changes
+- Refactors or code reorganisation
+- Documentation / AGENTS.md updates
+- Build / Makefile changes
+
+Commit commands (run inside the Fedora WSL environment):
+
+```bash
+wsl -d Fedora -- bash -c "cd /home/lbreitk/dev/net-sweep && git add <files> && git commit -m '<message>'"
+```
+
+Follow the conventional-commits style already used in the repo:
+
+- `feat:` — new user-visible feature
+- `fix:` — bug fix
+- `refactor:` — internal restructure, no behaviour change
+- `docs:` — documentation only
+- `build:` — Makefile, generator, or toolchain changes
+- `chore:` — everything else (dependency updates, file renames, etc.)
+
+Do **not** push automatically; only commit locally unless the user explicitly asks to push.
+
+---
+
 ## Key Conventions
 
 ### Go
