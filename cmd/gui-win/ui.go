@@ -734,6 +734,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showPickHostDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
+		case IDM_HELP_CONN_HANDLERS:
+			showConnHandlersDialog(HWND(hwnd))
 		case IDM_HELP_VERSION:
 			showVersionDialog(HWND(hwnd))
 		case IDM_HELP_ABOUT:

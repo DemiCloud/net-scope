@@ -294,8 +294,9 @@ const (
 	GMEM_MOVEABLE = 0x0002
 
 	// Registry
-	HKEY_CLASSES_ROOT uintptr = 0x80000000
-	KEY_READ                  = 0x20019
+	HKEY_CLASSES_ROOT  uintptr = 0x80000000
+	HKEY_CURRENT_USER  uintptr = 0x80000001
+	KEY_READ                   = 0x20019
 )
 
 // ---------------------------------------------------------------------------
@@ -1090,15 +1091,13 @@ func scale(n int32) int32 {
 // Registry helpers
 // ---------------------------------------------------------------------------
 
-// regReadOpenCommand reads the default shell/open/command value for the given
-// URL scheme from HKEY_CLASSES_ROOT. Returns "" if the key or value is absent.
-// Example: regReadOpenCommand("https") →
-//   `"C:\Program Files\Microsoft\Edge\Application\msedge.exe" ... "%1"`
-func regReadOpenCommand(scheme string) string {
-	keyPath, _ := syscall.UTF16PtrFromString(scheme + `\shell\open\command`)
+// regReadStringValue opens hive\path and returns the string value named
+// valueName (pass "" for the default value). Returns "" on any error.
+func regReadStringValue(hive uintptr, path, valueName string) string {
+	keyPath, _ := syscall.UTF16PtrFromString(path)
 	var hk HKEY
 	ret, _, _ := procRegOpenKeyExW.Call(
-		HKEY_CLASSES_ROOT,
+		hive,
 		uintptr(unsafe.Pointer(keyPath)),
 		0,
 		KEY_READ,
@@ -1109,12 +1108,12 @@ func regReadOpenCommand(scheme string) string {
 	}
 	defer procRegCloseKey.Call(uintptr(hk))
 
-	valueName, _ := syscall.UTF16PtrFromString("") // default value
-	var bufLen uint32 = 1024
+	vn, _ := syscall.UTF16PtrFromString(valueName)
+	var bufLen uint32 = 2048
 	buf := make([]uint16, bufLen/2)
 	ret, _, _ = procRegQueryValueExW.Call(
 		uintptr(hk),
-		uintptr(unsafe.Pointer(valueName)),
+		uintptr(unsafe.Pointer(vn)),
 		0,
 		0,
 		uintptr(unsafe.Pointer(&buf[0])),
@@ -1124,4 +1123,30 @@ func regReadOpenCommand(scheme string) string {
 		return ""
 	}
 	return syscall.UTF16ToString(buf)
+}
+
+// regReadOpenCommand returns the shell/open/command string that Windows will
+// actually use for the given URL scheme.
+//
+// On Windows 10/11 the user's default browser is stored in
+// HKCU\...\UrlAssociations\{scheme}\UserChoice\ProgId, not in
+// HKCR\{scheme}\shell\open\command (which reflects the system-level fallback).
+// We follow the same lookup chain that ShellExecute uses:
+//
+//  1. HKCU UserChoice ProgId → HKCR\{progId}\shell\open\command
+//  2. Fallback: HKCR\{scheme}\shell\open\command
+func regReadOpenCommand(scheme string) string {
+	// Step 1: user-configured default (Windows 10/11 default-apps mechanism).
+	progID := regReadStringValue(
+		HKEY_CURRENT_USER,
+		`Software\Microsoft\Windows\Shell\Associations\UrlAssociations\`+scheme+`\UserChoice`,
+		"ProgId",
+	)
+	if progID != "" {
+		if cmd := regReadStringValue(HKEY_CLASSES_ROOT, progID+`\shell\open\command`, ""); cmd != "" {
+			return cmd
+		}
+	}
+	// Step 2: system-level fallback.
+	return regReadStringValue(HKEY_CLASSES_ROOT, scheme+`\shell\open\command`, "")
 }

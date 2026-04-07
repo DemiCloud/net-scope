@@ -1108,14 +1108,43 @@ func exeNameFromCommand(cmd string) string {
 	return cmd
 }
 
-// osDefaultLabel returns a short description of the OS-default handler for
-// the given URL scheme, or a fixed label for non-URL protocols.
+// effectiveHandlerLabel returns the exe name that will actually be launched
+// for the given protocol key. Custom config overrides are shown first; for
+// URL schemes the lookup follows the Windows UserChoice path (HKCU) so the
+// result matches ShellExecute rather than the system-level fallback.
+func effectiveHandlerLabel(key string) string {
+	if custom := appConfig.Scan.ProtocolHandlers[key]; custom != "" {
+		name := exeNameFromCommand(strings.SplitN(custom, " ", 2)[0])
+		if name == "" {
+			name = custom
+		}
+		return name + " (custom)"
+	}
+	switch key {
+	case "rdp":
+		return "mstsc.exe"
+	case "smb":
+		return "explorer.exe"
+	}
+	raw := regReadOpenCommand(key)
+	if raw == "" {
+		return "(not registered)"
+	}
+	name := exeNameFromCommand(raw)
+	if name == "" {
+		return "(registered)"
+	}
+	return name
+}
+
+// osDefaultLabel is an alias used by the Settings > Protocol Handlers dialog
+// to show what the OS default is regardless of any custom config override.
 func osDefaultLabel(key string) string {
 	switch key {
 	case "rdp":
-		return "Built-in: mstsc.exe"
+		return "mstsc.exe"
 	case "smb":
-		return "Built-in: Windows Explorer"
+		return "explorer.exe"
 	}
 	raw := regReadOpenCommand(key)
 	if raw == "" {
@@ -1145,7 +1174,7 @@ func createProtoHandlerControls(hwnd HWND) {
 	// Header labels.
 	createCtrl("STATIC", "Protocol", WS_CHILD|WS_VISIBLE,
 		pad, 10, keyW, 16, hwnd, 0, inst)
-	createCtrl("STATIC", "OS Default", WS_CHILD|WS_VISIBLE,
+	createCtrl("STATIC", "OS Default (actual)", WS_CHILD|WS_VISIBLE,
 		pad+keyW, 10, statusW, 16, hwnd, 0, inst)
 	createCtrl("STATIC", "Custom Command (%s = IP)", WS_CHILD|WS_VISIBLE,
 		editX, 10, editW, 16, hwnd, 0, inst)
@@ -1222,6 +1251,105 @@ func showProtocolHandlersDialog(parent HWND) {
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepProtoHandlers", "Protocol Handlers",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
+}
+
+// ---------------------------------------------------------------------------
+// Connection Handlers info dialog  (Help > Connection Handlers…)
+// ---------------------------------------------------------------------------
+//
+// Read-only table: Protocol | Port | Will launch.
+// "Will launch" = custom command from config if set, else the actual OS
+// default resolved via UserChoice (HKCU), not the system-level fallback.
+
+const (
+	idConnHandlersConfigure = 811
+	idConnHandlersClose     = 812
+)
+
+var connHandlersWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		createConnHandlersControls(HWND(hwnd))
+		return 0
+	case WM_CTLCOLORSTATIC:
+		return ctlColorDialog(wParam)
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idConnHandlersConfigure:
+			closeModal(HWND(hwnd))
+			showSettingsDialog(hwndMain)
+		case idConnHandlersClose:
+			closeModal(HWND(hwnd))
+		}
+		return 0
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+func createConnHandlersControls(hwnd HWND) {
+	inst := getModuleHandle()
+	r := getClientRect(hwnd)
+	cW := r.Right
+	const (
+		pad    int32 = 12
+		rowH   int32 = 22
+		protoW int32 = 120
+		portW  int32 = 60
+		y0     int32 = 32
+	)
+	launchW := cW - protoW - portW - pad*3
+
+	// Column headers.
+	createCtrl("STATIC", "Protocol", WS_CHILD|WS_VISIBLE, pad, 10, protoW, 16, hwnd, 0, inst)
+	createCtrl("STATIC", "Port", WS_CHILD|WS_VISIBLE, pad+protoW, 10, portW, 16, hwnd, 0, inst)
+	createCtrl("STATIC", "Will launch", WS_CHILD|WS_VISIBLE, pad+protoW+portW, 10, launchW, 16, hwnd, 0, inst)
+
+	for i, row := range protoHandlerRows {
+		y := y0 + int32(i)*rowH
+		createCtrl("STATIC", row.label, WS_CHILD|WS_VISIBLE, pad, y, protoW, 16, hwnd, 0, inst)
+		createCtrl("STATIC", fmt.Sprintf("%d", row.port), WS_CHILD|WS_VISIBLE, pad+protoW, y, portW, 16, hwnd, 0, inst)
+		createCtrl("STATIC", effectiveHandlerLabel(row.key), WS_CHILD|WS_VISIBLE, pad+protoW+portW, y, launchW, 16, hwnd, 0, inst)
+	}
+
+	hintY := y0 + int32(len(protoHandlerRows))*rowH + 8
+	createCtrl("STATIC", "Custom overrides are set in Options \u2192 Settings \u2192 Protocol Handlers\u2026",
+		WS_CHILD|WS_VISIBLE, pad, hintY, cW-pad*2, 16, hwnd, 0, inst)
+
+	btnY := hintY + 28
+	createCtrl("BUTTON", "Configure\u2026", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		pad, btnY, 110, 26, hwnd, idConnHandlersConfigure, inst)
+	createCtrl("BUTTON", "Close", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cW-pad-86, btnY, 78, 26, hwnd, idConnHandlersClose, inst)
+}
+
+func showConnHandlersDialog(parent HWND) {
+	registerDialogClass("NetSweepConnHandlers", connHandlersWndProc)
+
+	n := int32(len(protoHandlerRows))
+	const (
+		pad  int32 = 12
+		rowH int32 = 22
+		y0   int32 = 32
+	)
+	dlgW := int32(500)
+	dlgH := y0 + n*rowH + 8 + 16 + 28 + pad*2
+
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepConnHandlers", "Connection Handlers",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),

@@ -59,10 +59,11 @@ const (
 	IDM_OPT_DATABASES    = 209 // Options > Databases...
 	IDM_HOSTS_VIEW_ALL   = 210 // Tools > View All Hosts...
 	IDM_HOSTS_VIEW_HOST  = 211 // Tools > Query Host...
-	IDM_HELP_ABOUT       = 203
-	IDM_HELP_FAQ         = 204
-	IDM_HELP_VERSION     = 207
-	IDM_HELP_CRASHLOG    = 208 // Help > View Crash Log
+	IDM_HELP_ABOUT          = 203
+	IDM_HELP_FAQ            = 204
+	IDM_HELP_VERSION        = 207
+	IDM_HELP_CRASHLOG       = 208 // Help > View Crash Log
+	IDM_HELP_CONN_HANDLERS  = 212 // Help > Connection Handlers…
 )
 
 // ---------------------------------------------------------------------------
