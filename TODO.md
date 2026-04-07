@@ -35,18 +35,17 @@
 - [ ] **Elevation state → status bar** — remove the green "ARP + ICMP active" banner that currently appears at the top of the window when elevation is acquired; instead, reflect the elevated scan mode (ARP + ICMP active) directly in the status bar with a green-accented indicator; this eliminates a redundant UI element and fixes the conflicting state where "Service Running – TCP only: Scanning" overwrites scan-progress text in the same bar
 - [ ] **Scanner tab — "Show Active Only" toggle** — add a checkbox (or toolbar toggle button) to the Scanner tab that hides all unresponsive (red/dead) rows; when enabled only live hosts are visible; toggling off restores the full list; helps usability on /24+ scans where dead IPs bury active devices; consider defaulting to enabled after a scan completes
 - [ ] **Scanner tab — inline search/filter** — text input above the result list that filters visible rows by IP, MAC address, hostname, or vendor as the user types; Ctrl+F focuses it; complements (or supersedes) the planned "View All Hosts" live filter for the main scanner view; useful once host counts grow past ~20
-- [ ] **Sortable columns** — single-click column header sorts rows; indicator (▲/▼) in header
-- [ ] **Column customisation** — drag to reorder, right-click header for "Edit Columns" dialog (show/hide, restore defaults)
+- [x] **Sortable columns** — single-click column header sorts rows; indicator (▲/▼) in header
+- [x] **Column customisation** — drag to reorder, right-click header for "Edit Columns" dialog (show/hide, restore defaults)
 - [ ] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
 - [x] **Broadcast tab empty-state overlays** — mDNS, SSDP, WSD, DHCP tabs all have greyed-out placeholders matching the Scanner tab style
 - [ ] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
 - [ ] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
-- [ ] **Explorer file icon** — embed RT_ICON + RT_GROUP_ICON in the `.syso` resource so the `.exe` shows the radar icon in Windows Explorer (requires dynamic gen-rsrc rewrite)
+- [x] **Explorer file icon** — embed RT_ICON + RT_GROUP_ICON in the `.syso` resource so the `.exe` shows the radar icon in Windows Explorer (requires dynamic gen-rsrc rewrite)
 - [x] **Null-value dash alignment** — verified: Latency and Ports columns use `LVCF_FMT | LVCFMT_RIGHT`; hide/show only changes width so format is preserved; custom draw returns `CDRF_NEWFONT` (not `CDRF_SKIPDEFAULT`) so Win32 still applies alignment; no fix needed
 - [x] **Publisher / company info** — About dialog now shows version, description, copyright, and GitHub URL
 - [x] **"Databases" sub-menu** — `Options > Databases > Mac Vendors…`; future database types slot in as siblings
 - [x] **Scan Report empty-state overlay** — `hwndHealthPlaceholder` STATIC shown until first scan completes, then hidden permanently
-- [ ] **Scan Report — scan duration metric** — record the wall-clock time from scan start to WM_SCAN_COMPLETE and display it in the Scan Report tab (e.g. "Scan completed in 4.2 s")
 - [x] **Win32 internal framework cleanup** — `fw_win32.go` + `fw_dialog.go` extracted; `dlgBottomRight`, `registerDialogClass`, `ctlColorDialog` added; `win32.go` is now app-constants-only
 - [x] **Scan Report — scan duration metric** — wall-clock time shown in status bar and Scan Report tab
 - [x] **GitHub Wiki / FAQ** — FAQ content moved to `.wiki/FAQ.md`; `Options → Help / FAQ…` now opens `https://github.com/demicloud/net-scope/wiki/FAQ` in the default browser via `ShellExecute`; inline dialog and `faqText` constant removed
