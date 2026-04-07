@@ -23,7 +23,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // Status bar service-state indicator brushes — created in createControls, used
-// both in WM_DRAWITEM (owner-drawn status bar part) and WM_CTLCOLORSTATIC.
+// in WM_CTLCOLORSTATIC for the hwndServiceStatus overlay label.
 // Win32 COLORREF is 0x00BBGGRR (low byte = red).
 var (
 	brushElevGrey  HBRUSH // service not running  — light grey  RGB(235,235,235)
@@ -48,8 +48,9 @@ var (
 	hwndMain       HWND
 	headerHwnd     HWND  // header control of hwndList, for right-click detection
 	// Global options bar (top strip, replaces old elevation bar)
-	hwndServiceBtn  HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
-	hwndProxyCheck  HWND // "Proxy Mode" checkbox
+	hwndServiceBtn    HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
+	hwndProxyCheck    HWND // "Proxy Mode" checkbox
+	hwndServiceStatus HWND // service/elevation STATIC label overlaid on status bar (bottom-right)
 	// Scan bar (shown only when Hosts tab is active)
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
@@ -313,6 +314,24 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
+		// Service-state overlay: green / amber / grey matching the old top strip.
+		if HWND(lParam) == hwndServiceStatus && brushElevGrey != 0 {
+			hdc := wParam
+			var bg, fg uint32
+			var brush HBRUSH
+			switch {
+			case serviceRunning() && serviceElevated:
+				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
+			case serviceRunning():
+				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // blue/amber
+			default:
+				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
+			}
+			setBkMode(hdc, OPAQUE)
+			setTextColor(hdc, fg)
+			setBkColor(hdc, bg)
+			return uintptr(brush)
+		}
 		// Placeholder text gets gray color, white background matching the listview.
 		if HWND(lParam) == hwndListPlaceholder ||
 			HWND(lParam) == hwndMDNSPlaceholder ||
@@ -329,36 +348,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		setBkMode(wParam, TRANSPARENT)
 		return uintptr(getSysColorBrush(COLOR_WINDOW))
 
-	case WM_DRAWITEM:
-		// Owner-draw the service-state part (part 3) of the status bar.
-		dis := (*DRAWITEMSTRUCT)(unsafe.Pointer(lParam)) //nolint:govet
-		if dis.CtlID == IDC_STATUS && dis.ItemID == statusPartService && dis.ItemAction == ODA_DRAWENTIRE {
-			var bg, fg uint32
-			var brush HBRUSH
-			switch {
-			case serviceRunning() && serviceElevated:
-				bg, fg, brush = 0x00DAEDD4, 0x00245715, brushElevGreen // green
-			case serviceRunning():
-				bg, fg, brush = 0x00CDF3FF, 0x00046485, brushElevAmber // blue/amber
-			default:
-				bg, fg, brush = 0x00EBEBEB, 0x00505050, brushElevGrey  // grey
-			}
-			rc := dis.RcItem
-			fillRect(dis.HDC, &rc, brush)
-			oldFont := selectObject(dis.HDC, uintptr(appFont))
-			setBkColor(dis.HDC, bg)
-			setBkMode(dis.HDC, OPAQUE)
-			setTextColor(dis.HDC, fg)
-			text := statusForService()
-			rc.Left += scale(6) // small left padding
-			drawText(dis.HDC, text, &rc, DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX)
-			selectObject(dis.HDC, oldFont)
-			return 1
-		}
-		return 0
-
 	case WM_SERVICE_UP:
-		// Repaint the owner-drawn service-state part of the status bar.
+		// Update the service-state label overlay and repaint it.
 		refreshServiceStatePart()
 		if serviceElevated {
 			enableWindow(hwndServiceBtn, false)
@@ -369,7 +360,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_SERVICE_DOWN:
-		// Repaint the owner-drawn service-state part of the status bar.
+		// Update the service-state label overlay.
 		refreshServiceStatePart()
 		return 0
 
@@ -1227,10 +1218,9 @@ func createControls(hwnd HWND) {
 		WS_CHILD|SS_CENTER,
 		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
-	// ---- status bar — 4 parts: Hosts | Broadcast | Scan state | Service state ----
-	// Part 3 is owner-drawn (SBT_OWNERDRAW) so the parent can colour it.
+	// ---- status bar — 3 parts: Hosts | Broadcast | Scan state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
-	setStatusParts(200, 400, 600)
+	setStatusParts(200, 400)
 	setStatusPart(statusPartHosts, "Ready")
 	if proxyEnabled {
 		setStatusPart(statusPartBcast, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
@@ -1238,8 +1228,12 @@ func createControls(hwnd HWND) {
 		setStatusPart(statusPartBcast, "Broadcast: listening…")
 	}
 	setStatusPart(statusPartScan, "Enter a target and click Scan")
-	// Part 3 is owner-drawn; trigger first paint.
-	refreshServiceStatePart()
+
+	// ---- service state overlay — STATIC label positioned over the rightmost ~200px
+	//      of the status bar; coloured via WM_CTLCOLORSTATIC (green / amber / grey). ----
+	hwndServiceStatus, _ = createWindowEx(0, "STATIC", statusForService(),
+		WS_CHILD|WS_VISIBLE|SS_LEFT|SS_CENTERIMAGE,
+		0, 0, scale(200), scale(20), hwnd, IDC_SERVICE_STATUS, inst)
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
 	// Use the actual window DPI (set above) so the font is correct on all monitors.
@@ -1270,15 +1264,14 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
-	// 4 parts: Hosts | Broadcast | Scan state (fills) | Service state (fixed right)
+	// 3 text parts (Hosts | Broadcast | Scan state), each roughly 1/3 wide.
 	svcPartW := scale(200)
-	p1 := width / 5
-	p2 := width * 2 / 5
-	p3 := width - svcPartW
-	if p3 < p2 {
-		p3 = p2
-	}
-	setStatusParts(p1, p2, p3)
+	p1 := (width - svcPartW) / 3
+	p2 := p1 * 2
+	setStatusParts(p1, p2)
+
+	// Service-state STATIC overlay: sits over the rightmost svcPartW of the status bar.
+	moveWindow(hwndServiceStatus, width-svcPartW, height-statusH, svcPartW, statusH)
 
 	// Global options bar: Elevate Sensor on the left, Proxy Mode checkbox on the right.
 	moveWindow(hwndServiceBtn, scale(8), scale(3), scale(160), scale(26))
@@ -1604,11 +1597,9 @@ func exportResults(hwnd HWND, format string) {
 // setStatusParts sets the right-edge pixel positions for the three status bar
 // parts. Pass p1, p2 as the right edge of part 0 and part 1; part 2 fills
 // the remainder (represented as -1).
-func setStatusParts(p1, p2, p3 int32) {
-	// 4 parts: p0→p1 = Hosts, p1→p2 = Broadcast, p2→p3 = Scan state,
-	// p3→end = Service state (owner-drawn).
-	parts := [4]int32{p1, p2, p3, -1}
-	sendMessage(hwndStatus, SB_SETPARTS, 4, uintptr(unsafe.Pointer(&parts[0])))
+func setStatusParts(p1, p2 int32) {
+	parts := [3]int32{p1, p2, -1}
+	sendMessage(hwndStatus, SB_SETPARTS, 3, uintptr(unsafe.Pointer(&parts[0])))
 }
 
 // setStatusPart sets the text of one status bar part (0=Hosts, 1=Broadcast, 2=State).
@@ -1617,10 +1608,11 @@ func setStatusPart(part uintptr, s string) {
 	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
 }
 
-// refreshServiceStatePart triggers a repaint of the owner-drawn service-state
-// part of the status bar.  Call whenever service connectivity or elevation state changes.
+// refreshServiceStatePart updates the service-state overlay label text and
+// forces a repaint so the WM_CTLCOLORSTATIC colour responds immediately.
 func refreshServiceStatePart() {
-	sendMessage(hwndStatus, SB_SETTEXT, statusPartService|SBT_OWNERDRAW, 0)
+	setWindowText(hwndServiceStatus, statusForService())
+	invalidateRect(hwndServiceStatus, nil, true)
 }
 
 // setStatus is a convenience wrapper that updates the scan-state part.
