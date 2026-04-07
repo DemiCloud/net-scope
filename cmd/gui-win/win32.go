@@ -111,6 +111,12 @@ const (
 	// Checkbox IDs: IDC_EDITCOLS_COL_BASE + col, for col 1..9
 	IDC_EDITCOLS_COL_BASE = 460
 
+	// Status bar part indices
+	statusPartHosts   = 0 // "Ready" / "Hosts: N found"
+	statusPartBcast   = 1 // "Broadcast: …" or "Proxy mode: …"
+	statusPartScan    = 2 // scan state / progress
+	statusPartService = 3 // service/elevation state (owner-drawn)
+
 	// Additional button style (plain push, no default border)
 	BS_PUSHBUTTON = 0x0000
 )

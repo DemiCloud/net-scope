@@ -332,7 +332,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_DRAWITEM:
 		// Owner-draw the service-state part (part 3) of the status bar.
 		dis := (*DRAWITEMSTRUCT)(unsafe.Pointer(lParam)) //nolint:govet
-		if dis.CtlID == IDC_STATUS && dis.ItemAction == ODA_DRAWENTIRE {
+		if dis.CtlID == IDC_STATUS && dis.ItemID == statusPartService && dis.ItemAction == ODA_DRAWENTIRE {
 			var bg, fg uint32
 			var brush HBRUSH
 			switch {
@@ -359,7 +359,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_SERVICE_UP:
 		// Repaint the owner-drawn service-state part of the status bar.
-		sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
+		refreshServiceStatePart()
 		if serviceElevated {
 			enableWindow(hwndServiceBtn, false)
 			// Start passive DHCP capture in the elevated service.
@@ -370,7 +370,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_SERVICE_DOWN:
 		// Repaint the owner-drawn service-state part of the status bar.
-		sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
+		refreshServiceStatePart()
 		return 0
 
 	case WM_DHCP_EVENT:
@@ -739,7 +739,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			nowChecked := sendMessage(hwndProxyCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
 			if nowChecked {
 				// Test connectivity to the proxy before enabling.
-				setStatusPart(2, "Testing proxy connection…")
+				setStatusPart(statusPartScan, "Testing proxy connection…")
 				enableWindow(hwndProxyCheck, false)
 				proxyAddr := appConfig.Scan.SOCKSProxy
 				go func() {
@@ -767,7 +767,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				// which may be delayed (especially for service scans).
 				isScanning = false
 				setWindowText(hwndScan, "Scan")
-				setStatusPart(2, "Scan stopped")
+				setStatusPart(statusPartScan, "Scan stopped")
 			} else {
 				startScan(HWND(hwnd))
 			}
@@ -832,7 +832,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingProxyErrMu.Unlock()
 		enableWindow(hwndProxyCheck, true)
 		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_UNCHECKED, 0)
-		setStatusPart(2, "Enter a target and click Scan")
+		setStatusPart(statusPartScan, "Enter a target and click Scan")
 		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
 		return 0
 
@@ -865,7 +865,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				bcastMDNS++
 			}
 			bcastCount++
-			setStatusPart(1, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
+			setStatusPart(statusPartBcast, fmt.Sprintf("Broadcast: %d service(s)", bcastCount))
 			updateNetworkTab()
 			// Registry: append service to the host's ExtraServices list.
 			en := ensureHostEntry(e.ip)
@@ -896,7 +896,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					listHasHosts = true
 					showWindow(hwndListPlaceholder, SW_HIDE)
 				}
-				setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
+				setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: found %d", liveCount))
 			}
 		} else if r.Alive {
 			// Broadcast-only or out-of-range host.
@@ -909,7 +909,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				listHasHosts = true
 				showWindow(hwndListPlaceholder, SW_HIDE)
 			}
-			setStatusPart(0, fmt.Sprintf("Hosts: found %d", liveCount))
+			setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: found %d", liveCount))
 			// Broadcast-only hosts skip per-host probing; request enrichment.
 			if r.Hostname == "" && r.NetBIOS == "" {
 				kickNetBIOSProbe(HWND(hwnd), ipStr)
@@ -949,8 +949,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		scanEverCompleted = true
 		isScanning = false
 		setWindowText(hwndScan, "Scan")
-		setStatusPart(0, fmt.Sprintf("Hosts: %d found", liveCount))
-		setStatusPart(2, fmt.Sprintf("Scan complete in %.1fs", scanDuration.Seconds()))
+		setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: %d found", liveCount))
+		setStatusPart(statusPartScan, fmt.Sprintf("Scan complete in %.1fs", scanDuration.Seconds()))
 		if !listHasHosts {
 			setWindowText(hwndListPlaceholder, "No hosts found — try widening the target range")
 			showWindow(hwndListPlaceholder, SW_SHOW)
@@ -1231,15 +1231,15 @@ func createControls(hwnd HWND) {
 	// Part 3 is owner-drawn (SBT_OWNERDRAW) so the parent can colour it.
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
 	setStatusParts(200, 400, 600)
-	setStatusPart(0, "Ready")
+	setStatusPart(statusPartHosts, "Ready")
 	if proxyEnabled {
-		setStatusPart(1, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
+		setStatusPart(statusPartBcast, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
 	} else {
-		setStatusPart(1, "Broadcast: listening…")
+		setStatusPart(statusPartBcast, "Broadcast: listening…")
 	}
-	setStatusPart(2, "Enter a target and click Scan")
-	// Part 3 is owner-drawn; lParam=0 since we read state from globals in WM_DRAWITEM.
-	sendMessage(hwndStatus, SB_SETTEXT, 3|SBT_OWNERDRAW, 0)
+	setStatusPart(statusPartScan, "Enter a target and click Scan")
+	// Part 3 is owner-drawn; trigger first paint.
+	refreshServiceStatePart()
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
 	// Use the actual window DPI (set above) so the font is correct on all monitors.
@@ -1401,7 +1401,7 @@ func startScan(hwnd HWND) {
 	scanStartTime = time.Now()
 	setWindowText(hwndScan, "Stop")
 	showWindow(hwndListPlaceholder, SW_HIDE)
-	setStatusPart(2, statusForService()+" — scanning")
+	setStatusPart(statusPartScan, statusForService()+" — scanning")
 
 	// Route all scans through the persistent sensor service.
 	if serviceRunning() {
@@ -1491,10 +1491,10 @@ func applyProxyMode(hwnd HWND, enable bool) {
 	proxyEnabled = enable
 	if enable {
 		stopBroadcastListener()
-		setStatusPart(1, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
+		setStatusPart(statusPartBcast, "Proxy mode: socks5://"+appConfig.Scan.SOCKSProxy)
 	} else {
 		startBroadcastListener()
-		setStatusPart(1, "Broadcast: listening\u2026")
+		setStatusPart(statusPartBcast, "Broadcast: listening…")
 	}
 	// Refresh placeholder text for broadcast tabs that are currently visible.
 	proxyMsg := "Not available in proxy mode"
@@ -1617,8 +1617,14 @@ func setStatusPart(part uintptr, s string) {
 	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
 }
 
-// setStatus is a convenience wrapper that updates the rightmost (state) part.
-func setStatus(s string) { setStatusPart(2, s) }
+// refreshServiceStatePart triggers a repaint of the owner-drawn service-state
+// part of the status bar.  Call whenever service connectivity or elevation state changes.
+func refreshServiceStatePart() {
+	sendMessage(hwndStatus, SB_SETTEXT, statusPartService|SBT_OWNERDRAW, 0)
+}
+
+// setStatus is a convenience wrapper that updates the scan-state part.
+func setStatus(s string) { setStatusPart(statusPartScan, s) }
 
 // updateNetworkTab refreshes the Network tab with live broadcast stats.
 // Called on the UI thread whenever a broadcast entry arrives or service state changes.
