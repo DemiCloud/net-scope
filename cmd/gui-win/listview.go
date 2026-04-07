@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -26,22 +25,6 @@ const (
 	colBanner   int32 = 8
 	colServices int32 = 9
 )
-
-// listViewAddColumnFmt inserts a column at index idx with explicit alignment.
-func listViewAddColumnFmt(hwnd HWND, idx int32, title string, width, fmt int32) {
-	col := LVCOLUMN{
-		Mask:    LVCF_TEXT | LVCF_WIDTH | LVCF_FMT,
-		Fmt:     fmt,
-		Cx:      width,
-		PszText: utf16(title),
-	}
-	sendMessage(hwnd, LVM_INSERTCOLUMN, uintptr(idx), uintptr(unsafe.Pointer(&col)))
-}
-
-// listViewAddColumn inserts a left-aligned column at index idx.
-func listViewAddColumn(hwnd HWND, idx int32, title string, width int32) {
-	listViewAddColumnFmt(hwnd, idx, title, width, LVCFMT_LEFT)
-}
 
 // listViewInsertPendingRow appends a row showing ip with a "…" status placeholder.
 // Returns the row index, or -1 on failure.
@@ -675,151 +658,8 @@ func isOpaqueHex(v string) bool {
 	return true
 }
 
-// setSubItem sets the text for column col of an existing row.
-func setSubItem(hwnd HWND, row, col int32, text string) {
-	t := utf16(text)
-	item := LVITEM{
-		Mask:     LVIF_TEXT,
-		IItem:    row,
-		ISubItem: col,
-		PszText:  t,
-	}
-	sendMessage(hwnd, LVM_SETITEM, 0, uintptr(unsafe.Pointer(&item)))
-}
-
-// listViewGetCellText reads the text of a single cell via LVM_GETITEMTEXT.
-func listViewGetCellText(hwnd HWND, row, col int32) string {
-	buf := make([]uint16, 512)
-	item := LVITEM{
-		ISubItem: col,
-		PszText:  &buf[0],
-		CchTextMax: int32(len(buf)),
-	}
-	sendMessage(hwnd, LVM_GETITEMTEXT, uintptr(row), uintptr(unsafe.Pointer(&item)))
-	return syscall.UTF16ToString(buf)
-}
-
-// listViewGetRowTSV returns all visible columns of a row as a tab-separated string.
-func listViewGetRowTSV(hwnd HWND, row, numCols int32) string {
-	parts := make([]string, numCols)
-	for c := int32(0); c < numCols; c++ {
-		parts[c] = listViewGetCellText(hwnd, row, c)
-	}
-	return strings.Join(parts, "\t")
-}
-
-// ---------------------------------------------------------------------------
-// Multi-row copy helpers
-// ---------------------------------------------------------------------------
-
-// listViewSelectAll selects every row in hwnd.
-func listViewSelectAll(hwnd HWND) {
-	item := LVITEM{
-		State:     LVIS_SELECTED,
-		StateMask: LVIS_SELECTED,
-	}
-	sendMessage(hwnd, LVM_SETITEMSTATE, ^uintptr(0), uintptr(unsafe.Pointer(&item)))
-}
-
-// listViewGetSelectedRows returns the row indices of all selected items.
-func listViewGetSelectedRows(hwnd HWND) []int32 {
-	var rows []int32
-	row := int32(sendMessage(hwnd, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-	for row >= 0 {
-		rows = append(rows, row)
-		row = int32(sendMessage(hwnd, LVM_GETNEXTITEM, uintptr(row), LVNI_SELECTED))
-	}
-	return rows
-}
-
-// listViewFormatTSV formats rows as tab-separated values with a header row.
-func listViewFormatTSV(hwnd HWND, rows []int32, numCols int32, headers []string) string {
-	var sb strings.Builder
-	sb.WriteString(strings.Join(headers, "\t"))
-	for _, row := range rows {
-		sb.WriteByte('\n')
-		sb.WriteString(listViewGetRowTSV(hwnd, row, numCols))
-	}
-	return sb.String()
-}
-
-// listViewFormatCSV formats rows as RFC 4180 CSV with a header row.
-func listViewFormatCSV(hwnd HWND, rows []int32, numCols int32, headers []string) string {
-	csvQ := func(s string) string {
-		if strings.ContainsAny(s, ",\"\r\n") {
-			return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-		}
-		return s
-	}
-	quotedHeaders := make([]string, len(headers))
-	for i, h := range headers {
-		quotedHeaders[i] = csvQ(h)
-	}
-	var sb strings.Builder
-	sb.WriteString(strings.Join(quotedHeaders, ","))
-	for _, row := range rows {
-		sb.WriteString("\r\n")
-		for c := int32(0); c < numCols; c++ {
-			if c > 0 {
-				sb.WriteByte(',')
-			}
-			sb.WriteString(csvQ(listViewGetCellText(hwnd, row, c)))
-		}
-	}
-	return sb.String()
-}
-
-// listViewFormatJSON formats rows as a JSON array of objects.
-// Header strings are normalized to snake_case JSON keys.
-func listViewFormatJSON(hwnd HWND, rows []int32, numCols int32, headers []string) string {
-	jsonQ := func(s string) string {
-		s = strings.ReplaceAll(s, `\`, `\\`)
-		s = strings.ReplaceAll(s, `"`, `\"`)
-		s = strings.ReplaceAll(s, "\n", `\n`)
-		s = strings.ReplaceAll(s, "\r", `\r`)
-		s = strings.ReplaceAll(s, "\t", `\t`)
-		return `"` + s + `"`
-	}
-	headerToKey := func(h string) string {
-		h = strings.ToLower(h)
-		var b strings.Builder
-		prev := '_'
-		for _, r := range h {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-				b.WriteRune(r)
-				prev = r
-			} else if prev != '_' {
-				b.WriteByte('_')
-				prev = '_'
-			}
-		}
-		return strings.Trim(b.String(), "_")
-	}
-	keys := make([]string, len(headers))
-	for i, h := range headers {
-		keys[i] = headerToKey(h)
-	}
-	var sb strings.Builder
-	sb.WriteString("[\n")
-	for i, row := range rows {
-		sb.WriteString("  {")
-		for c := int32(0); c < numCols; c++ {
-			if c > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(jsonQ(keys[c]))
-			sb.WriteString(": ")
-			sb.WriteString(jsonQ(listViewGetCellText(hwnd, row, c)))
-		}
-		sb.WriteByte('}')
-		if i < len(rows)-1 {
-			sb.WriteByte(',')
-		}
-		sb.WriteByte('\n')
-	}
-	sb.WriteByte(']')
-	return sb.String()
-}
+// (setSubItem, listViewGetCellText, listViewGetRowTSV, listViewSelectAll,
+// listViewGetSelectedRows, listViewFormatTSV/CSV/JSON — moved to fw_listview.go)
 
 // handleCopyAsCmd executes an IDM_COPY_AS_* command for a ListView.
 // Returns true if cmd was a recognised copy-as command, false otherwise.
@@ -852,7 +692,7 @@ func appendCopyAsSubmenu(menu HMENU) {
 	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
 }
 
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------- 
 // Hosts ListView — sortable columns
 // ---------------------------------------------------------------------------
 
@@ -878,29 +718,10 @@ var hostsColTitles = [10]string{
 	"Services",       // colServices 9
 }
 
-// listViewSetColumnHeader updates the header text for a single column.
-func listViewSetColumnHeader(hwnd HWND, idx int32, title string) {
-	col := LVCOLUMN{
-		Mask:    LVCF_TEXT,
-		PszText: utf16(title),
-	}
-	sendMessage(hwnd, LVM_SETCOLUMN, uintptr(idx), uintptr(unsafe.Pointer(&col)))
-}
-
-// updateSortIndicators refreshes all column headers in hwndList to show ▲/▼
+// updateSortIndicators refreshes column headers in hwndList to show ▲/▼
 // on the current sortCol and plain titles on all others.
 func updateSortIndicators() {
-	for i, title := range hostsColTitles {
-		h := title
-		if int32(i) == sortCol {
-			if sortAsc {
-				h = title + " ▲"
-			} else {
-				h = title + " ▼"
-			}
-		}
-		listViewSetColumnHeader(hwndList, int32(i), h)
-	}
+	lvUpdateSortIndicators(hwndList, hostsColTitles[:], sortCol, sortAsc)
 }
 
 // applyHostsSort re-sorts hwndList rows by sortCol/sortAsc, rebuilding
@@ -1073,24 +894,163 @@ var colDefaultLogicalWidths = [10]int32{40, 120, 160, 145, 140, 90, 70, 110, 300
 // colVisible tracks whether each column is visible; all true by default.
 var colVisible = [10]bool{true, true, true, true, true, true, true, true, true, true}
 
-// setColumnVisible shows or hides a column by setting its width to 0 or its
-// default scaled width. col 0 (Status) should not be hidden.
+// setColumnVisible shows or hides a Hosts-tab column. col 0 (Status) should
+// not be hidden. Delegates to the generic framework helper.
 func setColumnVisible(col int32, visible bool) {
-	if col < 0 || int(col) >= len(colVisible) {
-		return
-	}
-	colVisible[col] = visible
-	w := int32(0)
-	if visible {
-		w = scale(colDefaultLogicalWidths[col])
-	}
-	sendMessage(hwndList, LVM_SETCOLUMNWIDTH, uintptr(col), uintptr(uint32(w)))
+	setLVColumnVisible(hwndList, colDefaultLogicalWidths[:], colVisible[:], col, visible)
 }
 
-// restoreAllColumns resets all columns to visible with their default widths.
+// restoreAllColumns resets all Hosts-tab columns to visible at default widths.
 func restoreAllColumns() {
-	for i := int32(0); i < int32(len(colVisible)); i++ {
-		colVisible[i] = true
-		sendMessage(hwndList, LVM_SETCOLUMNWIDTH, uintptr(i), uintptr(uint32(scale(colDefaultLogicalWidths[i]))))
+	restoreLVColumns(hwndList, colDefaultLogicalWidths[:], colVisible[:])
+}
+
+// ---------------------------------------------------------------------------
+// Per-tab column definitions (mDNS / SSDP / WSD / DHCP)
+// ---------------------------------------------------------------------------
+
+// Column titles — these are the single source of truth: createControls uses
+// them for header text, listViewInfoFor uses them for copy-as headers, and the
+// Edit Columns dialog uses them for checkbox labels.
+
+var (
+	mdnsColTitles = []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes"}
+	mdnsDefWidths = []int32{120, 210, 130, 180, 170, 300}
+	mdnsColVis    = []bool{true, true, true, true, true, true}
+	mdnsSortCol   int32 = -1
+	mdnsSortAsc         = true
+
+	ssdpColTitles = []string{"IP", "Server", "Type", "Services", "Location"}
+	ssdpDefWidths = []int32{120, 220, 160, 280, 300}
+	ssdpColVis    = []bool{true, true, true, true, true}
+	ssdpSortCol   int32 = -1
+	ssdpSortAsc         = true
+
+	wsdColTitles = []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID"}
+	wsdDefWidths = []int32{120, 180, 300, 200, 280}
+	wsdColVis    = []bool{true, true, true, true, true}
+	wsdSortCol   int32 = -1
+	wsdSortAsc         = true
+
+	dhcpColTitles = []string{"Time", "Type", "Client MAC", "Hostname", "Client IP", "Requested IP", "Offered IP", "Server IP"}
+	dhcpDefWidths = []int32{75, 90, 140, 160, 120, 120, 120, 120}
+	dhcpColVis    = []bool{true, true, true, true, true, true, true, true}
+	dhcpSortCol   int32 = -1
+	dhcpSortAsc         = true
+)
+
+// ---------------------------------------------------------------------------
+// Per-tab sort-apply functions
+// ---------------------------------------------------------------------------
+
+// applyMDNSSort sorts the mDNS listview by the current mdnsSortCol/mdnsSortAsc,
+// then rebuilds mdnsRaw so that "copy raw data" remains accurate.
+func applyMDNSSort() {
+	if mdnsSortCol < 0 {
+		return
+	}
+	numCols := int32(len(mdnsColTitles))
+	// Snapshot raw data keyed by (IP, instance name) before rows are reordered.
+	type rowKey struct{ ip, name string }
+	keyedRaw := make(map[rowKey][]string, len(mdnsRaw))
+	for row, records := range mdnsRaw {
+		ip := listViewGetCellText(hwndListMDNS, row, 0)
+		name := listViewGetCellText(hwndListMDNS, row, 1)
+		keyedRaw[rowKey{ip, name}] = records
+	}
+	lvTextSort(hwndListMDNS, numCols, mdnsSortCol, mdnsSortAsc)
+	// Rebuild mdnsRaw with new row indices.
+	count := int32(sendMessage(hwndListMDNS, LVM_GETITEMCOUNT, 0, 0))
+	mdnsRaw = make(map[int32][]string, count)
+	for i := int32(0); i < count; i++ {
+		ip := listViewGetCellText(hwndListMDNS, i, 0)
+		name := listViewGetCellText(hwndListMDNS, i, 1)
+		if records, ok := keyedRaw[rowKey{ip, name}]; ok {
+			mdnsRaw[i] = records
+		}
 	}
 }
+
+// applySSDPSort sorts the SSDP listview and rebuilds ssdpIPRow.
+func applySSDPSort() {
+	if ssdpSortCol < 0 {
+		return
+	}
+	lvTextSort(hwndListSSDP, int32(len(ssdpColTitles)), ssdpSortCol, ssdpSortAsc)
+	count := int32(sendMessage(hwndListSSDP, LVM_GETITEMCOUNT, 0, 0))
+	ssdpIPRow = make(map[string]int32, count)
+	for i := int32(0); i < count; i++ {
+		ip := listViewGetCellText(hwndListSSDP, i, 0)
+		ssdpIPRow[ip] = i
+	}
+}
+
+// applyWSDSort sorts the WSD listview and rebuilds wsdIPRow.
+func applyWSDSort() {
+	if wsdSortCol < 0 {
+		return
+	}
+	lvTextSort(hwndListWSD, int32(len(wsdColTitles)), wsdSortCol, wsdSortAsc)
+	count := int32(sendMessage(hwndListWSD, LVM_GETITEMCOUNT, 0, 0))
+	wsdIPRow = make(map[string]int32, count)
+	for i := int32(0); i < count; i++ {
+		ip := listViewGetCellText(hwndListWSD, i, 0)
+		wsdIPRow[ip] = i
+	}
+}
+
+// applyDHCPSort sorts the DHCP listview. DHCP rows have no deduplication maps.
+func applyDHCPSort() {
+	if dhcpSortCol < 0 {
+		return
+	}
+	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), dhcpSortCol, dhcpSortAsc)
+}
+
+// handleListColumnClick dispatches an LVN_COLUMNCLICK event to the correct
+// sort handler. Returns true if the event was consumed.
+func handleListColumnClick(idFrom uintptr, col int32) bool {
+	switch idFrom {
+	case IDC_LIST:
+		sortCol, sortAsc = lvNextSortState(sortCol, sortAsc, col)
+		updateSortIndicators()
+		applyHostsSort()
+		return true
+	case IDC_LIST_MDNS:
+		mdnsSortCol, mdnsSortAsc = lvNextSortState(mdnsSortCol, mdnsSortAsc, col)
+		lvUpdateSortIndicators(hwndListMDNS, mdnsColTitles, mdnsSortCol, mdnsSortAsc)
+		applyMDNSSort()
+		return true
+	case IDC_LIST_SSDP:
+		ssdpSortCol, ssdpSortAsc = lvNextSortState(ssdpSortCol, ssdpSortAsc, col)
+		lvUpdateSortIndicators(hwndListSSDP, ssdpColTitles, ssdpSortCol, ssdpSortAsc)
+		applySSDPSort()
+		return true
+	case IDC_LIST_WSD:
+		wsdSortCol, wsdSortAsc = lvNextSortState(wsdSortCol, wsdSortAsc, col)
+		lvUpdateSortIndicators(hwndListWSD, wsdColTitles, wsdSortCol, wsdSortAsc)
+		applyWSDSort()
+		return true
+	case IDC_LIST_DHCP:
+		dhcpSortCol, dhcpSortAsc = lvNextSortState(dhcpSortCol, dhcpSortAsc, col)
+		lvUpdateSortIndicators(hwndListDHCP, dhcpColTitles, dhcpSortCol, dhcpSortAsc)
+		applyDHCPSort()
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// lvHeaderInfo maps a listview header HWND to its Edit Columns parameters.
+// Built in createControls; consumed by WM_NOTIFY NM_RCLICK on header.
+// ---------------------------------------------------------------------------
+
+type lvHeaderInfo struct {
+	hwndLV    HWND
+	colTitles []string
+	colVis    []bool  // slice into the tab's actual visibility array
+	defWidths []int32 // 96-DPI logical widths
+}
+
+// headerInfos maps each listview's header HWND to its lvHeaderInfo.
+var headerInfos = map[HWND]*lvHeaderInfo{}
