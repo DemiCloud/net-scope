@@ -599,11 +599,36 @@ var (
 
 // allHostsSelectedIP returns the IP of the currently selected All-Hosts row, or "".
 func allHostsSelectedIP() string {
-	row := int32(sendMessage(hwndAllHostsList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-	if row < 0 {
-		return ""
+	return listViewSelectedText(hwndAllHostsList, 0)
+}
+
+// hostsListViewRepopulate clears hwnd and fills it with IP + hostname rows
+// from the session registry, keeping only rows where IP or hostname contains
+// filter (case-insensitive). An empty filter shows all hosts.
+func hostsListViewRepopulate(hwnd HWND, filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
+	for _, ip := range allHostIPs() {
+		name := ""
+		if e, ok := hostRegistry[ip]; ok {
+			name = e.Result.Hostname
+			if name == "" {
+				name = e.Result.NetBIOS
+			}
+		}
+		if filter != "" {
+			if !strings.Contains(strings.ToLower(ip), filter) &&
+				!strings.Contains(strings.ToLower(name), filter) {
+				continue
+			}
+		}
+		p := utf16(ip)
+		item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+		row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+		if row >= 0 {
+			setSubItem(hwnd, row, 1, name)
+		}
 	}
-	return listViewGetCellText(hwndAllHostsList, row, 0)
 }
 
 // allHostsDoAction executes a context-menu action for the given ip.
@@ -658,21 +683,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			cW-pad-100, cH-pad-btnH, 100, btnH, HWND(hwnd), HMENU(idAllHostsClose), inst)
 
 		// Populate rows from registry.
-		for _, ip := range allHostIPs() {
-			p := utf16(ip)
-			item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
-			row := int32(sendMessage(hwndAllHostsList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-			if row >= 0 {
-				name := ""
-				if e, ok := hostRegistry[ip]; ok {
-					name = e.Result.Hostname
-					if name == "" {
-						name = e.Result.NetBIOS
-					}
-				}
-				setSubItem(hwndAllHostsList, row, 1, name)
-			}
-		}
+		hostsListViewRepopulate(hwndAllHostsList, "")
 		return 0
 
 	case WM_CTLCOLORSTATIC:
@@ -786,46 +797,16 @@ var (
 	hwndPickList HWND
 )
 
-// pickHostRepopulate filters hwndPickList to rows whose IP or hostname
-// contains filter (case-insensitive). An empty filter shows all hosts.
+// pickHostRepopulate filters hwndPickList to rows matching filter and
+// auto-selects the first result so Enter immediately works.
 func pickHostRepopulate(filter string) {
-	filter = strings.ToLower(filter)
-	sendMessage(hwndPickList, LVM_DELETEALLITEMS, 0, 0)
-	for _, ip := range allHostIPs() {
-		name := ""
-		if e, ok := hostRegistry[ip]; ok {
-			name = e.Result.Hostname
-			if name == "" {
-				name = e.Result.NetBIOS
-			}
-		}
-		if filter != "" {
-			if !strings.Contains(strings.ToLower(ip), filter) &&
-				!strings.Contains(strings.ToLower(name), filter) {
-				continue
-			}
-		}
-		p := utf16(ip)
-		item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
-		row := int32(sendMessage(hwndPickList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-		if row >= 0 {
-			setSubItem(hwndPickList, row, 1, name)
-		}
-	}
-	// Auto-select first row so Enter immediately works.
-	if sendMessage(hwndPickList, LVM_GETITEMCOUNT, 0, 0) > 0 {
-		item := LVITEM{State: LVIS_SELECTED | LVIS_FOCUSED, StateMask: LVIS_SELECTED | LVIS_FOCUSED}
-		sendMessage(hwndPickList, LVM_SETITEMSTATE, 0, uintptr(unsafe.Pointer(&item)))
-	}
+	hostsListViewRepopulate(hwndPickList, filter)
+	listViewSelectFirst(hwndPickList)
 }
 
 // pickHostSelectedIP returns the IP of the selected row, or "".
 func pickHostSelectedIP() string {
-	row := int32(sendMessage(hwndPickList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-	if row < 0 {
-		return ""
-	}
-	return listViewGetCellText(hwndPickList, row, 0)
+	return listViewSelectedText(hwndPickList, 0)
 }
 
 // pickHostConfirm resolves the best IP from the dialog: selected list row

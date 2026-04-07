@@ -109,6 +109,29 @@ func listViewGetSelectedRows(hwnd HWND) []int32 {
 	return rows
 }
 
+// listViewSelectedText returns the text of column col for the first selected
+// row, or "" if nothing is selected.
+func listViewSelectedText(hwnd HWND, col int32) string {
+	row := int32(sendMessage(hwnd, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	if row < 0 {
+		return ""
+	}
+	return listViewGetCellText(hwnd, row, col)
+}
+
+// listViewSelectFirst selects and focuses the first row of hwnd, if any rows
+// exist. Useful after repopulating a list to prime keyboard navigation.
+func listViewSelectFirst(hwnd HWND) {
+	if sendMessage(hwnd, LVM_GETITEMCOUNT, 0, 0) == 0 {
+		return
+	}
+	item := LVITEM{
+		State:     LVIS_SELECTED | LVIS_FOCUSED,
+		StateMask: LVIS_SELECTED | LVIS_FOCUSED,
+	}
+	sendMessage(hwnd, LVM_SETITEMSTATE, 0, uintptr(unsafe.Pointer(&item)))
+}
+
 // ---------------------------------------------------------------------------
 // Data export formatters
 // ---------------------------------------------------------------------------
