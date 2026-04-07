@@ -98,6 +98,10 @@ Follow the conventional-commits style already used in the repo:
 
 Do **not** push automatically; only commit locally unless the user explicitly asks to push.
 
+**Before committing, check `TODO.md`** — if the change being committed completes or fixes something on the list, mark the relevant item(s) `[x]` and include `TODO.md` in the same commit.
+
+**Keep the wiki up to date.** The wiki lives in `.wiki/` (a separate git repo, cloned locally). When a change affects user-visible behaviour documented there, update the relevant `.wiki/*.md` file in the same working session. If `.wiki/` is missing or empty, notify the operator — the wiki repo needs to be cloned first: `git clone https://github.com/demicloud/net-scope.wiki.git .wiki`
+
 ---
 
 ## Key Conventions
@@ -170,7 +174,7 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 
 - Do not add scanning, enrichment, or capture logic to any GUI or CLI file.
 - Do not add Win32 or platform-specific code outside `cmd/gui-win/`.
-- The service layer (`sweep.Service` / Windows service shim) should be reusable from the TUI and any future Linux GUI — it is not a GUI-only component.
+- The service layer (sensor service / Windows service shim) should be reusable from the TUI and any future Linux GUI — it is not a GUI-only component.
 - Config parsing and defaults live in `internal/config/`; frontends only call `Load()` / `SaveTo()`.
 
 ---
