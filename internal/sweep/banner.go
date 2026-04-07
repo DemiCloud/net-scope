@@ -24,7 +24,7 @@ type BannerInfo struct {
 // grabBanners attempts lightweight banner grabs on well-known open ports and
 // returns a BannerInfo. Only ports that are in openPorts are probed. It never
 // opens a connection to a port that wasn't already confirmed open.
-func grabBanners(ctx context.Context, ip net.IP, openPorts []int, timeout time.Duration) BannerInfo {
+func grabBanners(ctx context.Context, ip net.IP, openPorts []int, timeout time.Duration, dial DialFunc) BannerInfo {
 	portSet := make(map[int]bool, len(openPorts))
 	for _, p := range openPorts {
 		portSet[p] = true
@@ -33,49 +33,49 @@ func grabBanners(ctx context.Context, ip net.IP, openPorts []int, timeout time.D
 	var info BannerInfo
 
 	type probe struct {
-		port    int
-		fn      func()
+		port int
+		fn   func()
 	}
 
 	probes := []probe{
 		{22, func() {
 			if portSet[22] {
-				info.SSH = grabSSH(ctx, ip, timeout)
+				info.SSH = grabSSH(ctx, ip, timeout, dial)
 			}
 		}},
 		{21, func() {
 			if portSet[21] {
-				info.FTP = grabLineBanner(ctx, ip, 21, timeout)
+				info.FTP = grabLineBanner(ctx, ip, 21, timeout, dial)
 			}
 		}},
 		{23, func() {
 			if portSet[23] {
-				info.Telnet = grabLineBanner(ctx, ip, 23, timeout)
+				info.Telnet = grabLineBanner(ctx, ip, 23, timeout, dial)
 			}
 		}},
 		{25, func() {
 			if portSet[25] {
-				info.SMTP = grabLineBanner(ctx, ip, 25, timeout)
+				info.SMTP = grabLineBanner(ctx, ip, 25, timeout, dial)
 			}
 		}},
 		{80, func() {
 			if portSet[80] {
-				info.HTTP = grabHTTP(ctx, ip, 80, false, timeout)
+				info.HTTP = grabHTTP(ctx, ip, 80, false, timeout, dial)
 			}
 		}},
 		{8080, func() {
 			if portSet[8080] && info.HTTP == "" {
-				info.HTTP = grabHTTP(ctx, ip, 8080, false, timeout)
+				info.HTTP = grabHTTP(ctx, ip, 8080, false, timeout, dial)
 			}
 		}},
 		{443, func() {
 			if portSet[443] {
-				info.HTTPS = grabHTTP(ctx, ip, 443, true, timeout)
+				info.HTTPS = grabHTTP(ctx, ip, 443, true, timeout, dial)
 			}
 		}},
 		{8443, func() {
 			if portSet[8443] && info.HTTPS == "" {
-				info.HTTPS = grabHTTP(ctx, ip, 8443, true, timeout)
+				info.HTTPS = grabHTTP(ctx, ip, 8443, true, timeout, dial)
 			}
 		}},
 	}
@@ -92,7 +92,7 @@ func grabBanners(ctx context.Context, ip net.IP, openPorts []int, timeout time.D
 
 // grabHTTP issues a HEAD (then GET on failure) to http(s)://ip:port/ and
 // returns the Server header or page title.
-func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.Duration) string {
+func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.Duration, dial DialFunc) string {
 	scheme := "http"
 	if tls_ {
 		scheme = "https"
@@ -102,6 +102,7 @@ func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.
 	transport := &http.Transport{
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // admin tool scanning own LAN
 		DisableKeepAlives: true,
+		DialContext:       dialOrDirect(dial),
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -139,12 +140,12 @@ func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.
 }
 
 // grabSSH connects to port 22 and reads the SSH identification string.
-func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration) string {
+func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration, dial DialFunc) string {
 	dl := time.Now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(dl) {
 		dl = d
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "22"))
+	conn, err := dialOrDirect(dial)(ctx, "tcp", net.JoinHostPort(ip.String(), "22"))
 	if err != nil {
 		return ""
 	}
@@ -168,12 +169,12 @@ func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration) string {
 }
 
 // grabLineBanner connects to port and reads the first non-empty line (FTP, SMTP, Telnet).
-func grabLineBanner(ctx context.Context, ip net.IP, port int, timeout time.Duration) string {
+func grabLineBanner(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
 	dl := time.Now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(dl) {
 		dl = d
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp",
+	conn, err := dialOrDirect(dial)(ctx, "tcp",
 		net.JoinHostPort(ip.String(), fmt.Sprintf("%d", port)))
 	if err != nil {
 		return ""

@@ -29,6 +29,7 @@ const (
 	idSettNetBIOS       = 505
 	idSettDefaultTarget = 506
 	idSettProtoHandlers = 507
+	idSettSOCKSProxy    = 508
 )
 
 var (
@@ -43,6 +44,7 @@ var (
 	hwndSettNetBIOS       HWND
 	hwndSettPath          HWND
 	hwndSettDefaultTarget HWND
+	hwndSettSOCKS         HWND
 )
 
 var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -88,7 +90,7 @@ func showSettingsDialog(parent HWND) {
 		titleSuffix = "First Run — settings apply this session; use OK to save"
 	}
 
-	const dlgW, dlgH int32 = 560, 440
+	const dlgW, dlgH int32 = 560, 470
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetSweepSettings", "Settings — "+titleSuffix,
@@ -109,6 +111,7 @@ func showSettingsDialog(parent HWND) {
 	setWindowText(hwndSettIface, appConfig.Scan.Interface)
 	setWindowText(hwndSettBcast, appConfig.Scan.BroadcastListen)
 	setWindowText(hwndSettDefaultTarget, appConfig.Scan.DefaultTarget)
+	setWindowText(hwndSettSOCKS, appConfig.Scan.SOCKSProxy)
 	if appConfig.Scan.PingFirst {
 		sendMessage(hwndSettPingFirst, BM_SETCHECK, BST_CHECKED, 0)
 	}
@@ -150,6 +153,7 @@ func createSettingsControls(hwnd HWND) {
 		{"Interface:", &hwndSettIface},
 		{"Broadcast Listen:", &hwndSettBcast},
 		{"Default Target:", &hwndSettDefaultTarget},
+		{"SOCKS5 Proxy:", &hwndSettSOCKS},
 	}
 
 	for i, f := range fields {
@@ -203,6 +207,7 @@ func applySettings(hwnd HWND) bool {
 	iface := strings.TrimSpace(getWindowText(hwndSettIface))
 	bcast := strings.TrimSpace(getWindowText(hwndSettBcast))
 	defaultTarget := strings.TrimSpace(getWindowText(hwndSettDefaultTarget))
+	socksProxy := strings.TrimSpace(getWindowText(hwndSettSOCKS))
 	pingFirst := sendMessage(hwndSettPingFirst, BM_GETCHECK, 0, 0) == BST_CHECKED
 	bannerGrab := sendMessage(hwndSettBanner, BM_GETCHECK, 0, 0) == BST_CHECKED
 	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
@@ -239,6 +244,13 @@ func applySettings(hwnd HWND) bool {
 		}
 	}
 
+	if socksProxy != "" {
+		if _, err := sweep.MakeDialFunc(socksProxy); err != nil {
+			messageBox(hwnd, "SOCKS5 Proxy address is invalid:\n"+err.Error(), "Invalid Input", 0)
+			return false
+		}
+	}
+
 	cfg := config.Config{
 		Scan: config.ScanConfig{
 			Timeout:          timeout,
@@ -251,6 +263,7 @@ func applySettings(hwnd HWND) bool {
 			BannerGrab:       bannerGrab,
 			NetBIOS:          netBIOS,
 			DefaultTarget:    defaultTarget,
+			SOCKSProxy:       socksProxy,
 			ProtocolHandlers: appConfig.Scan.ProtocolHandlers, // edited separately
 		},
 	}

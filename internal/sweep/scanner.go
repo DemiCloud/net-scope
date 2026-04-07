@@ -2,10 +2,13 @@ package sweep
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // Scanner orchestrates host discovery and port scanning across a target range.
@@ -49,6 +52,39 @@ type Config struct {
 	BannerGrab      bool          // grab service banners from open ports
 	NetBIOS         bool          // query NetBIOS names (UDP 137)
 	TCPFirst        bool          // use TCP connect as liveness probe (no raw socket needed)
+	// SOCKSProxy is the address of a SOCKS5 proxy (e.g. "127.0.0.1:1080").
+	// When set, all TCP connections are routed through the proxy and
+	// ARP, ICMP, mDNS, SSDP, WSD, NetBIOS, and SNMP are disabled.
+	SOCKSProxy string
+}
+
+// DialFunc is a context-aware TCP dial function. nil means use the system default.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// MakeDialFunc returns a DialFunc that routes connections through the SOCKS5
+// proxy at addr, or nil (direct) when addr is empty.
+func MakeDialFunc(addr string) (DialFunc, error) {
+	if addr == "" {
+		return nil, nil
+	}
+	d, err := proxy.SOCKS5("tcp", addr, nil, proxy.Direct)
+	if err != nil {
+		return nil, fmt.Errorf("socks5 proxy %q: %w", addr, err)
+	}
+	if cd, ok := d.(proxy.ContextDialer); ok {
+		return cd.DialContext, nil
+	}
+	return func(ctx context.Context, network, a string) (net.Conn, error) {
+		return d.Dial(network, a)
+	}, nil
+}
+
+// dialOrDirect returns dial if non-nil, otherwise returns a default net.Dialer.DialContext.
+func dialOrDirect(dial DialFunc) DialFunc {
+	if dial != nil {
+		return dial
+	}
+	return (&net.Dialer{}).DialContext
 }
 
 // DefaultConfig returns sensible defaults for a LAN sweep.
@@ -81,6 +117,11 @@ func NewScanner(cfg Config) *Scanner {
 //  4. Broadcast data is merged into each host result
 //  5. Hosts seen only via broadcast are emitted at the end
 func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error) {
+	if s.Config.SOCKSProxy != "" {
+		if _, err := MakeDialFunc(s.Config.SOCKSProxy); err != nil {
+			return nil, err
+		}
+	}
 	hosts, err := expandTarget(target)
 	if err != nil {
 		return nil, err
@@ -102,6 +143,9 @@ func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error
 }
 
 func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result) {
+	// --- Proxy dialer (nil = direct connections) ---
+	dial, _ := MakeDialFunc(s.Config.SOCKSProxy)
+
 	// --- 1. Network interface ---
 	var iface *net.Interface
 	if s.Config.Interface != "" {
@@ -116,11 +160,13 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	}
 
 	// --- 2. Broadcast discovery (runs concurrently with ARP + host sweep) ---
+	// Skipped in proxy mode: mDNS/SSDP are link-local multicast, not routable
+	// through a SOCKS tunnel.
 	broadcastMap := make(map[string][]ServiceInfo)
 	var broadcastMu sync.Mutex
 	var broadcastDone chan struct{}
 
-	if s.Config.BroadcastListen > 0 {
+	if s.Config.BroadcastListen > 0 && dial == nil {
 		broadcastDone = make(chan struct{})
 		go func() {
 			defer close(broadcastDone)
@@ -156,8 +202,9 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	// Wrapped in its own recover: mdlayher/arp panics on platforms without
 	// raw Ethernet support (e.g. Windows without npcap). A nil map is safe —
 	// all hosts fall through to ICMP / TCP liveness probes.
+	// Skipped in proxy mode: ARP is a Layer-2 protocol, not routable through SOCKS.
 	var macMap map[string]net.HardwareAddr
-	if iface != nil {
+	if iface != nil && dial == nil {
 		func() {
 			defer func() { _ = recover() }()
 			macMap = batchARP(iface, hosts, s.Config.Timeout*2)
@@ -190,7 +237,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			defer func() { <-sem }()
 			defer func() { _ = recover() }() // raw-socket panics must not kill the process
 
-			r := s.probeHost(ctx, ip, macMap)
+			r := s.probeHost(ctx, ip, macMap, dial)
 
 			// Attach any broadcast data already collected for this IP.
 			broadcastMu.Lock()
@@ -237,7 +284,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 }
 
 // probeHost runs all per-host probes and returns a populated Result.
-func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]net.HardwareAddr) Result {
+func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]net.HardwareAddr, dial DialFunc) Result {
 	r := Result{IP: ip}
 
 	// ARP result → alive + MAC + vendor
@@ -247,8 +294,8 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		r.Vendor = lookupVendor(mac)
 	}
 
-	// ICMP fallback if ARP missed the host.
-	if !r.Alive && s.Config.PingFirst {
+	// ICMP fallback if ARP missed the host (skipped in proxy mode).
+	if dial == nil && !r.Alive && s.Config.PingFirst {
 		atomic.AddInt64(&s.Stats.PacketsSent, 1)
 		latency, ttl, alive := ping(ctx, ip, s.Config.Timeout)
 		if alive {
@@ -270,7 +317,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		} else {
 			atomic.AddInt64(&s.Stats.Timeouts, 1)
 		}
-	} else if r.Alive && s.Config.PingFirst {
+	} else if dial == nil && r.Alive && s.Config.PingFirst {
 		// We got MAC via ARP but still want latency + TTL — ping if no latency yet.
 		if r.Latency == 0 {
 			atomic.AddInt64(&s.Stats.PacketsSent, 1)
@@ -286,11 +333,10 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}
 	}
 
-	// TCP liveness fallback — last resort when ARP/ICMP both failed (e.g. no
-	// npcap on Windows or ICMP blocked by firewall). Always attempted regardless
-	// of TCPFirst: if any configured port responds the host is alive.
+	// TCP liveness fallback — last resort when ARP/ICMP both failed, or the
+	// primary path in proxy mode (where ARP+ICMP are always skipped).
 	if !r.Alive && len(s.Config.Ports) > 0 {
-		open := scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
+		open := scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout, dial)
 		if len(open) > 0 {
 			r.Alive = true
 			r.OpenPorts = open // already have results — skip the second scan below
@@ -324,11 +370,11 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 	go func() {
 		defer wg.Done()
 		if len(s.Config.Ports) > 0 && len(r.OpenPorts) == 0 {
-			r.OpenPorts = scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout)
+			r.OpenPorts = scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout, dial)
 		}
 	}()
 
-	if s.Config.SNMPCommunity != "" {
+	if s.Config.SNMPCommunity != "" && dial == nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -336,7 +382,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}()
 	}
 
-	if s.Config.NetBIOS {
+	if s.Config.NetBIOS && dial == nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -348,7 +394,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 
 	// Banner grab runs after port scan (needs openPorts list).
 	if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout)
+		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
 	}
 
 	return r

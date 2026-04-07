@@ -65,6 +65,7 @@ func runCLI() {
 	noNetBIOS   := fs.Bool("no-netbios", false, "disable NetBIOS name queries")
 	iface       := fs.StringP("interface", "i", cfg.Scan.Interface, "network interface for ARP (auto-detect if empty)")
 	snmpComm    := fs.String("snmp-community", cfg.Scan.SNMPCommunity, "SNMP v2c community string")
+	socksProxy  := fs.String("socks", cfg.Scan.SOCKSProxy, "SOCKS5 proxy address (e.g. 127.0.0.1:1080); disables ARP/ICMP/mDNS")
 	showDown    := fs.Bool("show-down", false, "include non-responding hosts in text output")
 	showVersion := fs.BoolP("version", "V", false, "print version and exit")
 
@@ -151,6 +152,9 @@ func runCLI() {
 	}
 	if *noNetBIOS {
 		scanCfg.NetBIOS = false
+	}
+	if *socksProxy != "" {
+		scanCfg.SOCKSProxy = *socksProxy
 	}
 
 	hosts, err := sweep.ExpandTarget(target)

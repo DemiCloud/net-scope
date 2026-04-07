@@ -40,8 +40,9 @@ var CommonProbes = []ProbeSpec{
 }
 
 // RunProbe executes spec against ip and returns the result.
+// dial is an optional proxy DialFunc; nil means direct connection.
 // Honours ctx cancellation and clamps wall time to timeout.
-func RunProbe(ctx context.Context, ip string, spec ProbeSpec, timeout time.Duration) ProbeResult {
+func RunProbe(ctx context.Context, ip string, spec ProbeSpec, timeout time.Duration, dial DialFunc) ProbeResult {
 	res := ProbeResult{Port: spec.Port, Type: spec.Type}
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
@@ -50,47 +51,49 @@ func RunProbe(ctx context.Context, ip string, spec ProbeSpec, timeout time.Durat
 	}
 	switch spec.Type {
 	case "SSH":
-		if v := probeSSHBanner(ctx, parsed, spec.Port, timeout); v != "" {
+		if v := probeSSHBanner(ctx, parsed, spec.Port, timeout, dial); v != "" {
 			res.Result = v
 		} else {
-			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout)
+			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
 		}
 	case "HTTP":
-		if v := grabHTTP(ctx, parsed, spec.Port, false, timeout); v != "" {
+		if v := grabHTTP(ctx, parsed, spec.Port, false, timeout, dial); v != "" {
 			res.Result = v
 		} else {
-			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout)
+			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
 		}
 	case "HTTPS":
-		if v := grabHTTP(ctx, parsed, spec.Port, true, timeout); v != "" {
+		if v := grabHTTP(ctx, parsed, spec.Port, true, timeout, dial); v != "" {
 			res.Result = v
 		} else {
-			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout)
+			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
 		}
 	case "FTP", "SMTP", "Telnet":
-		if v := grabLineBanner(ctx, parsed, spec.Port, timeout); v != "" {
+		if v := grabLineBanner(ctx, parsed, spec.Port, timeout, dial); v != "" {
 			res.Result = v
 		} else {
-			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout)
+			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
 		}
 	case "RDP":
-		res.Result = probeRDP(ctx, parsed, spec.Port, timeout)
+		res.Result = probeRDP(ctx, parsed, spec.Port, timeout, dial)
 	case "Steam":
-		if v := probeSteam(ctx, ip, spec.Port, timeout); v != "" {
+		if dial != nil {
+			// Steam uses UDP which cannot be tunnelled over SOCKS5.
+			res.Result = "unavailable (UDP, not supported over proxy)"
+		} else if v := probeSteam(ctx, ip, spec.Port, timeout); v != "" {
 			res.Result = v
 		} else {
 			res.Result = "no response"
 		}
 	default: // "TCP" or unknown
-		res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout)
+		res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
 	}
 	return res
 }
 
 // probeTCPStatus tries a TCP connect and returns "open", "refused", or "timeout".
-func probeTCPStatus(ctx context.Context, ip string, port int, timeout time.Duration) string {
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+func probeTCPStatus(ctx context.Context, ip string, port int, timeout time.Duration, dial DialFunc) string {
+	conn, err := dialOrDirect(dial)(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 	if err == nil {
 		conn.Close()
 		return "open"
@@ -103,9 +106,8 @@ func probeTCPStatus(ctx context.Context, ip string, port int, timeout time.Durat
 }
 
 // probeSSHBanner connects to ip:port and reads the SSH identification string.
-func probeSSHBanner(ctx context.Context, ip net.IP, port int, timeout time.Duration) string {
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.DialContext(ctx, "tcp",
+func probeSSHBanner(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
+	conn, err := dialOrDirect(dial)(ctx, "tcp",
 		net.JoinHostPort(ip.String(), strconv.Itoa(port)))
 	if err != nil {
 		return ""
@@ -126,9 +128,8 @@ func probeSSHBanner(ctx context.Context, ip net.IP, port int, timeout time.Durat
 }
 
 // probeRDP connects to ip:port and checks for a TPKT first byte (0x03).
-func probeRDP(ctx context.Context, ip net.IP, port int, timeout time.Duration) string {
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.DialContext(ctx, "tcp",
+func probeRDP(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
+	conn, err := dialOrDirect(dial)(ctx, "tcp",
 		net.JoinHostPort(ip.String(), strconv.Itoa(port)))
 	if err != nil {
 		s := err.Error()
