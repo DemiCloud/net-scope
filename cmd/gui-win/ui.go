@@ -1021,6 +1021,7 @@ func createControls(hwnd HWND) {
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewMarquee(hwndList)
 	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
 	// Columns come from hostsColTitles + colDefaultLogicalWidths (single source of truth).
 	for i, title := range hostsColTitles {
@@ -1044,6 +1045,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewMarquee(hwndListMDNS)
 	for i, title := range mdnsColTitles {
 		listViewAddColumn(hwndListMDNS, int32(i), title, scale(mdnsDefWidths[i]))
 	}
@@ -1060,6 +1062,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewMarquee(hwndListSSDP)
 	for i, title := range ssdpColTitles {
 		listViewAddColumn(hwndListSSDP, int32(i), title, scale(ssdpDefWidths[i]))
 	}
@@ -1076,6 +1079,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewMarquee(hwndListWSD)
 	for i, title := range wsdColTitles {
 		listViewAddColumn(hwndListWSD, int32(i), title, scale(wsdDefWidths[i]))
 	}
@@ -1092,6 +1096,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewMarquee(hwndListDHCP)
 	for i, title := range dhcpColTitles {
 		listViewAddColumn(hwndListDHCP, int32(i), title, scale(dhcpDefWidths[i]))
 	}

@@ -337,3 +337,128 @@ func restoreLVColumns(hwnd HWND, defWidths []int32, colVis []bool) {
 		sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(i), uintptr(uint32(scale(defWidths[i]))))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Marquee (rubber-band) selection subclassing
+// ---------------------------------------------------------------------------
+
+// lvMarqueeState tracks per-ListView drag-selection state for windows that have
+// been subclassed via subclassListViewMarquee.
+type lvMarqueeState struct {
+	dragging bool
+	startPt  POINT
+	origProc uintptr
+}
+
+// lvMarqueeStates maps a ListView HWND to its drag-state.  Accessed on the
+// Windows message-loop goroutine only; no synchronisation is needed.
+var lvMarqueeStates = map[HWND]*lvMarqueeState{}
+
+// lvSubclassRefs holds strong references to subclass callback values to
+// prevent the Go GC from collecting them while the subclass is active.
+var lvSubclassRefs []uintptr
+
+// subclassListViewMarquee installs a window-subclass on hwnd so that
+// rubber-band multi-selection can start from any point — including over an
+// existing item — not only from empty space as the native LVS_EX_MARQUEESELECT
+// requires.
+//
+// Shift-click and Ctrl-click are forwarded unmodified to the original procedure
+// so that the built-in range-extension and toggle-selection still work.
+//
+// Must be called after the ListView has been fully created and configured.
+func subclassListViewMarquee(hwnd HWND) {
+	state := &lvMarqueeState{}
+	lvMarqueeStates[hwnd] = state
+
+	cb := syscall.NewCallback(func(h, msg, wParam, lParam uintptr) uintptr {
+		hw := HWND(h)
+		s, ok := lvMarqueeStates[hw]
+		if !ok {
+			return defWindowProc(hw, uint32(msg), wParam, lParam)
+		}
+
+		switch uint32(msg) {
+		case WM_LBUTTONDOWN:
+			// Shift/Ctrl → delegate to the ListView for native range/toggle select.
+			if getKeyState(VK_SHIFT) < 0 || getKeyState(VK_CONTROL) < 0 {
+				break
+			}
+			x := int32(int16(lParam & 0xffff))
+			y := int32(int16((lParam >> 16) & 0xffff))
+			ht := LVHITTESTINFO{Pt: POINT{X: x, Y: y}}
+			sendMessage(hw, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht)))
+			if ht.Flags&LVHT_ONITEM == 0 {
+				// Empty space — native marquee already handles this case.
+				break
+			}
+			// Item hit: take control of drag-selection.
+			procSetFocus.Call(uintptr(hw))
+			// Clear all selection.
+			clearAll := LVITEM{StateMask: LVIS_SELECTED | LVIS_FOCUSED}
+			sendMessage(hw, LVM_SETITEMSTATE, ^uintptr(0), uintptr(unsafe.Pointer(&clearAll)))
+			// Select and focus the clicked item.
+			sel := LVITEM{State: LVIS_SELECTED | LVIS_FOCUSED, StateMask: LVIS_SELECTED | LVIS_FOCUSED}
+			sendMessage(hw, LVM_SETITEMSTATE, uintptr(ht.IItem), uintptr(unsafe.Pointer(&sel)))
+			sendMessage(hw, LVM_SETSELECTIONMARK, 0, uintptr(ht.IItem))
+			// Begin drag state and capture subsequent mouse messages.
+			s.dragging = true
+			s.startPt = POINT{X: x, Y: y}
+			setCapture(hw)
+			return 0
+
+		case WM_MOUSEMOVE:
+			if !s.dragging {
+				break
+			}
+			if wParam&MK_LBUTTON == 0 {
+				// Button was released without delivering WM_LBUTTONUP — clean up.
+				s.dragging = false
+				releaseCapture()
+				break
+			}
+			x := int32(int16(lParam & 0xffff))
+			y := int32(int16((lParam >> 16) & 0xffff))
+			// Normalise the drag rectangle so top-left ≤ bottom-right.
+			selRect := RECT{Left: s.startPt.X, Top: s.startPt.Y, Right: x, Bottom: y}
+			if selRect.Left > selRect.Right {
+				selRect.Left, selRect.Right = selRect.Right, selRect.Left
+			}
+			if selRect.Top > selRect.Bottom {
+				selRect.Top, selRect.Bottom = selRect.Bottom, selRect.Top
+			}
+			// Update selection state for every row based on rect intersection.
+			count := int32(sendMessage(hw, LVM_GETITEMCOUNT, 0, 0))
+			for i := int32(0); i < count; i++ {
+				var ir RECT
+				ir.Left = LVIR_BOUNDS
+				sendMessage(hw, LVM_GETITEMRECT, uintptr(i), uintptr(unsafe.Pointer(&ir)))
+				intersects := ir.Left < selRect.Right && ir.Right > selRect.Left &&
+					ir.Top < selRect.Bottom && ir.Bottom > selRect.Top
+				var st uint32
+				if intersects {
+					st = LVIS_SELECTED
+				}
+				upd := LVITEM{State: st, StateMask: LVIS_SELECTED}
+				sendMessage(hw, LVM_SETITEMSTATE, uintptr(i), uintptr(unsafe.Pointer(&upd)))
+			}
+			return 0
+
+		case WM_LBUTTONUP:
+			if s.dragging {
+				s.dragging = false
+				releaseCapture()
+				return 0
+			}
+
+		case WM_CAPTURECHANGED:
+			// Capture stolen by another window — abort drag cleanly.
+			s.dragging = false
+		}
+
+		return callWindowProc(s.origProc, hw, uint32(msg), wParam, lParam)
+	})
+
+	lvSubclassRefs = append(lvSubclassRefs, cb)
+	state.origProc = setWindowLongPtr(hwnd, GWLP_WNDPROC, cb)
+}
