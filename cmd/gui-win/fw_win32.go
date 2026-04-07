@@ -35,6 +35,7 @@ type (
 	HANDLE    uintptr
 	HFONT     uintptr
 	HGDIOBJ   uintptr
+	HKEY      uintptr
 )
 
 // ---------------------------------------------------------------------------
@@ -291,6 +292,10 @@ const (
 
 	// GlobalAlloc flags
 	GMEM_MOVEABLE = 0x0002
+
+	// Registry
+	HKEY_CLASSES_ROOT uintptr = 0x80000000
+	KEY_READ                  = 0x20019
 )
 
 // ---------------------------------------------------------------------------
@@ -546,6 +551,9 @@ var (
 
 	procOpenProcessToken    = modAdvapi32.NewProc("OpenProcessToken")
 	procGetTokenInformation = modAdvapi32.NewProc("GetTokenInformation")
+	procRegOpenKeyExW       = modAdvapi32.NewProc("RegOpenKeyExW")
+	procRegQueryValueExW    = modAdvapi32.NewProc("RegQueryValueExW")
+	procRegCloseKey         = modAdvapi32.NewProc("RegCloseKey")
 
 	procInitCommonControlsEx = modComctl32.NewProc("InitCommonControlsEx")
 	procCreateStatusWindowW  = modComctl32.NewProc("CreateStatusWindowW")
@@ -1076,4 +1084,44 @@ var currentDPI uint32 = 96
 // scale converts a 96-DPI logical pixel value to the current physical pixel value.
 func scale(n int32) int32 {
 	return int32(uint32(n) * currentDPI / 96)
+}
+
+// ---------------------------------------------------------------------------
+// Registry helpers
+// ---------------------------------------------------------------------------
+
+// regReadOpenCommand reads the default shell/open/command value for the given
+// URL scheme from HKEY_CLASSES_ROOT. Returns "" if the key or value is absent.
+// Example: regReadOpenCommand("https") →
+//   `"C:\Program Files\Microsoft\Edge\Application\msedge.exe" ... "%1"`
+func regReadOpenCommand(scheme string) string {
+	keyPath, _ := syscall.UTF16PtrFromString(scheme + `\shell\open\command`)
+	var hk HKEY
+	ret, _, _ := procRegOpenKeyExW.Call(
+		HKEY_CLASSES_ROOT,
+		uintptr(unsafe.Pointer(keyPath)),
+		0,
+		KEY_READ,
+		uintptr(unsafe.Pointer(&hk)),
+	)
+	if ret != 0 {
+		return ""
+	}
+	defer procRegCloseKey.Call(uintptr(hk))
+
+	valueName, _ := syscall.UTF16PtrFromString("") // default value
+	var bufLen uint32 = 1024
+	buf := make([]uint16, bufLen/2)
+	ret, _, _ = procRegQueryValueExW.Call(
+		uintptr(hk),
+		uintptr(unsafe.Pointer(valueName)),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&bufLen)),
+	)
+	if ret != 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf)
 }

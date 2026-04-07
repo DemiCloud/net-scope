@@ -4,6 +4,7 @@ package guiwin
 
 import (
 	"bytes"
+	"fmt"
 	"image/color"
 	"image/png"
 	"os"
@@ -27,6 +28,7 @@ const (
 	idSettBannerGrab    = 504
 	idSettNetBIOS       = 505
 	idSettDefaultTarget = 506
+	idSettProtoHandlers = 507
 )
 
 var (
@@ -58,6 +60,8 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 		case idSettCancel:
 			closeModal(HWND(hwnd))
+		case idSettProtoHandlers:
+			showProtocolHandlersDialog(HWND(hwnd))
 		}
 		return 0
 	case WM_CLOSE:
@@ -178,8 +182,10 @@ func createSettingsControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE,
 		lx, checkY+84, lw+ew, 40, hwnd, 0, inst)
 
-	// OK / Cancel — below path label (checkY+84+40) + 8px gap
+	// Protocol Handlers button + OK / Cancel — below path label + 8px gap
 	btnY := checkY + 132
+	createCtrl("BUTTON", "Protocol Handlers\u2026", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		lx, btnY, 140, 26, hwnd, idSettProtoHandlers, inst)
 	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		306, btnY, 78, 26, hwnd, idSettOK, inst)
 	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
@@ -235,16 +241,17 @@ func applySettings(hwnd HWND) bool {
 
 	cfg := config.Config{
 		Scan: config.ScanConfig{
-			Timeout:         timeout,
-			Concurrency:     concur,
-			Ports:           ports,
-			PingFirst:       pingFirst,
-			BroadcastListen: bcast,
-			SNMPCommunity:   snmp,
-			Interface:       iface,
-			BannerGrab:      bannerGrab,
-			NetBIOS:         netBIOS,
-			DefaultTarget:   defaultTarget,
+			Timeout:          timeout,
+			Concurrency:      concur,
+			Ports:            ports,
+			PingFirst:        pingFirst,
+			BroadcastListen:  bcast,
+			SNMPCommunity:    snmp,
+			Interface:        iface,
+			BannerGrab:       bannerGrab,
+			NetBIOS:          netBIOS,
+			DefaultTarget:    defaultTarget,
+			ProtocolHandlers: appConfig.Scan.ProtocolHandlers, // edited separately
 		},
 	}
 
@@ -1022,5 +1029,208 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+}
+
+// ---------------------------------------------------------------------------
+// Protocol Handlers Dialog
+// ---------------------------------------------------------------------------
+
+// protoHandlerRow defines one row in the protocol handler table.
+type protoHandlerRow struct {
+	key      string // config key: "http", "https", etc.
+	label    string // display label
+	port     int    // associated port (informational)
+	hwndEdit HWND   // custom-command edit field
+}
+
+// protoHandlerRows is populated in createProtoHandlerControls and read in
+// applyProtoHandlers.
+var protoHandlerRows = []protoHandlerRow{
+	{key: "http", label: "HTTP", port: 80},
+	{key: "https", label: "HTTPS", port: 443},
+	{key: "ssh", label: "SSH", port: 22},
+	{key: "rdp", label: "RDP", port: 3389},
+	{key: "ftp", label: "FTP", port: 21},
+	{key: "telnet", label: "Telnet", port: 23},
+	{key: "smb", label: "SMB / File Share", port: 445},
+}
+
+const (
+	idProtoOK     = 801
+	idProtoCancel = 802
+)
+
+var protoHandlersWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		createProtoHandlerControls(HWND(hwnd))
+		return 0
+	case WM_CTLCOLORSTATIC:
+		return ctlColorDialog(wParam)
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idProtoOK:
+			applyProtoHandlers()
+			closeModal(HWND(hwnd))
+		case idProtoCancel:
+			closeModal(HWND(hwnd))
+		}
+		return 0
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+// exeNameFromCommand extracts the executable filename from a shell command
+// string (which may be quoted). Returns "" for empty input.
+func exeNameFromCommand(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return ""
+	}
+	if cmd[0] == '"' {
+		end := strings.IndexByte(cmd[1:], '"')
+		if end >= 0 {
+			cmd = cmd[1 : end+1]
+		} else {
+			cmd = cmd[1:]
+		}
+	} else {
+		if idx := strings.IndexByte(cmd, ' '); idx > 0 {
+			cmd = cmd[:idx]
+		}
+	}
+	if idx := strings.LastIndexAny(cmd, `/\`); idx >= 0 {
+		cmd = cmd[idx+1:]
+	}
+	return cmd
+}
+
+// osDefaultLabel returns a short description of the OS-default handler for
+// the given URL scheme, or a fixed label for non-URL protocols.
+func osDefaultLabel(key string) string {
+	switch key {
+	case "rdp":
+		return "Built-in: mstsc.exe"
+	case "smb":
+		return "Built-in: Windows Explorer"
+	}
+	raw := regReadOpenCommand(key)
+	if raw == "" {
+		return "(not registered)"
+	}
+	name := exeNameFromCommand(raw)
+	if name == "" {
+		return "(registered)"
+	}
+	return name
+}
+
+func createProtoHandlerControls(hwnd HWND) {
+	inst := getModuleHandle()
+	r := getClientRect(hwnd)
+	cW := r.Right
+	const (
+		pad     int32 = 12
+		rowH    int32 = 30
+		keyW    int32 = 130 // "HTTP (80):" column
+		statusW int32 = 190 // OS default app column
+		y0      int32 = 36  // first row starts below header
+	)
+	editX := pad + keyW + statusW + 8
+	editW := cW - editX - pad
+
+	// Header labels.
+	createCtrl("STATIC", "Protocol", WS_CHILD|WS_VISIBLE,
+		pad, 10, keyW, 16, hwnd, 0, inst)
+	createCtrl("STATIC", "OS Default", WS_CHILD|WS_VISIBLE,
+		pad+keyW, 10, statusW, 16, hwnd, 0, inst)
+	createCtrl("STATIC", "Custom Command (%s = IP)", WS_CHILD|WS_VISIBLE,
+		editX, 10, editW, 16, hwnd, 0, inst)
+
+	for i := range protoHandlerRows {
+		row := &protoHandlerRows[i]
+		y := y0 + int32(i)*rowH
+		lbl := fmt.Sprintf("%s (port %d):", row.label, row.port)
+		createCtrl("STATIC", lbl, WS_CHILD|WS_VISIBLE,
+			pad, y+5, keyW, 18, hwnd, 0, inst)
+		createCtrl("STATIC", osDefaultLabel(row.key), WS_CHILD|WS_VISIBLE,
+			pad+keyW+4, y+5, statusW-4, 18, hwnd, 0, inst)
+		row.hwndEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT",
+			appConfig.Scan.ProtocolHandlers[row.key],
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
+			editX, y+2, editW, 22, hwnd, 0, inst)
+	}
+
+	// Hint line.
+	hintY := y0 + int32(len(protoHandlerRows))*rowH + 4
+	createCtrl("STATIC",
+		"Leave blank to use the OS default. Example: putty.exe -ssh %s",
+		WS_CHILD|WS_VISIBLE,
+		pad, hintY, cW-pad*2, 16, hwnd, 0, inst)
+
+	// Buttons.
+	btnY := hintY + 26
+	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cW-pad-174, btnY, 78, 26, hwnd, idProtoOK, inst)
+	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cW-pad-86, btnY, 78, 26, hwnd, idProtoCancel, inst)
+}
+
+// applyProtoHandlers reads the edit fields and stores non-empty values into
+// appConfig. Empty fields remove any existing override for that protocol.
+func applyProtoHandlers() {
+	handlers := appConfig.Scan.ProtocolHandlers
+	if handlers == nil {
+		handlers = make(map[string]string)
+	}
+	for _, row := range protoHandlerRows {
+		val := strings.TrimSpace(getWindowText(row.hwndEdit))
+		if val == "" {
+			delete(handlers, row.key)
+		} else {
+			handlers[row.key] = val
+		}
+	}
+	if len(handlers) == 0 {
+		handlers = nil
+	}
+	appConfig.Scan.ProtocolHandlers = handlers
+
+	// Persist immediately.
+	_, cfgPath, _ := config.Load()
+	if cfgPath == "" {
+		return // no config file yet; changes held in memory until Settings OK
+	}
+	_ = config.SaveTo(appConfig, cfgPath)
+}
+
+func showProtocolHandlersDialog(parent HWND) {
+	registerDialogClass("NetSweepProtoHandlers", protoHandlersWndProc)
+
+	n := int32(len(protoHandlerRows))
+	const (
+		pad  int32 = 12
+		rowH int32 = 30
+		y0   int32 = 36
+	)
+	dlgW := int32(640)
+	dlgH := y0 + n*rowH + 4 + 26 + 26 + pad*2
+
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		"NetSweepProtoHandlers", "Protocol Handlers",
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, dlgW, dlgH,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, dlgW, dlgH)
+	setFontAllChildren(dlg, appFont)
+	runModal(dlg, parent)
 }
 

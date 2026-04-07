@@ -47,6 +47,17 @@ const (
 	idHostPortEdit   = 606
 	idHostTypeCombo  = 607
 	idHostProbeList  = 608
+
+	// Connect / Ping quick-action buttons.
+	idHostConnHTTP   = 620
+	idHostConnHTTPS  = 621
+	idHostConnSSH    = 622
+	idHostConnRDP    = 623
+	idHostConnFTP    = 624
+	idHostConnTelnet = 625
+	idHostConnSMB    = 626
+	idHostPingOnce   = 627
+	idHostPingCont   = 628
 )
 
 // Dialog-local handles (valid while dialog is open).
@@ -60,6 +71,17 @@ var (
 	hwndHostProbeList HWND
 	hwndHostCopyBtn   HWND
 	hwndHostCloseBtn  HWND
+
+	// Connect / Ping quick-action buttons.
+	hwndHostConnHTTP   HWND
+	hwndHostConnHTTPS  HWND
+	hwndHostConnSSH    HWND
+	hwndHostConnRDP    HWND
+	hwndHostConnFTP    HWND
+	hwndHostConnTelnet HWND
+	hwndHostConnSMB    HWND
+	hwndHostPingOnce   HWND
+	hwndHostPingCont   HWND
 
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
@@ -107,6 +129,26 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			if hiword(wParam) == CBN_SELCHANGE {
 				hostDetailSelectIP(HWND(hwnd))
 			}
+		case idHostConnHTTP:
+			openProtocol(HWND(hwnd), currentDetailIP, "http")
+		case idHostConnHTTPS:
+			openProtocol(HWND(hwnd), currentDetailIP, "https")
+		case idHostConnSSH:
+			openProtocol(HWND(hwnd), currentDetailIP, "ssh")
+		case idHostConnRDP:
+			openProtocol(HWND(hwnd), currentDetailIP, "rdp")
+		case idHostConnFTP:
+			openProtocol(HWND(hwnd), currentDetailIP, "ftp")
+		case idHostConnTelnet:
+			openProtocol(HWND(hwnd), currentDetailIP, "telnet")
+		case idHostConnSMB:
+			openProtocol(HWND(hwnd), currentDetailIP, "smb")
+		case idHostPingOnce:
+			shellExecute(HWND(hwnd), "open", "cmd.exe",
+				"/c ping "+currentDetailIP+" && pause", "", SW_SHOW)
+		case idHostPingCont:
+			shellExecute(HWND(hwnd), "open", "cmd.exe",
+				"/k ping -t "+currentDetailIP, "", SW_SHOW)
 		}
 		return 0
 
@@ -191,6 +233,7 @@ func showHostDetailDialog(parent HWND, ip string) {
 
 	// Fill summary.
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
+	hostDetailUpdateConnectButtons(ip)
 
 	setFontAllChildren(dlg, appFont)
 	// Override the summary pane with a monospace font so padded labels align.
@@ -223,12 +266,48 @@ func createHostDetailControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		pad, y, cW-pad*2, summaryH, hwnd, 0, inst)
 
-	// Section label
+	// Connect / Ping quick-action bar (between summary and probe section)
 	y += summaryH + 8
+	const (
+		connGap  int32 = 4
+		connBtnH int32 = 24
+	)
+	cx := pad
+	createCtrl("STATIC", "Connect:", WS_CHILD|WS_VISIBLE,
+		cx, y+5, 58, 16, hwnd, 0, inst)
+	cx += 62
+	for _, btn := range []struct {
+		label string
+		dst   *HWND
+		id    int32
+		w     int32
+	}{
+		{"HTTP", &hwndHostConnHTTP, idHostConnHTTP, 46},
+		{"HTTPS", &hwndHostConnHTTPS, idHostConnHTTPS, 54},
+		{"SSH", &hwndHostConnSSH, idHostConnSSH, 44},
+		{"RDP", &hwndHostConnRDP, idHostConnRDP, 44},
+		{"FTP", &hwndHostConnFTP, idHostConnFTP, 44},
+		{"Telnet", &hwndHostConnTelnet, idHostConnTelnet, 54},
+		{"SMB", &hwndHostConnSMB, idHostConnSMB, 44},
+	} {
+		*btn.dst, _ = createWindowEx(0, "BUTTON", btn.label,
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+			cx, y, btn.w, connBtnH, hwnd, HMENU(btn.id), inst)
+		cx += btn.w + connGap
+	}
+	cx += 10 // small separator gap
+	hwndHostPingOnce, _ = createWindowEx(0, "BUTTON", "Ping",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cx, y, 50, connBtnH, hwnd, HMENU(idHostPingOnce), inst)
+	cx += 50 + connGap
+	hwndHostPingCont, _ = createWindowEx(0, "BUTTON", "Ping -t",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cx, y, 60, connBtnH, hwnd, HMENU(idHostPingCont), inst)
+
+	// Section label
+	y += connBtnH + 8
 	createCtrl("STATIC", "On-demand probes:", WS_CHILD|WS_VISIBLE,
 		pad, y+2, 140, 16, hwnd, 0, inst)
-
-	// Probe controls bar: left-to-right, Run-all gets remaining width
 	y += 22
 	const (
 		portLblW  int32 = 32
@@ -310,8 +389,33 @@ func hostDetailSelectIP(hwnd HWND) {
 	currentDetailIP = ip
 	setWindowText(hwnd, "Host detail — "+ip) // update title bar
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
+	hostDetailUpdateConnectButtons(ip)
 	// Clear the probe list for the new host.
 	sendMessage(hwndHostProbeList, LVM_DELETEALLITEMS, 0, 0)
+}
+
+// hostDetailUpdateConnectButtons enables/disables Connect buttons based on
+// which ports are known to be open for ip. If ip is not in the registry
+// (manually entered), all buttons are left enabled.
+func hostDetailUpdateConnectButtons(ip string) {
+	type portBtn struct {
+		port int
+		hwnd *HWND
+	}
+	portBtns := []portBtn{
+		{80, &hwndHostConnHTTP},
+		{443, &hwndHostConnHTTPS},
+		{22, &hwndHostConnSSH},
+		{3389, &hwndHostConnRDP},
+		{21, &hwndHostConnFTP},
+		{23, &hwndHostConnTelnet},
+		{445, &hwndHostConnSMB},
+	}
+	e, known := hostRegistry[ip]
+	for _, pb := range portBtns {
+		en := !known || portOpen(e.Result, pb.port)
+		enableWindow(*pb.hwnd, en)
+	}
 }
 
 // hostDetailRunSingle reads the Port and Type fields and runs one probe.
