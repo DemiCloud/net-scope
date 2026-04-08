@@ -406,24 +406,43 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 
 	wg.Wait()
 
-	// Banner grab and SYN probe run after port scan (both need open ports).
-	if len(r.OpenPorts) > 0 {
-		var postWg sync.WaitGroup
-		if s.Config.BannerGrab {
+	// Banner grab and SYN probe run after port scan.
+	// SYN probe does not require a port from the scan list: we try a small set
+	// of commonly-open ports (443, 80, 22) so we still get TCP stack data for
+	// hosts that expose no ports from the configured scan range (e.g. Apple TV,
+	// smart TVs, IoT devices that only speak non-standard ports).
+	if dial == nil {
+		synPort := 0
+		if len(r.OpenPorts) > 0 {
+			synPort = r.OpenPorts[0]
+		} else {
+			for _, p := range []int{443, 80, 22, 8080, 8443} {
+				if probeTCPOpen(ctx, ip, p, s.Config.Timeout) {
+					synPort = p
+					break
+				}
+			}
+		}
+		if synPort > 0 {
+			var postWg sync.WaitGroup
+			if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
+				postWg.Add(1)
+				go func() {
+					defer postWg.Done()
+					r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+				}()
+			}
 			postWg.Add(1)
 			go func() {
 				defer postWg.Done()
-				r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+				r.SYNProbe = probeSYN(ctx, ip, synPort, s.Config.Timeout)
 			}()
+			postWg.Wait()
+		} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
+			r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
 		}
-		if dial == nil {
-			postWg.Add(1)
-			go func() {
-				defer postWg.Done()
-				r.SYNProbe = probeSYN(ctx, ip, r.OpenPorts[0], s.Config.Timeout)
-			}()
-		}
-		postWg.Wait()
+	} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
+		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
 	}
 
 	return r

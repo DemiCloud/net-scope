@@ -8,6 +8,20 @@ import (
 	"time"
 )
 
+// probeTCPOpen returns true if ip:port accepts a TCP connection within timeout.
+// Lighter than scanPorts — no goroutine, no sorting, just a single dial.
+func probeTCPOpen(ctx context.Context, ip net.IP, port int, timeout time.Duration) bool {
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	addr := fmt.Sprintf("%s:%d", ip, port)
+	conn, err := (&net.Dialer{}).DialContext(ctx2, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // scanPorts dials each port concurrently and returns the open ones, sorted.
 func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration, dial DialFunc) []int {
 	type result struct {
