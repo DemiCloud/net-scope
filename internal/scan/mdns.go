@@ -145,3 +145,20 @@ func browseMDNS(ctx context.Context, serviceType string, cb func(net.IP, Service
 		}
 	}
 }
+
+// ProbeListenerSupport tests whether multicast UDP listening is available on
+// this machine by attempting to bind the WSD multicast socket
+// (239.255.255.250:3702). Returns nil if it succeeds, or an error describing
+// why passive broadcast listening may be unavailable.
+func ProbeListenerSupport() error {
+	gaddr, err := net.ResolveUDPAddr("udp4", wsdMulticast)
+	if err != nil {
+		return err
+	}
+	conn, err := net.ListenMulticastUDP("udp4", nil, gaddr)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
