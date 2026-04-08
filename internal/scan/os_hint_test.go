@@ -11,7 +11,7 @@ func TestGuessOS_SNMP(t *testing.T) {
 	}{
 		{"Windows Server 2022", OSWindows},
 		{"Linux Kernel 5.15", OSLinux},
-		{"RouterOS 7.14.3 (stable) on RB4011iGS+", OSNetwork},
+		{"RouterOS 7.14.3 (stable) on RB4011iGS+", OSRouterOS},
 		{"Cisco IOS 15.6", OSNetwork},
 		{"JunOS 23.1", OSNetwork},
 		{"Darwin 23.0", OSMacOS},
@@ -34,7 +34,7 @@ func TestGuessOS_SSHBanner(t *testing.T) {
 		// Generic OpenSSH → Linux fallback
 		{"OpenSSH_8.0", OSLinux},
 		// MikroTik RouterOS
-		{"SSH-2.0-ROSSSH", OSNetwork},
+		{"SSH-2.0-ROSSSH", OSRouterOS},
 	}
 	for _, tc := range cases {
 		got := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "", SYNProbeInfo{})
@@ -99,7 +99,7 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 		{"Cisco Systems, Inc", OSNetwork},
 		{"Juniper Networks", OSNetwork},
 		{"Ubiquiti Inc.", OSNetwork},
-		{"MikroTik", OSNetwork},
+		{"MikroTik", OSRouterOS},
 		{"Aruba Networks", OSNetwork},
 		{"Fortinet, Inc.", OSNetwork},
 		{"Palo Alto Networks", OSNetwork},

@@ -10,11 +10,12 @@ import (
 type OSHint string
 
 const (
-	OSWindows OSHint = "Windows"
-	OSLinux   OSHint = "Linux"
-	OSMacOS   OSHint = "macOS"
-	OSNetwork OSHint = "Network Device"
-	OSUnknown OSHint = ""
+	OSWindows  OSHint = "Windows"
+	OSLinux    OSHint = "Linux"
+	OSMacOS    OSHint = "macOS"
+	OSNetwork  OSHint = "Network Device"
+	OSRouterOS OSHint = "RouterOS"
+	OSUnknown  OSHint = ""
 )
 
 // guessOS combines several passive signals to guess the host OS.
@@ -30,7 +31,7 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		case strings.Contains(d, "windows"):
 			return OSWindows
 		case strings.Contains(d, "routeros"):
-			return OSNetwork
+			return OSRouterOS
 		case strings.Contains(d, "linux"):
 			return OSLinux
 		case strings.Contains(d, "ios") && !strings.Contains(d, "iphone"):
@@ -53,8 +54,10 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			return OSMacOS
 		case strings.Contains(v, "raspberry pi"):
 			return OSLinux
+		case strings.Contains(v, "mikrotik"):
+			return OSRouterOS
 		case strings.Contains(v, "cisco"), strings.Contains(v, "juniper"),
-			strings.Contains(v, "ubiquiti"), strings.Contains(v, "mikrotik"),
+			strings.Contains(v, "ubiquiti"),
 			strings.Contains(v, "unifi"), strings.Contains(v, "aruba"),
 			strings.Contains(v, "fortinet"), strings.Contains(v, "palo alto"):
 			return OSNetwork
@@ -87,7 +90,7 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		case strings.Contains(lower, "windows"):
 			return OSWindows
 		case strings.Contains(lower, "rosssh"): // MikroTik RouterOS SSH implementation
-			return OSNetwork
+			return OSRouterOS
 		case strings.Contains(lower, "freebsd"), strings.Contains(lower, "netbsd"),
 			strings.Contains(lower, "openbsd"):
 			return OSLinux
