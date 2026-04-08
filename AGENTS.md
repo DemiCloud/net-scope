@@ -116,6 +116,13 @@ Do **not** push automatically; only commit locally unless the user explicitly as
   **not** write a starter file. The GUI prompts on first save.
 
 ### Windows GUI
+
+- **All network I/O on Windows goes through the sensor service subprocess.**
+  The GUI process itself must never call scan functions, open sockets, or
+  perform any probing directly. Use `startService` / the service IPC channel
+  to trigger scans and receive results. This rule applies to every new feature:
+  if it touches the network, it belongs in `internal/scan/` and is invoked via
+  the service, not from a WndProc or dialog handler.
 - `runtime.LockOSThread()` is called inside `guiwin.Run()` before any Win32
   call. Do not move or remove it.
 - **Framework vs application split** — `cmd/gui-win/` is divided into framework

@@ -372,7 +372,7 @@ func createHostDetailControls(hwnd HWND) {
 	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy report",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-320, btnY, 100, 26, hwnd, HMENU(idHostCopyReport), inst)
-	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy FP JSON",
+	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy Fingerprint",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-210, btnY, 110, 26, hwnd, HMENU(idHostCopyFP), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
