@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"strings"
 
@@ -16,12 +15,12 @@ import (
 func run() {
 	// ── service subcommand ──────────────────────────────────────────────────
 	if len(os.Args) == 4 && os.Args[1] == "service" {
-		conn, err := net.Dial("tcp", os.Args[2])
+		conn, err := scan.DialService(os.Args[2], os.Args[3])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "service dial: %v\n", err)
 			os.Exit(1)
 		}
-		if err := scan.RunServiceConn(conn, os.Args[3]); err != nil {
+		if err := scan.RunServiceConn(conn); err != nil {
 			fmt.Fprintf(os.Stderr, "service: %v\n", err)
 			os.Exit(1)
 		}
