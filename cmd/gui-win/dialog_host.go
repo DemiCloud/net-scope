@@ -519,6 +519,92 @@ func hostDetailCopyFP(hwnd HWND) {
 	copyToClipboard(hwnd, fpBuildJSON(e.Result))
 }
 
+// fpBuildJSON serialises the fingerprint-relevant fields of a scan result as
+// indented JSON. Used by the Copy FP JSON button in the host detail dialog.
+func fpBuildJSON(r scan.Result) string {
+	type jSYN struct {
+		WindowSize uint16 `json:"window_size"`
+		Options    string `json:"options"`
+	}
+	type jBanner struct {
+		SSH    string `json:"ssh,omitempty"`
+		HTTP   string `json:"http,omitempty"`
+		HTTPS  string `json:"https,omitempty"`
+		FTP    string `json:"ftp,omitempty"`
+		SMTP   string `json:"smtp,omitempty"`
+		Telnet string `json:"telnet,omitempty"`
+	}
+	type jSNMP struct {
+		SysDescr    string `json:"sys_descr,omitempty"`
+		SysName     string `json:"sys_name,omitempty"`
+		SysLocation string `json:"sys_location,omitempty"`
+		SysContact  string `json:"sys_contact,omitempty"`
+	}
+	type jService struct {
+		Source  string   `json:"source"`
+		Name    string   `json:"name,omitempty"`
+		Type    string   `json:"type,omitempty"`
+		Details []string `json:"details,omitempty"`
+	}
+	type jOut struct {
+		IP           string     `json:"ip"`
+		Alive        bool       `json:"alive"`
+		MAC          string     `json:"mac,omitempty"`
+		Vendor       string     `json:"vendor,omitempty"`
+		Hostname     string     `json:"hostname,omitempty"`
+		NetBIOS      string     `json:"netbios,omitempty"`
+		LatencyMs    int64      `json:"latency_ms,omitempty"`
+		OpenPorts    []int      `json:"open_ports,omitempty"`
+		OS           string     `json:"os"`
+		OSConfidence uint8      `json:"os_confidence"`
+		ICMPTTL      uint8      `json:"icmp_ttl,omitempty"`
+		SYN          *jSYN      `json:"syn_probe,omitempty"`
+		Banner       *jBanner   `json:"banner,omitempty"`
+		SNMP         *jSNMP     `json:"snmp,omitempty"`
+		Services     []jService `json:"services,omitempty"`
+	}
+
+	out := jOut{
+		IP:           r.IP.String(),
+		Alive:        r.Alive,
+		Vendor:       r.Vendor,
+		Hostname:     r.Hostname,
+		NetBIOS:      r.NetBIOS,
+		LatencyMs:    r.Latency.Milliseconds(),
+		OpenPorts:    r.OpenPorts,
+		OS:           string(r.OS),
+		OSConfidence: r.OSConfidence,
+		ICMPTTL:      r.TTL,
+	}
+	if r.MAC != nil {
+		out.MAC = r.MAC.String()
+	}
+	if r.SYNProbe.WindowSize > 0 {
+		out.SYN = &jSYN{WindowSize: r.SYNProbe.WindowSize, Options: r.SYNProbe.Options}
+	}
+	b := r.Banner
+	if b.SSH != "" || b.HTTP != "" || b.HTTPS != "" || b.FTP != "" || b.SMTP != "" || b.Telnet != "" {
+		out.Banner = &jBanner{SSH: b.SSH, HTTP: b.HTTP, HTTPS: b.HTTPS, FTP: b.FTP, SMTP: b.SMTP, Telnet: b.Telnet}
+	}
+	if r.SNMP != nil {
+		out.SNMP = &jSNMP{
+			SysDescr: r.SNMP.SysDescr, SysName: r.SNMP.SysName,
+			SysLocation: r.SNMP.SysLocation, SysContact: r.SNMP.SysContact,
+		}
+	}
+	for _, svc := range r.Services {
+		out.Services = append(out.Services, jService{
+			Source: svc.Source, Name: svc.Name, Type: svc.Type, Details: svc.Details,
+		})
+	}
+
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return `{"error": "marshal failed"}`
+	}
+	return string(buf)
+}
+
 // unescapeDNSLabel removes DNS-SD backslash escapes from a service instance
 // name (e.g. "TCL\ C149X\ 4682" → "TCL C149X 4682").
 func unescapeDNSLabel(s string) string {
@@ -903,269 +989,6 @@ func showAllHostsDialog(parent HWND) {
 }
 
 // ---------------------------------------------------------------------------
-// Fingerprint Host dialog (Tools > Fingerprint Host…)
-// ---------------------------------------------------------------------------
-//
-// Probes a single host with every OS-fingerprinting signal and displays the
-// raw data as indented JSON. Useful for collecting samples to extend guessOS().
-//
-// Layout (fixed 560 × 500):
-//
-//  ┌─ Fingerprint Host ─────────────────────────────────────────────────────┐
-//  │  IP / hostname: [___________________________________] [Scan]            │
-//  │  ╔═══════════════════════════════════════════════════ read-only EDIT ═╗ │
-//  │  ║ {                                                                  ║ │
-//  │  ║   "ip": "...",                                                     ║ │
-//  │  ║   ...                                                              ║ │
-//  │  ╚════════════════════════════════════════════════════════════════════╝ │
-//  │                                             [Copy JSON]        [Close] │
-//  └────────────────────────────────────────────────────────────────────────┘
-
-const (
-	idFPEdit   = 3301
-	idFPScan   = 3302
-	idFPOutput = 3303
-	idFPCopy   = 3304
-	idFPClose  = 3305
-)
-
-var (
-	hwndFPEdit   HWND
-	hwndFPOutput HWND
-	hwndFPScan   HWND
-	hwndFPCopy   HWND
-	fpScanCancel context.CancelFunc
-)
-
-var fingerprintWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
-	switch uint32(msg) {
-	case WM_CREATE:
-		inst := getModuleHandle()
-		r := getClientRect(HWND(hwnd))
-		cW, cH := r.Right, r.Bottom
-		const pad int32 = 10
-		const rowH int32 = 24
-		const btnH int32 = 26
-		const labelW int32 = 100
-
-		// "IP / hostname:" label + edit + Scan button
-		createCtrl("STATIC", "IP / hostname:", WS_CHILD|WS_VISIBLE,
-			pad, pad+3, labelW, rowH, HWND(hwnd), 0, inst)
-		inputW := cW - pad*3 - labelW - 80
-		hwndFPEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
-			pad+labelW, pad, inputW, rowH, HWND(hwnd), HMENU(idFPEdit), inst)
-		hwndFPScan, _ = createWindowEx(0, "BUTTON", "Scan",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			pad+labelW+inputW+pad, pad, 80, btnH, HWND(hwnd), HMENU(idFPScan), inst)
-
-		// Read-only output edit (multiline)
-		outputTop := pad + rowH + pad
-		outputH := cH - outputTop - pad - btnH - pad
-		hwndFPOutput, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
-			WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|
-				ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_AUTOHSCROLL,
-			pad, outputTop, cW-pad*2, outputH, HWND(hwnd), HMENU(idFPOutput), inst)
-
-		btnY, btnXs := dlgBottomRight(cW, cH, 2)
-		hwndFPCopy, _ = createWindowEx(0, "BUTTON", "Copy JSON",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			btnXs[0], btnY, 100, btnH, HWND(hwnd), HMENU(idFPCopy), inst)
-		createWindowEx(0, "BUTTON", "Close",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			btnXs[1], btnY, 100, btnH, HWND(hwnd), HMENU(idFPClose), inst)
-
-		enableWindow(hwndFPCopy, false)
-		setWindowText(hwndFPOutput, "Enter an IP address and click Scan.")
-		setFocus(hwndFPEdit)
-		return 0
-
-	case WM_COMMAND:
-		switch loword(wParam) {
-		case idFPScan:
-			fpStartScan(HWND(hwnd))
-		case idFPCopy:
-			text := getWindowText(hwndFPOutput)
-			copyToClipboard(HWND(hwnd), text)
-		case idFPClose:
-			if fpScanCancel != nil {
-				fpScanCancel()
-			}
-			closeModal(HWND(hwnd))
-		}
-		return 0
-
-	case WM_FP_RESULT:
-		// wParam = pointer to a heap-allocated string (JSON result).
-		jp := (*string)(unsafe.Pointer(wParam)) //nolint:govet
-		if jp != nil {
-			setWindowText(hwndFPOutput, strings.ReplaceAll(*jp, "\n", "\r\n"))
-			enableWindow(hwndFPCopy, true)
-		}
-		setWindowText(hwndFPScan, "Scan")
-		enableWindow(hwndFPScan, true)
-		return 0
-
-	case WM_CLOSE:
-		if fpScanCancel != nil {
-			fpScanCancel()
-		}
-		closeModal(HWND(hwnd))
-		return 0
-	}
-	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
-})
-
-func fpStartScan(dlg HWND) {
-	ip := strings.TrimSpace(getWindowText(hwndFPEdit))
-	if ip == "" {
-		return
-	}
-	if fpScanCancel != nil {
-		fpScanCancel()
-	}
-	enableWindow(hwndFPScan, false)
-	setWindowText(hwndFPScan, "Scanning…")
-	enableWindow(hwndFPCopy, false)
-	setWindowText(hwndFPOutput, "Scanning "+ip+" …")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	fpScanCancel = cancel
-
-	go func() {
-		defer cancel()
-
-		cfg := scan.DefaultConfig()
-		cfg.Timeout = 5 * time.Second
-		cfg.Concurrency = 1
-		cfg.PingFirst = false
-		cfg.BroadcastListen = 3 * time.Second
-		cfg.BannerGrab = true
-		cfg.NetBIOS = true
-		cfg.Ports = []int{21, 22, 23, 25, 80, 443, 445, 8080, 8443, 3389}
-
-		ch, err := scan.NewScanner(cfg).Scan(ctx, ip)
-		var jsonStr string
-		if err != nil {
-			jsonStr = `{"error": ` + fmt.Sprintf("%q", err.Error()) + `}`
-		} else {
-			var result scan.Result
-			for r := range ch {
-				result = r
-			}
-			jsonStr = fpBuildJSON(result)
-		}
-
-		sp := new(string)
-		*sp = jsonStr
-		postMessage(dlg, WM_FP_RESULT, uintptr(unsafe.Pointer(sp)), 0)
-	}()
-}
-
-// fpBuildJSON serialises the fingerprint-relevant fields of a scan result.
-func fpBuildJSON(r scan.Result) string {
-	type jSYN struct {
-		WindowSize uint16 `json:"window_size"`
-		Options    string `json:"options"`
-	}
-	type jBanner struct {
-		SSH    string `json:"ssh,omitempty"`
-		HTTP   string `json:"http,omitempty"`
-		HTTPS  string `json:"https,omitempty"`
-		FTP    string `json:"ftp,omitempty"`
-		SMTP   string `json:"smtp,omitempty"`
-		Telnet string `json:"telnet,omitempty"`
-	}
-	type jSNMP struct {
-		SysDescr    string `json:"sys_descr,omitempty"`
-		SysName     string `json:"sys_name,omitempty"`
-		SysLocation string `json:"sys_location,omitempty"`
-		SysContact  string `json:"sys_contact,omitempty"`
-	}
-	type jService struct {
-		Source  string   `json:"source"`
-		Name    string   `json:"name,omitempty"`
-		Type    string   `json:"type,omitempty"`
-		Details []string `json:"details,omitempty"`
-	}
-	type jOut struct {
-		IP           string     `json:"ip"`
-		Alive        bool       `json:"alive"`
-		MAC          string     `json:"mac,omitempty"`
-		Vendor       string     `json:"vendor,omitempty"`
-		Hostname     string     `json:"hostname,omitempty"`
-		NetBIOS      string     `json:"netbios,omitempty"`
-		LatencyMs    int64      `json:"latency_ms,omitempty"`
-		OpenPorts    []int      `json:"open_ports,omitempty"`
-		OS           string     `json:"os"`
-		OSConfidence uint8      `json:"os_confidence"`
-		ICMPTTL      uint8      `json:"icmp_ttl,omitempty"`
-		SYN          *jSYN      `json:"syn_probe,omitempty"`
-		Banner       *jBanner   `json:"banner,omitempty"`
-		SNMP         *jSNMP     `json:"snmp,omitempty"`
-		Services     []jService `json:"services,omitempty"`
-	}
-
-	out := jOut{
-		IP:           r.IP.String(),
-		Alive:        r.Alive,
-		Vendor:       r.Vendor,
-		Hostname:     r.Hostname,
-		NetBIOS:      r.NetBIOS,
-		LatencyMs:    r.Latency.Milliseconds(),
-		OpenPorts:    r.OpenPorts,
-		OS:           string(r.OS),
-		OSConfidence: r.OSConfidence,
-		ICMPTTL:      r.TTL,
-	}
-	if r.MAC != nil {
-		out.MAC = r.MAC.String()
-	}
-	if r.SYNProbe.WindowSize > 0 {
-		out.SYN = &jSYN{WindowSize: r.SYNProbe.WindowSize, Options: r.SYNProbe.Options}
-	}
-	b := r.Banner
-	if b.SSH != "" || b.HTTP != "" || b.HTTPS != "" || b.FTP != "" || b.SMTP != "" || b.Telnet != "" {
-		out.Banner = &jBanner{SSH: b.SSH, HTTP: b.HTTP, HTTPS: b.HTTPS, FTP: b.FTP, SMTP: b.SMTP, Telnet: b.Telnet}
-	}
-	if r.SNMP != nil {
-		out.SNMP = &jSNMP{
-			SysDescr: r.SNMP.SysDescr, SysName: r.SNMP.SysName,
-			SysLocation: r.SNMP.SysLocation, SysContact: r.SNMP.SysContact,
-		}
-	}
-	for _, svc := range r.Services {
-		out.Services = append(out.Services, jService{
-			Source: svc.Source, Name: svc.Name, Type: svc.Type, Details: svc.Details,
-		})
-	}
-
-	buf, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return `{"error": "marshal failed"}`
-	}
-	return string(buf)
-}
-
-// showFingerprintDialog opens the Fingerprint Host dialog under Tools.
-func showFingerprintDialog(parent HWND) {
-	registerDialogClass("NetScopeFingerprint", fingerprintWndProc)
-
-	const dlgW, dlgH int32 = 560, 500
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeFingerprint", "Fingerprint Host",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
-		return
-	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
-	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
-}
 // "Query Host…" dialog
 // ---------------------------------------------------------------------------
 //

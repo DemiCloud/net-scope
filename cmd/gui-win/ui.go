@@ -751,8 +751,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showAllHostsDialog(HWND(hwnd))
 		case IDM_HOSTS_VIEW_HOST:
 			showPickHostDialog(HWND(hwnd))
-		case IDM_TOOLS_FINGERPRINT:
-			showFingerprintDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
