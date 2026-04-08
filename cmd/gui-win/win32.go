@@ -26,6 +26,7 @@ const (
 	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
 	WM_PROXY_VALID   = WM_APP + 11 // proxy connectivity test succeeded
 	WM_PROXY_FAIL    = WM_APP + 12 // proxy connectivity test failed (wParam = error index)
+	WM_FP_RESULT     = WM_APP + 13 // fingerprint dialog: scan complete
 )
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ const (
 	IDM_OPT_DATABASES    = 209 // Options > Databases...
 	IDM_HOSTS_VIEW_ALL   = 210 // Tools > View All Hosts...
 	IDM_HOSTS_VIEW_HOST  = 211 // Tools > Query Host...
+	IDM_TOOLS_FINGERPRINT = 213 // Tools > Fingerprint Host...
 	IDM_HELP_ABOUT          = 203
 	IDM_HELP_FAQ            = 204
 	IDM_HELP_VERSION        = 207
