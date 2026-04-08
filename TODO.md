@@ -25,6 +25,7 @@
 ## GUI (Windows)
 
 - [x] **Scanner tab — "Show Active Only" toggle** — add a checkbox (or toolbar toggle button) to the Scanner tab that hides all unresponsive (red/dead) rows; when enabled only live hosts are visible; toggling off restores the full list; helps usability on /24+ scans where dead IPs bury active devices; consider defaulting to enabled after a scan completes
+- [x] **Ctrl+F find bar drawing artifacts** — find bar EDIT and close button were created without `WS_CLIPSIBLINGS`; the active ListView was also missing `WS_CLIPSIBLINGS`, so it could paint over the floating bar on scroll/update, and the bar left ghost pixels on dismiss; fixed by adding `WS_CLIPSIBLINGS` to all five content ListViews and both find bar controls, and explicitly invalidating the active pane in `hideFindBar`
 - [ ] **Scanner tab — inline search/filter** — text input above the result list that filters visible rows by IP, MAC address, hostname, or vendor as the user types; Ctrl+F focuses it; complements (or supersedes) the planned "View All Hosts" live filter for the main scanner view; useful once host counts grow past ~20
 - [ ] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
 - [ ] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it

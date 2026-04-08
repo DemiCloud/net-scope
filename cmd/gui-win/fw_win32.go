@@ -59,6 +59,7 @@ const (
 	WS_TABSTOP          = 0x00010000
 	WS_POPUP            = 0x80000000
 	WS_CLIPCHILDREN     = 0x02000000
+	WS_CLIPSIBLINGS     = 0x04000000
 
 	// Extended window styles
 	WS_EX_DLGMODALFRAME = 0x00000001
