@@ -127,6 +127,8 @@ func Run(v, target string) {
 	hHosts := createPopupMenu()
 	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_ALL, "View &All Hosts…")
 	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_HOST, "&Query Host…")
+	appendMenu(hHosts, MF_SEPARATOR, 0, "")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_FINGERPRINT, "&Fingerprint Host…")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")
 
 	hHelp := createPopupMenu()
