@@ -2,7 +2,7 @@
 
 ## Naming / UX
 
-- [ ] **Nicer text-only dialogs** (FAQ, Help, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
+- [ ] **Nicer text-only dialogs** (Help, About, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
 
 ## Query Host (redesign)
 
@@ -20,7 +20,7 @@
 
 ## Service Security
 
-- [ ] **GUI ↔ service communication hardening** — the current JSON-over-TCP channel on 127.0.0.1 is loopback-only, but any local process could connect; evaluate options: (a) shared secret / nonce handshake, (b) named pipe instead of TCP (Windows-native, ACL-controllable), (c) TLS with a self-signed cert generated at service start; named pipe is likely the right answer for Windows — eliminates the TCP attack surface entirely and integrates naturally with Windows ACLs; document the decision and threat model in a comment in `service.go`
+- [x] **GUI ↔ service communication hardening** — TLS 1.3 with an ephemeral ECDSA P-256 self-signed cert; the parent generates the cert, passes the hex-encoded SHA-256 fingerprint to the subprocess via argv; the subprocess pins the fingerprint in `DialService` (custom `VerifyConnection`); the private key never leaves the parent process so knowing the fingerprint from `/proc/<pid>/cmdline` cannot impersonate the server; all session traffic is encrypted; `RunServiceConn` token echo removed; implemented in `internal/scan/service.go` (`NewServiceTLS`, `DialService`), cross-platform (Windows, Linux, FreeBSD)
 
 ## GUI (Windows)
 

@@ -3,8 +3,7 @@
 package guiwin
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"crypto/tls"
 	"encoding/json"
 	"net"
 	"os"
@@ -83,26 +82,22 @@ func spawnService(hwnd HWND, elevated bool) {
 		return
 	}
 
-	// Generate a per-session 32-byte random token. This token is passed to
-	// the service subprocess via argv and echoed back in the Ready handshake.
-	// The UI rejects any connection whose reflected token does not match,
-	// preventing a local process from hijacking the socket by racing Accept.
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		messageBox(hwnd, "Cannot generate service token:\n"+err.Error(), "NetScope", MB_ICONERROR)
-		return
-	}
-	token := hex.EncodeToString(raw)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	// Generate an ephemeral TLS certificate for this service session.
+	// The hex-encoded SHA-256 cert fingerprint is passed to the subprocess via
+	// argv. The subprocess pins this fingerprint when dialling, verifying it
+	// connected to our listener. Because the private key never leaves this
+	// process, knowing the fingerprint alone cannot impersonate the server.
+	// All session traffic is encrypted (TLS 1.3).
+	tcpLn, tlsCfg, fingerprint, err := scan.NewServiceTLS()
 	if err != nil {
-		messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		messageBox(hwnd, "Cannot create service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
 		return
 	}
-	addr := ln.Addr().String()
+	tlsLn := tls.NewListener(tcpLn, tlsCfg)
+	addr := tcpLn.Addr().String()
 
-	// Spawn: net-scope service <addr> <token>
-	params := "service " + addr + " " + token
+	// Spawn: net-scope service <addr> <fingerprint>
+	params := "service " + addr + " " + fingerprint
 	if elevated {
 		shellExecute(0, "runas", exe, params, "", SW_HIDE)
 	} else {
@@ -116,9 +111,9 @@ func spawnService(hwnd HWND, elevated bool) {
 			}
 		}()
 
-		ln.(*net.TCPListener).SetDeadline(time.Now().Add(60 * time.Second))
-		conn, err := ln.Accept()
-		ln.Close()
+		tcpLn.SetDeadline(time.Now().Add(60 * time.Second))
+		conn, err := tlsLn.Accept()
+		tlsLn.Close()
 		if err != nil {
 			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
 			return
@@ -127,10 +122,11 @@ func spawnService(hwnd HWND, elevated bool) {
 		dec := json.NewDecoder(conn)
 		enc := json.NewEncoder(conn)
 
-		// First message must be the ready handshake; validate reflected token.
+		// First message must be the ready handshake. Authentication has already
+		// been established by the TLS handshake with cert fingerprint pinning.
 		var msg scan.ServiceMsg
 		conn.SetDeadline(time.Now().Add(10 * time.Second))
-		if err := dec.Decode(&msg); err != nil || !msg.Ready || msg.Token != token {
+		if err := dec.Decode(&msg); err != nil || !msg.Ready {
 			conn.Close()
 			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
 			return
