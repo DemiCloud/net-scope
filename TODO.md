@@ -30,6 +30,11 @@
 - [ ] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
 - [ ] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
 
+## Export
+
+- [ ] **File > Export should export all known hosts** — currently exports only the rows visible in the last active scan; it should export the full `hostRegistry` (every host seen across all scans and broadcast events in the session), including enrichment data (DHCP hostnames, NetBIOS names, ARP MACs accumulated post-scan); JSON and CSV both affected
+- [ ] **File > Export Current Scan** — add a separate menu item that exports only the results from the most recently completed scan (i.e. `allScanResults` / the current ListView contents), for users who want a point-in-time snapshot rather than the full session history
+
 ## OS / Host Intelligence
 
 - [x] **Extend `guessOS()` with vendor OUI signals** — vendor OUI tier added between SNMP and SSH checks: Apple → macOS; Raspberry Pi → Linux; Cisco/Juniper/Ubiquiti/MikroTik/Aruba/Fortinet/Palo Alto → Network Device
