@@ -1,4 +1,4 @@
-//go:build !windows && !gui
+//go:build linux && gui
 
 package main
 
@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
+	guigtk "github.com/demicloud/net-scope/cmd/gui-gtk"
 	"github.com/demicloud/net-scope/internal/config"
 	"github.com/demicloud/net-scope/internal/scan"
 )
 
 func run() {
 	// ── service subcommand ──────────────────────────────────────────────────
-	// Spawned internally by the GUI: net-scope service <addr> <token>
 	if len(os.Args) == 4 && os.Args[1] == "service" {
 		conn, err := net.Dial("tcp", os.Args[2])
 		if err != nil {
@@ -39,8 +40,16 @@ func run() {
 			runTUI()
 			return
 		case "gui":
-			fmt.Fprintln(os.Stderr, "net-scope: gui mode is not available in this build (use make linux-gui)")
-			os.Exit(1)
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+			target := ""
+			for _, a := range os.Args[1:] {
+				if !strings.HasPrefix(a, "-") {
+					target = a
+					break
+				}
+			}
+			guigtk.Run(version, target)
+			return
 		}
 	}
 
@@ -51,10 +60,9 @@ func run() {
 		runTUI()
 		return
 	case "gui":
-		fmt.Fprintln(os.Stderr, "net-scope: gui mode is not available in this build (use make linux-gui)")
-		os.Exit(1)
+		guigtk.Run(version, "")
+		return
 	}
 
-	// Platform default for Linux static / BSD: CLI.
 	runCLI()
 }

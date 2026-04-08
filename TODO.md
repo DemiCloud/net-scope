@@ -90,7 +90,7 @@
 
 ## Linux GUI
 
-- [ ] **Linux native GUI** — Gio is the chosen toolkit: no CGo on Windows (cross-compile from WSL unchanged), CGo+EGL on Linux (native build with gcc + wayland-devel/libX11-devel/mesa-libEGL-devel); immediate-mode model suits live scan data well; Linux GUI should reuse the same sensor service IPC channel as the Windows GUI; FreeBSD stays CLI/TUI only
+- [ ] **Linux native GUI** — GTK3 via `gotk3`; CGo required; dynamically linked; only included in the `make linux-gui` build (tag: `linux,gui`); the standard static Linux binary (`make linux`) stays CGo-free with CLI+TUI only; the GTK GUI reuses the same sensor service IPC channel as the Win32 GUI; FreeBSD stays CLI/TUI only
 
 ## Diff / Snapshot
 
