@@ -17,7 +17,7 @@ func TestGuessOS_SNMP(t *testing.T) {
 		{"Darwin 23.0", OSMacOS},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: tc.descr}, "")
+		got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: tc.descr}, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("SNMP %q: got %q, want %q", tc.descr, got, tc.want)
 		}
@@ -37,7 +37,7 @@ func TestGuessOS_SSHBanner(t *testing.T) {
 		{"SSH-2.0-ROSSSH", OSNetwork},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "")
+		got := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("SSH %q: got %q, want %q", tc.banner, got, tc.want)
 		}
@@ -55,7 +55,7 @@ func TestGuessOS_HTTPHeader(t *testing.T) {
 		{"nginx/1.24.0", OSLinux},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{HTTP: tc.server}, nil, nil, "")
+		got := guessOS(0, BannerInfo{HTTP: tc.server}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("HTTP %q: got %q, want %q", tc.server, got, tc.want)
 		}
@@ -73,7 +73,7 @@ func TestGuessOS_TTL(t *testing.T) {
 		{50, OSUnknown}, // ambiguous
 	}
 	for _, tc := range cases {
-		got := guessOS(tc.ttl, BannerInfo{}, nil, nil, "")
+		got := guessOS(tc.ttl, BannerInfo{}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("TTL %d: got %q, want %q", tc.ttl, got, tc.want)
 		}
@@ -82,7 +82,7 @@ func TestGuessOS_TTL(t *testing.T) {
 
 func TestGuessOS_Precedence(t *testing.T) {
 	// SNMP should win over TTL
-	got := guessOS(128 /* windows TTL */, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "")
+	got := guessOS(128 /* windows TTL */, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "", SYNProbeInfo{})
 	if got != OSLinux {
 		t.Errorf("SNMP should beat TTL: got %q", got)
 	}
@@ -106,7 +106,7 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 		{"Dell Inc.", OSUnknown}, // unknown vendor → falls through to TTL=0 → unknown
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{}, nil, nil, tc.vendor)
+		got := guessOS(0, BannerInfo{}, nil, nil, tc.vendor, SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("vendor %q: got %q, want %q", tc.vendor, got, tc.want)
 		}
@@ -115,8 +115,40 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 
 func TestGuessOS_SNMPBeatsVendor(t *testing.T) {
 	// SNMP "Linux" should win over Apple vendor OUI
-	got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "Apple, Inc.")
+	got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "Apple, Inc.", SYNProbeInfo{})
 	if got != OSLinux {
 		t.Errorf("SNMP should beat vendor OUI: got %q", got)
+	}
+}
+
+func TestGuessOS_SYNProbe(t *testing.T) {
+	cases := []struct {
+		win  uint16
+		opts string
+		want OSHint
+	}{
+		{64240, "MSS(1460) NOP NOP SACK NOP WScale(8)", OSWindows}, // Windows 10/11
+		{29200, "MSS(1460) SACK TS NOP WScale(7)", OSLinux},        // Linux 3.12+
+		{65535, "MSS(1460) NOP WScale(6) NOP NOP TS SACK", OSMacOS}, // macOS
+		{65535, "MSS(1460) SACK", OSUnknown},                        // 65535 without TS → not confident
+		{8192, "MSS(1460)", OSUnknown},                              // ambiguous
+		{0, "", OSUnknown},                                          // probe unavailable
+	}
+	for _, tc := range cases {
+		got := guessOS(0, BannerInfo{}, nil, nil, "", SYNProbeInfo{WindowSize: tc.win, Options: tc.opts})
+		if got != tc.want {
+			t.Errorf("SYN win=%d opts=%q: got %q, want %q", tc.win, tc.opts, got, tc.want)
+		}
+	}
+}
+
+func TestGuessOS_SYNBeatsVendor(t *testing.T) {
+	// SYN-ACK window beats vendor OUI (SYN probe is lower latency and more
+	// direct than OUI lookup — but OUI actually runs first; test vendor wins)
+	// Vendor OUI fires BEFORE SYN tier, so Apple OUI should still win over
+	// a Linux-looking window (Apple hardware CAN run Linux via Boot Camp, etc.)
+	got := guessOS(0, BannerInfo{}, nil, nil, "Apple, Inc.", SYNProbeInfo{WindowSize: 29200, Options: "MSS(1460) SACK TS NOP WScale(7)"})
+	if got != OSMacOS {
+		t.Errorf("vendor OUI should beat SYN window: got %q", got)
 	}
 }
