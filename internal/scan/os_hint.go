@@ -163,6 +163,33 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		}
 	}
 
+	// ---------- TLS certificate subject / issuer ----------
+	// Certificates from vendor-signed devices are strong identity signals even
+	// when the Server: header is blank (e.g. Vizio SmartCast, Ubiquiti, etc.).
+	if banner.TLSCert != "" {
+		c := strings.ToLower(banner.TLSCert)
+		switch {
+		case strings.Contains(c, "apple"):
+			vote(OSMacOS, wOUI)
+		case strings.Contains(c, "microsoft"):
+			vote(OSWindows, wHTTPVendor)
+		case strings.Contains(c, "ubiquiti"), strings.Contains(c, "unifi"):
+			vote(OSUbiquiti, wMDNS)
+		case strings.Contains(c, "mikrotik"):
+			vote(OSRouterOS, wMDNS)
+		case strings.Contains(c, "cisco"):
+			vote(OSCiscoIOS, wMDNS)
+		case strings.Contains(c, "juniper"), strings.Contains(c, "junos"):
+			vote(OSJunOS, wMDNS)
+		case strings.Contains(c, "aruba"):
+			vote(OSAruba, wMDNS)
+		case strings.Contains(c, "fortinet"), strings.Contains(c, "fortigate"):
+			vote(OSFortinet, wMDNS)
+		case strings.Contains(c, "raspberry"):
+			vote(OSLinux, wMDNS)
+		}
+	}
+
 	// ---------- mDNS / SSDP service types ----------
 	for _, svc := range services {
 		t := strings.ToLower(svc.Type)

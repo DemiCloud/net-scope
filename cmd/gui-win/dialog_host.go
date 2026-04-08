@@ -535,12 +535,13 @@ func fpBuildJSON(r scan.Result) string {
 		Options    string `json:"options"`
 	}
 	type jBanner struct {
-		SSH    string `json:"ssh,omitempty"`
-		HTTP   string `json:"http,omitempty"`
-		HTTPS  string `json:"https,omitempty"`
-		FTP    string `json:"ftp,omitempty"`
-		SMTP   string `json:"smtp,omitempty"`
-		Telnet string `json:"telnet,omitempty"`
+		SSH     string `json:"ssh,omitempty"`
+		HTTP    string `json:"http,omitempty"`
+		HTTPS   string `json:"https,omitempty"`
+		TLSCert string `json:"tls_cert,omitempty"`
+		FTP     string `json:"ftp,omitempty"`
+		SMTP    string `json:"smtp,omitempty"`
+		Telnet  string `json:"telnet,omitempty"`
 	}
 	type jSNMP struct {
 		SysDescr    string `json:"sys_descr,omitempty"`
@@ -597,8 +598,8 @@ func fpBuildJSON(r scan.Result) string {
 		out.SYN = &jSYN{WindowSize: r.SYNProbe.WindowSize, Options: r.SYNProbe.Options}
 	}
 	b := r.Banner
-	if b.SSH != "" || b.HTTP != "" || b.HTTPS != "" || b.FTP != "" || b.SMTP != "" || b.Telnet != "" {
-		out.Banner = &jBanner{SSH: b.SSH, HTTP: b.HTTP, HTTPS: b.HTTPS, FTP: b.FTP, SMTP: b.SMTP, Telnet: b.Telnet}
+	if b.SSH != "" || b.HTTP != "" || b.HTTPS != "" || b.TLSCert != "" || b.FTP != "" || b.SMTP != "" || b.Telnet != "" {
+		out.Banner = &jBanner{SSH: b.SSH, HTTP: b.HTTP, HTTPS: b.HTTPS, TLSCert: b.TLSCert, FTP: b.FTP, SMTP: b.SMTP, Telnet: b.Telnet}
 	}
 	if r.SNMP != nil {
 		out.SNMP = &jSNMP{
