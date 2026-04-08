@@ -11,18 +11,18 @@ import (
 )
 
 // crashLogPath returns the path to the crash log file.
-// Writes next to the executable first; falls back to %APPDATA%\net-sweep\.
+// Writes next to the executable first; falls back to %APPDATA%\net-scope\.
 func crashLogPath() string {
 	if exe, err := os.Executable(); err == nil {
-		return filepath.Join(filepath.Dir(exe), "net-sweep-crash.log")
+		return filepath.Join(filepath.Dir(exe), "net-scope-crash.log")
 	}
 	appdata := os.Getenv("APPDATA")
 	if appdata == "" {
 		appdata = os.TempDir()
 	}
-	dir := filepath.Join(appdata, "net-sweep")
+	dir := filepath.Join(appdata, "net-scope")
 	_ = os.MkdirAll(dir, 0700)
-		return filepath.Join(dir, "net-scope-crash.log")
+	return filepath.Join(dir, "net-scope-crash.log")
 }
 
 // writeCrashLog appends a timestamped crash entry (panic value + stack trace)

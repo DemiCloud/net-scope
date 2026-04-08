@@ -10,7 +10,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // Column indices for the Hosts listview
@@ -45,7 +45,7 @@ func listViewInsertPendingRow(hwnd HWND, ip string) int32 {
 }
 
 // listViewUpdateRow writes all result fields into an existing row.
-func listViewUpdateRow(hwnd HWND, row int32, r sweep.Result) {
+func listViewUpdateRow(hwnd HWND, row int32, r scan.Result) {
 	if r.Alive {
 		setSubItem(hwnd, row, colStatus, "●")
 	} else {
@@ -155,14 +155,14 @@ var (
 
 	// ssdpRawData accumulates every raw ServiceInfo received for each IP,
 	// used to build the Services column and for "Copy raw data".
-	ssdpRawData = map[string][]sweep.ServiceInfo{}
+	ssdpRawData = map[string][]scan.ServiceInfo{}
 
 	// wsdIPRow maps an IP address to the row index in the WSD listview.
 	// Used to deduplicate: one row per physical device.
 	wsdIPRow = map[string]int32{}
 
 	// wsdRawData accumulates every WSD ServiceInfo received for each IP.
-	wsdRawData = map[string][]sweep.ServiceInfo{}
+	wsdRawData = map[string][]scan.ServiceInfo{}
 )
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ var (
 
 // listViewAddMDNSRow appends a single mDNS service entry.
 // Columns: IP | Name | Service | Device/Model | Capabilities | Notes
-func listViewAddMDNSRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	ipPtr := utf16(ip)
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
@@ -349,7 +349,7 @@ func mdnsRawClipboardText(hwndSrc HWND, rows []int32) string {
 // SSDP listview.  Repeated announcements from the same IP are collapsed into
 // a single row; the Type and Services columns are updated as more information
 // arrives.  Columns: IP | Server | Type | Services | Location
-func listViewAddSSDPRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	// Always accumulate raw data so "copy raw data" is complete.
 	ssdpRawData[ip] = append(ssdpRawData[ip], svc)
 
@@ -519,10 +519,10 @@ func getSSDPRawText(ip string) string {
 
 // listViewAddWSDRow appends a single WS-Discovery device entry, deduplicating
 // by IP. Columns: IP | Types | Transport URLs | Scopes | Endpoint UUID
-func listViewAddWSDRow(hwnd HWND, ip string, svc sweep.ServiceInfo) {
+func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	wsdRawData[ip] = append(wsdRawData[ip], svc)
 
-	dev := sweep.WsdServiceInfoToDevice(svc)
+	dev := scan.WsdServiceInfoToDevice(svc)
 	if existingRow, ok := wsdIPRow[ip]; ok {
 		if len(dev.XAddrs) > 0 {
 			setSubItem(hwnd, existingRow, 2, strings.Join(dev.XAddrs, "  "))
@@ -578,7 +578,7 @@ func getWSDRawText(ip string) string {
 
 
 // Columns: Time | Type | Client MAC | Hostname | Client IP | Requested IP | Offered IP | Server IP
-func listViewAddDHCPRow(hwnd HWND, evt sweep.DHCPEvent) {
+func listViewAddDHCPRow(hwnd HWND, evt scan.DHCPEvent) {
 	ts := evt.Time.Format("15:04:05")
 	tsPtr := utf16(ts)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: tsPtr}
@@ -741,7 +741,7 @@ func updateSortIndicators() {
 // IP-numeric order (the order results arrive from the scanner).
 func applyHostsSort() {
 	// Collect results recorded in rowResultMap.
-	results := make([]sweep.Result, 0, len(rowResultMap))
+	results := make([]scan.Result, 0, len(rowResultMap))
 	for _, r := range rowResultMap {
 		results = append(results, r)
 	}
@@ -777,7 +777,7 @@ func applyHostsSort() {
 	// Rebuild the ListView.
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
 	ipRowMap = make(map[string]int32, len(results)+len(pendingIPs))
-	rowResultMap = make(map[int32]sweep.Result, len(results))
+	rowResultMap = make(map[int32]scan.Result, len(results))
 
 	for _, r := range results {
 		ip := r.IP.String()
@@ -795,7 +795,7 @@ func applyHostsSort() {
 // compareHostResult compares two Results by column col.
 // Returns negative if a < b, positive if a > b, 0 if equal.
 // Empty/dash values always sort last (after real values) in ascending order.
-func compareHostResult(a, b sweep.Result, col int32) int {
+func compareHostResult(a, b scan.Result, col int32) int {
 	switch col {
 	case colStatus:
 		// Alive first.

@@ -15,7 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // ---------------------------------------------------------------------------
@@ -75,10 +75,10 @@ var (
 	scanMu     sync.Mutex
 
 	// Cross-thread result queue: scan goroutine appends, UI thread reads.
-	pendingResults []sweep.Result
+	pendingResults []scan.Result
 	pendingMu      sync.Mutex
 	liveCount      int
-	lastStats      sweep.ScanStats // populated after scan completes
+	lastStats      scan.ScanStats // populated after scan completes
 	scanStartTime  time.Time       // set when scan begins, used for duration metric
 	listHasHosts  bool            // true once ≥1 alive host found in current/last scan
 	isScanning    bool            // true while a scan is in progress (UI thread only)
@@ -87,7 +87,7 @@ var (
 	// Written on the UI thread (startScan), read on the UI thread (WM_SCAN_RESULT).
 	ipRowMap    map[string]int32
 	// rowResultMap maps ListView row index → scan Result, for right-click menus.
-	rowResultMap map[int32]sweep.Result
+	rowResultMap map[int32]scan.Result
 )
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ var (
 	pendingBcastMu sync.Mutex
 
 	// DHCP event queue: service goroutine appends, UI thread reads via WM_DHCP_EVENT.
-	pendingDHCP   []sweep.DHCPEvent
+	pendingDHCP   []scan.DHCPEvent
 	pendingDHCPMu sync.Mutex
 
 	// Host enrichment queue: background goroutines append NetBIOS names / ARP MACs
@@ -169,15 +169,15 @@ type hostEntry struct {
 	IP           string
 	FirstSeen    time.Time
 	LastSeen     time.Time
-	Result       sweep.Result      // latest scan data (zero-value for broadcast-only hosts)
+	Result       scan.Result      // latest scan data (zero-value for broadcast-only hosts)
 	HasResult    bool              // true once a scan result has been recorded
-	DHCPEvents   []sweep.DHCPEvent // all DHCP packets observed for this IP
-	ExtraServices []sweep.ServiceInfo // broadcast services not yet in Result.Services
+	DHCPEvents   []scan.DHCPEvent // all DHCP packets observed for this IP
+	ExtraServices []scan.ServiceInfo // broadcast services not yet in Result.Services
 }
 
 type bcastEntry struct {
 	ip  string
-	svc sweep.ServiceInfo
+	svc scan.ServiceInfo
 }
 
 func startBroadcastListener() {
@@ -193,7 +193,7 @@ func startBroadcastListener() {
 		if err != nil || bl <= 0 {
 			bl = 3 * time.Second
 		}
-		sweep.ListenBroadcast(ctx, bl, func(ip string, svc sweep.ServiceInfo) {
+		scan.ListenBroadcast(ctx, bl, func(ip string, svc scan.ServiceInfo) {
 			pendingBcastMu.Lock()
 			idx := len(pendingBcast)
 			pendingBcast = append(pendingBcast, bcastEntry{ip, svc})
@@ -220,7 +220,7 @@ func kickNetBIOSProbe(hwnd HWND, ip string) {
 		if parsed == nil {
 			return
 		}
-		name := sweep.ProbeNetBIOS(parsed, 2*time.Second)
+		name := scan.ProbeNetBIOS(parsed, 2*time.Second)
 		if name == "" {
 			return
 		}
@@ -247,7 +247,7 @@ func startARPPoll(hwnd HWND) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				for ip, mac := range sweep.ReadARPTable() {
+				for ip, mac := range scan.ReadARPTable() {
 					macCopy := mac
 					pendingEnrichMu.Lock()
 					idx := len(pendingEnriches)
@@ -340,7 +340,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DHCP_EVENT:
 		pendingDHCPMu.Lock()
-		var evt sweep.DHCPEvent
+		var evt scan.DHCPEvent
 		if int(wParam) < len(pendingDHCP) {
 			evt = pendingDHCP[int(wParam)]
 		}
@@ -961,7 +961,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			cur := listViewGetCellText(hwndList, row, colMAC)
 			if cur == "\u2014" || cur == "" {
 				setSubItem(hwndList, row, colMAC, e.mac.String())
-				if vendor := sweep.LookupVendor(e.mac); vendor != "" {
+				if vendor := scan.LookupVendor(e.mac); vendor != "" {
 					if vc := listViewGetCellText(hwndList, row, colVendor); vc == "\u2014" || vc == "" {
 						setSubItem(hwndList, row, colVendor, vendor)
 					}
@@ -969,7 +969,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				if r, ok2 := rowResultMap[row]; ok2 {
 					r.MAC = e.mac
 					if r.Vendor == "" {
-						r.Vendor = sweep.LookupVendor(e.mac)
+						r.Vendor = scan.LookupVendor(e.mac)
 					}
 					rowResultMap[row] = r
 				}
@@ -977,7 +977,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if en.Result.MAC == nil {
 				en.Result.MAC = e.mac
 				if en.Result.Vendor == "" {
-					en.Result.Vendor = sweep.LookupVendor(e.mac)
+					en.Result.Vendor = scan.LookupVendor(e.mac)
 				}
 			}
 		}
@@ -1280,12 +1280,12 @@ func startScan(hwnd HWND) {
 
 	target := getWindowText(hwndTarget)
 	if target == "" {
-		messageBox(hwnd, "Enter a target IP or CIDR.", "net-sweep", 0)
+		messageBox(hwnd, "Enter a target IP or CIDR.", "NetScope", 0)
 		return
 	}
 
 	// WAN safety: warn if the target is not an RFC1918 / private range.
-	if !sweep.IsPrivate(target) {
+	if !scan.IsPrivate(target) {
 		r := messageBox(hwnd,
 			"Target \""+target+"\" is not a private/RFC1918 address.\n\n"+
 				"Scanning hosts you do not own may violate laws or terms of service.\n\n"+
@@ -1298,7 +1298,7 @@ func startScan(hwnd HWND) {
 	}
 
 	appCfg, _, _ := config.Load()
-	scanCfg := appCfg.ToSweepConfig()
+	scanCfg := appCfg.ToScanConfig()
 	// Disable per-scan mDNS/SSDP; background listener handles those continuously.
 	scanCfg.BroadcastListen = 0
 	// Honour runtime proxy toggle: clear the proxy address if mode is disabled.
@@ -1307,9 +1307,9 @@ func startScan(hwnd HWND) {
 	}
 
 	// Expand target first so we can pre-populate the list.
-	hosts, err := sweep.ExpandTarget(target)
+	hosts, err := scan.ExpandTarget(target)
 	if err != nil {
-		messageBox(hwnd, "Invalid target: "+err.Error(), "net-sweep", 0)
+		messageBox(hwnd, "Invalid target: "+err.Error(), "NetScope", 0)
 		return
 	}
 
@@ -1333,7 +1333,7 @@ func startScan(hwnd HWND) {
 
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
 	ipRowMap = make(map[string]int32, len(hosts))
-	rowResultMap = make(map[int32]sweep.Result, len(hosts))
+	rowResultMap = make(map[int32]scan.Result, len(hosts))
 
 	// Pre-populate every IP with a "Pending" row so they appear in order.
 	for _, ip := range hosts {
@@ -1367,7 +1367,7 @@ func startScan(hwnd HWND) {
 				postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 			}
 		}()
-		sc := sweep.NewScanner(scanCfg)
+		sc := scan.NewScanner(scanCfg)
 		ch, err := sc.Scan(ctx, target)
 		if err != nil {
 			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
@@ -1392,7 +1392,7 @@ func startScan(hwnd HWND) {
 // If multiple are found, a popup menu lets the user pick one.
 // Called from the UI thread only.
 func detectSubnet(hwnd HWND) {
-	subnets := sweep.DetectLocalSubnets()
+	subnets := scan.DetectLocalSubnets()
 	switch len(subnets) {
 	case 0:
 		messageBox(hwnd, "No private IPv4 interface detected.\n\nConnect to a network and try again.",
@@ -1493,7 +1493,7 @@ func applyProxyMode(hwnd HWND, enable bool) {
 // exportResults saves the current results to a JSON or CSV file via a Save dialog.
 func exportResults(hwnd HWND, format string) {
 	pendingMu.Lock()
-	results := make([]sweep.Result, 0, len(pendingResults))
+	results := make([]scan.Result, 0, len(pendingResults))
 	for _, r := range pendingResults {
 		if r.Alive {
 			results = append(results, r)
@@ -1530,9 +1530,9 @@ func exportResults(hwnd HWND, format string) {
 	defer f.Close()
 
 	if format == "json" {
-		err = sweep.WriteJSON(f, results)
+		err = scan.WriteJSON(f, results)
 	} else {
-		err = sweep.WriteCSV(f, results)
+		err = scan.WriteCSV(f, results)
 	}
 	if err != nil {
 		messageBox(hwnd, "Export failed:\n"+err.Error(), "Export Error", 0)
@@ -1592,7 +1592,7 @@ func updateNetworkTab() {
 }
 
 // updateHealthTab fills the Scan Report tab with stats from the last scan.
-func updateHealthTab(stats sweep.ScanStats, duration time.Duration) {
+func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 	showWindow(hwndHealthPlaceholder, SW_HIDE)
 	arpLine := "None detected."
 	if stats.ARPAnomalies > 0 {
@@ -1632,7 +1632,7 @@ func updateHealthTab(stats sweep.ScanStats, duration time.Duration) {
 // ---------------------------------------------------------------------------
 
 // portOpen returns true if port is in r.OpenPorts.
-func portOpen(r sweep.Result, port int) bool {
+func portOpen(r scan.Result, port int) bool {
 	for _, p := range r.OpenPorts {
 		if p == port {
 			return true
@@ -1731,7 +1731,7 @@ func listViewInfoFor(idFrom uintptr) (hw HWND, numCols int32, headers []string) 
 	return 0, 0, nil
 }
 
-func showHostContextMenu(parent HWND, r sweep.Result, x, y int32) {
+func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 	ip := r.IP.String()
 	selCount := len(listViewGetSelectedRows(hwndList))
 

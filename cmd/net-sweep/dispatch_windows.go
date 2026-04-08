@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	guiwin "github.com/demicloud/net-scope/cmd/gui-win"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 var (
@@ -43,7 +43,7 @@ func run() {
 				fmt.Fprintf(os.Stderr, "service dial: %v\n", err)
 				os.Exit(1)
 			}
-			if err := sweep.RunServiceConn(conn); err != nil {
+			if err := scan.RunServiceConn(conn); err != nil {
 				fmt.Fprintf(os.Stderr, "service: %v\n", err)
 				os.Exit(1)
 			}

@@ -42,7 +42,7 @@ cmd/
   tui/                ← standalone TUI (legacy, keep for reference)
 internal/
   config/             ← TOML config; Load() never auto-writes on first run
-  sweep/              ← core scanner library
+  scan/              ← core scanner library
 ```
 
 ---
@@ -165,7 +165,7 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| **Backend** | `internal/sweep/` | All network I/O, scanning, enrichment, result types |
+| **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types |
 | **Service** | `cmd/gui-win/service.go` + OS service wrapper | Background capture (DHCP, passive listeners); should serve TUI and future Linux GUI too — not just the Windows GUI |
 | **Config** | `internal/config/` | Serialisation, defaults, path resolution only |
 | **Front-end** | `cmd/gui-win/`, `cmd/net-sweep/{cli,tui}*` | Display, user input, layout — **no business logic here** |

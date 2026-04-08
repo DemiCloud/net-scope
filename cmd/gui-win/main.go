@@ -7,7 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // version and initialTarget are set by Run() before any window is created.
@@ -41,7 +41,7 @@ func Run(v, target string) {
 		showWindow(hwndConsole, SW_HIDE)
 	}
 
-	sweep.InitVendorDB(config.DataDir())
+	scan.InitVendorDB(config.DataDir())
 
 	// Enable Per-Monitor V2 DPI awareness before any window is created.
 	// This ensures controls and fonts scale correctly on high-DPI monitors
@@ -64,7 +64,7 @@ func Run(v, target string) {
 		initialTarget = target
 	} else if appConfig.Scan.DefaultTarget != "" {
 		initialTarget = appConfig.Scan.DefaultTarget
-	} else if detected := sweep.DetectLocalSubnets(); len(detected) > 0 {
+	} else if detected := scan.DetectLocalSubnets(); len(detected) > 0 {
 		initialTarget = detected[0] // best guess; user can click ⟲ to see all
 	} else {
 		initialTarget = "192.168.1.0/24"
@@ -74,7 +74,7 @@ func Run(v, target string) {
 	initCommonControls()
 
 	inst := getModuleHandle()
-	className := utf16("NetSweepWnd")
+	className := utf16("NetScopeWnd")
 
 	wc := WNDCLASSEX{
 		CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
@@ -94,7 +94,7 @@ func Run(v, target string) {
 
 	hwnd, err := createWindowEx(
 		0,
-		"NetSweepWnd",
+		"NetScopeWnd",
 		"NetScope",
 		WS_OVERLAPPEDWINDOW,
 		int32(CW_USEDEFAULT), int32(CW_USEDEFAULT),

@@ -1,9 +1,9 @@
 //go:build windows
 
-// Application-specific Win32 constants and helpers for net-sweep.
+// Application-specific Win32 constants and helpers for NetScope.
 //
 // Pure Win32 plumbing (types, structs, DLL procs, generic wrappers) lives in
-// fw_win32.go.  Only net-sweep-specific constants and functions belong here.
+// fw_win32.go.  Only NetScope-specific constants and functions belong here.
 
 package guiwin
 
@@ -19,8 +19,8 @@ const (
 	WM_SCAN_STATS    = WM_APP + 3  // scan goroutine: progress stats
 	WM_BCAST_SVC     = WM_APP + 4  // broadcast listener: ServiceInfo arrived
 	WM_FIRST_RUN     = WM_APP + 5  // trigger first-run config-location dialog
-	WM_SERVICE_UP    = WM_APP + 6  // sweep service connected and ready
-	WM_SERVICE_DOWN  = WM_APP + 7  // sweep service disconnected
+	WM_SERVICE_UP    = WM_APP + 6  // scan service connected and ready
+	WM_SERVICE_DOWN  = WM_APP + 7  // scan service disconnected
 	WM_DHCP_EVENT    = WM_APP + 8  // DHCP packet from elevated service
 	WM_HOST_ENRICH   = WM_APP + 9  // background enrichment: NetBIOS / ARP arrived
 	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
@@ -44,7 +44,7 @@ const (
 	IDC_LIST_WSD     = 116
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status strip
-	IDC_SERVICE_BTN  = 113 // "Elevate sweep service" button
+	IDC_SERVICE_BTN  = 113 // "Elevate scan service" button
 	IDC_LIST_NETWORK  = 114 // Network tab text pane
 	IDC_DETECT        = 115 // detect local subnet button
 	IDC_PROXY_CHECK   = 117 // "Proxy Mode" checkbox in global options bar

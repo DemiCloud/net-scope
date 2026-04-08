@@ -1,8 +1,8 @@
-// Package config loads and persists net-sweep settings from a TOML file.
+// Package config loads and persists NetScope settings from a TOML file.
 //
 // Search order:
 //  1. <userConfigDir>/demicloud/net-scope/config.toml  (preferred location)
-//     Windows: %APPDATA%\demicloud\net-sweep\config.toml
+//     Windows: %APPDATA%\demicloud\net-scope\config.toml
 //     Linux:   ~/.config/demicloud/net-scope/config.toml
 //  2. ./config.toml  (current directory override for CLI per-project use)
 //
@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // File is the config filename looked for in each search location.
@@ -123,12 +123,12 @@ func Load() (Config, string, error) {
 	return Default(), "", nil
 }
 
-// ToSweepConfig converts the TOML config into a sweep.Config.
-func (c Config) ToSweepConfig() sweep.Config {
+// ToScanConfig converts the TOML config into a scan.Config.
+func (c Config) ToScanConfig() scan.Config {
 	timeout := parseDurationOr(c.Scan.Timeout, time.Second)
 	bl := parseDurationOr(c.Scan.BroadcastListen, 3*time.Second)
 
-	return sweep.Config{
+	return scan.Config{
 		Timeout:         timeout,
 		Concurrency:     c.Scan.Concurrency,
 		Ports:           c.Scan.Ports,
