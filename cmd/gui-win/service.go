@@ -28,6 +28,12 @@ var (
 	// sendScanViaService prevents a second scan goroutine from reading
 	// concurrently with an outgoing one (stop → immediate rescan race).
 	serviceDecMu sync.Mutex
+
+	// serviceEncMu serialises all writes to serviceEnc. json.Encoder has no
+	// internal lock; concurrent Encode calls (scan goroutine + stopServiceScan
+	// + startDHCPCapture) corrupt the wire stream and cause the remote
+	// decoder to panic.
+	serviceEncMu sync.Mutex
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -60,8 +66,11 @@ func stopService() {
 		serviceEnc = nil
 		serviceDec = nil
 		serviceElevated = false
-		// Best-effort graceful shutdown.
+		// Best-effort graceful shutdown — hold serviceEncMu so we don't
+		// race with a scan goroutine that still holds enc.
+		serviceEncMu.Lock()
 		_ = enc.Encode(scan.ServiceCmd{Cmd: "shutdown"})
+		serviceEncMu.Unlock()
 	}
 }
 
@@ -154,7 +163,10 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 		serviceDecMu.Lock()
 		defer serviceDecMu.Unlock()
 
-		if err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg}); err != nil {
+		serviceEncMu.Lock()
+		err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg})
+		serviceEncMu.Unlock()
+		if err != nil {
 			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 			return
 		}
@@ -212,7 +224,9 @@ func stopServiceScan() {
 	enc := serviceEnc
 	serviceMu.Unlock()
 	if enc != nil {
+		serviceEncMu.Lock()
 		_ = enc.Encode(scan.ServiceCmd{Cmd: "stop"})
+		serviceEncMu.Unlock()
 	}
 }
 
@@ -226,7 +240,9 @@ func startDHCPCapture(hwnd HWND) {
 	if enc == nil {
 		return
 	}
+	serviceEncMu.Lock()
 	_ = enc.Encode(scan.ServiceCmd{Cmd: "dhcp-start"})
+	serviceEncMu.Unlock()
 }
 
 // statusForService returns a short label for the service-state overlay.
