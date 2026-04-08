@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	guigio "github.com/demicloud/net-scope/cmd/gui-gio"
+	guiwin "github.com/demicloud/net-scope/cmd/gui-win"
 	"github.com/demicloud/net-scope/internal/config"
 	"github.com/demicloud/net-scope/internal/scan"
 )
@@ -79,7 +79,7 @@ func run() {
 					break
 				}
 			}
-			guigio.Run(version, target)
+			guiwin.Run(version, target)
 			return
 		}
 	}
@@ -104,7 +104,7 @@ func run() {
 		fmt.Fprintln(os.Stderr, "net-scope: tui mode is not available on Windows")
 		os.Exit(1)
 	case "gui":
-		guigio.Run(version, "")
+		guiwin.Run(version, "")
 		return
 	}
 
@@ -135,7 +135,7 @@ func run() {
 			break
 		}
 	}
-	guigio.Run(version, target)
+	guiwin.Run(version, target)
 }
 
 func reopenConsoleHandles() {
