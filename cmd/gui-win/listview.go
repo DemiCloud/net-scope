@@ -140,10 +140,20 @@ func listViewUpdateRow(hwnd HWND, row int32, r scan.Result) {
 // mDNS / SSDP display-layer state
 // ---------------------------------------------------------------------------
 
+// mdnsBackupEntry is a single mDNS event as received from the network.
+type mdnsBackupEntry struct {
+	ip  string
+	svc scan.ServiceInfo
+}
+
 var (
 	// mdnsRaw stores the original TXT records for each mDNS row so the
 	// right-click "Copy raw data" option can reproduce the full record.
 	mdnsRaw = map[int32][]string{}
+
+	// mdnsBackup holds every mDNS entry ever received, in arrival order,
+	// so that repopulateMDNS can rebuild the listview after a filter change.
+	mdnsBackup []mdnsBackupEntry
 
 	// ssdpIPRow maps an IP address to the row index in the SSDP listview.
 	// Used to deduplicate: one row per physical device.
@@ -157,12 +167,30 @@ var (
 	// used to build the Services column and for "Copy raw data".
 	ssdpRawData = map[string][]scan.ServiceInfo{}
 
+	// ssdpOrderedIPs lists SSDP device IPs in first-seen order for
+	// deterministic repopulation when the search filter changes.
+	ssdpOrderedIPs []string
+
+	// ssdpKnownIPs tracks every SSDP IP ever received regardless of whether
+	// it is currently visible in the listview (i.e. filtered out or not).
+	ssdpKnownIPs = map[string]bool{}
+
 	// wsdIPRow maps an IP address to the row index in the WSD listview.
 	// Used to deduplicate: one row per physical device.
 	wsdIPRow = map[string]int32{}
 
 	// wsdRawData accumulates every WSD ServiceInfo received for each IP.
 	wsdRawData = map[string][]scan.ServiceInfo{}
+
+	// wsdOrderedIPs lists WSD device IPs in first-seen order.
+	wsdOrderedIPs []string
+
+	// wsdKnownIPs tracks every WSD IP ever received regardless of filter.
+	wsdKnownIPs = map[string]bool{}
+
+	// inRepopulate is set while a repopulate* function is running so that
+	// the listViewAdd* functions skip backing-store appends.
+	inRepopulate bool
 )
 
 // ---------------------------------------------------------------------------
@@ -172,6 +200,14 @@ var (
 // listViewAddMDNSRow appends a single mDNS service entry.
 // Columns: IP | Name | Service | Device/Model | Capabilities | Notes
 func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
+	if !inRepopulate {
+		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
+		// Respect the active search filter: skip the listview insert if this
+		// entry doesn't match.  It stays in mdnsBackup for later repopulation.
+		if f := strings.ToLower(tabSearchFilter[1]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
+			return
+		}
+	}
 	ipPtr := utf16(ip)
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
@@ -350,8 +386,10 @@ func mdnsRawClipboardText(hwndSrc HWND, rows []int32) string {
 // a single row; the Type and Services columns are updated as more information
 // arrives.  Columns: IP | Server | Type | Services | Location
 func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
-	// Always accumulate raw data so "copy raw data" is complete.
-	ssdpRawData[ip] = append(ssdpRawData[ip], svc)
+	// Accumulate raw data (skip during repopulate — data is already present).
+	if !inRepopulate {
+		ssdpRawData[ip] = append(ssdpRawData[ip], svc)
+	}
 
 	loc, server := "", ""
 	for _, d := range svc.Details {
@@ -363,7 +401,7 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	}
 
 	if existingRow, ok := ssdpIPRow[ip]; ok {
-		// Row already exists — update Type column if this entry is more descriptive.
+		// Row is currently visible — update Type column if more descriptive.
 		if ssdpDeviceScore(svc.Type) > ssdpDeviceScore(ssdpBestST[ip]) {
 			ssdpBestST[ip] = svc.Type
 			setSubItem(hwnd, existingRow, 2, ssdpPrettyType(svc.Type))
@@ -373,7 +411,30 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		return
 	}
 
-	// New device — insert row.
+	// Row not currently visible.
+	if ssdpKnownIPs[ip] && !inRepopulate {
+		// Known IP that is filtered out — update best-type metadata but
+		// do not create a listview row.
+		if ssdpDeviceScore(svc.Type) > ssdpDeviceScore(ssdpBestST[ip]) {
+			ssdpBestST[ip] = svc.Type
+		}
+		return
+	}
+
+	// New device (or repopulating a cleared listview).
+	if !inRepopulate {
+		ssdpKnownIPs[ip] = true
+		ssdpOrderedIPs = append(ssdpOrderedIPs, ip)
+		// Respect the active search filter for newly arriving devices.
+		if f := strings.ToLower(tabSearchFilter[2]); f != "" && !ssdpIPMatchesFilter(ip, f) {
+			ssdpBestST[ip] = svc.Type // track best type even when filtered out
+			return
+		}
+	}
+
+	ssdpBestST[ip] = svc.Type
+
+	// Insert row.
 	ipPtr := utf16(ip)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: ipPtr}
 	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
@@ -381,7 +442,6 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		return
 	}
 	ssdpIPRow[ip] = row
-	ssdpBestST[ip] = svc.Type
 
 	// Server string: trim verbose OS bits after first comma/slash group.
 	// "Samsung-Linux/4.1, UPnP/1.0, SmartTV2013" → "Samsung-Linux/4.1 · UPnP/1.0"
@@ -520,14 +580,34 @@ func getSSDPRawText(ip string) string {
 // listViewAddWSDRow appends a single WS-Discovery device entry, deduplicating
 // by IP. Columns: IP | Types | Transport URLs | Scopes | Endpoint UUID
 func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
-	wsdRawData[ip] = append(wsdRawData[ip], svc)
+	// Accumulate raw data (skip during repopulate — data is already present).
+	if !inRepopulate {
+		wsdRawData[ip] = append(wsdRawData[ip], svc)
+	}
 
 	dev := scan.WsdServiceInfoToDevice(svc)
 	if existingRow, ok := wsdIPRow[ip]; ok {
+		// Row visible — update transport URLs if we have new ones.
 		if len(dev.XAddrs) > 0 {
 			setSubItem(hwnd, existingRow, 2, strings.Join(dev.XAddrs, "  "))
 		}
 		return
+	}
+
+	// Row not currently visible.
+	if wsdKnownIPs[ip] && !inRepopulate {
+		// Known IP that is filtered out — nothing to update visually.
+		return
+	}
+
+	// New device (or repopulating a cleared listview).
+	if !inRepopulate {
+		wsdKnownIPs[ip] = true
+		wsdOrderedIPs = append(wsdOrderedIPs, ip)
+		// Respect the active search filter for newly arriving devices.
+		if f := strings.ToLower(tabSearchFilter[3]); f != "" && !wsdIPMatchesFilter(ip, f) {
+			return
+		}
 	}
 
 	ipPtr := utf16(ip)
@@ -553,6 +633,114 @@ func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		ep = "—"
 	}
 	setSubItem(hwnd, row, 4, ep)
+}
+
+// ---------------------------------------------------------------------------
+// Search-filter helpers and repopulate functions
+// ---------------------------------------------------------------------------
+
+// mdnsEntryMatchesFilter reports whether an mDNS entry matches filter
+// (which must already be lower-cased).
+func mdnsEntryMatchesFilter(ip string, svc scan.ServiceInfo, filter string) bool {
+	return strings.Contains(strings.ToLower(ip), filter) ||
+		strings.Contains(strings.ToLower(svc.Name), filter) ||
+		strings.Contains(strings.ToLower(svc.Type), filter) ||
+		strings.Contains(strings.ToLower(mdnsPrettyType(svc.Type)), filter)
+}
+
+// repopulateMDNS clears hwnd and re-inserts mDNS rows matching filter.
+// An empty filter restores all rows.
+func repopulateMDNS(hwnd HWND, filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
+	mdnsRaw = map[int32][]string{} // row indices change — reset
+	inRepopulate = true
+	defer func() { inRepopulate = false }()
+	for _, e := range mdnsBackup {
+		if filter != "" && !mdnsEntryMatchesFilter(e.ip, e.svc, filter) {
+			continue
+		}
+		listViewAddMDNSRow(hwnd, e.ip, e.svc)
+	}
+}
+
+// ssdpIPMatchesFilter reports whether an SSDP IP matches filter (lower-cased).
+// Searches the IP and all accumulated raw service data for that IP.
+func ssdpIPMatchesFilter(ip, filter string) bool {
+	if strings.Contains(strings.ToLower(ip), filter) {
+		return true
+	}
+	for _, svc := range ssdpRawData[ip] {
+		if strings.Contains(strings.ToLower(svc.Type), filter) ||
+			strings.Contains(strings.ToLower(ssdpPrettyType(svc.Type)), filter) {
+			return true
+		}
+		for _, d := range svc.Details {
+			if strings.Contains(strings.ToLower(d), filter) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// repopulateSSDP clears hwnd and re-inserts SSDP rows matching filter.
+func repopulateSSDP(hwnd HWND, filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
+	for ip := range ssdpIPRow {
+		delete(ssdpIPRow, ip)
+	}
+	for ip := range ssdpBestST {
+		delete(ssdpBestST, ip)
+	}
+	inRepopulate = true
+	defer func() { inRepopulate = false }()
+	for _, ip := range ssdpOrderedIPs {
+		if filter != "" && !ssdpIPMatchesFilter(ip, filter) {
+			continue
+		}
+		for _, svc := range ssdpRawData[ip] {
+			listViewAddSSDPRow(hwnd, ip, svc)
+		}
+	}
+}
+
+// wsdIPMatchesFilter reports whether a WSD IP matches filter (lower-cased).
+func wsdIPMatchesFilter(ip, filter string) bool {
+	if strings.Contains(strings.ToLower(ip), filter) {
+		return true
+	}
+	for _, svc := range wsdRawData[ip] {
+		if strings.Contains(strings.ToLower(svc.Type), filter) {
+			return true
+		}
+		for _, d := range svc.Details {
+			if strings.Contains(strings.ToLower(d), filter) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// repopulateWSD clears hwnd and re-inserts WSD rows matching filter.
+func repopulateWSD(hwnd HWND, filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
+	for ip := range wsdIPRow {
+		delete(wsdIPRow, ip)
+	}
+	inRepopulate = true
+	defer func() { inRepopulate = false }()
+	for _, ip := range wsdOrderedIPs {
+		if filter != "" && !wsdIPMatchesFilter(ip, filter) {
+			continue
+		}
+		for _, svc := range wsdRawData[ip] {
+			listViewAddWSDRow(hwnd, ip, svc)
+		}
+	}
 }
 
 // getWSDRawText formats all accumulated WSD raw data for ip for clipboard copy.

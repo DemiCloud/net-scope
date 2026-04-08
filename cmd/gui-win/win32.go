@@ -50,6 +50,8 @@ const (
 	IDC_DETECT        = 115 // detect local subnet button
 	IDC_PROXY_CHECK   = 117 // "Proxy Mode" checkbox in global options bar
 	IDC_ACTIVE_ONLY   = 118 // "Active only" checkbox in scan bar
+	IDC_SEARCH_EDIT   = 119 // Ctrl+F find bar — text input
+	IDC_SEARCH_CLOSE  = 120 // Ctrl+F find bar — "×" dismiss button
 )
 
 // ---------------------------------------------------------------------------

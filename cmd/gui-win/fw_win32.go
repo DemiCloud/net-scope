@@ -84,6 +84,7 @@ const (
 	// Button styles / messages
 	BS_DEFPUSHBUTTON = 0x0001
 	BS_AUTOCHECKBOX  = 0x0003
+	BS_FLAT          = 0x8000 // flat push button (no 3-D border chrome)
 	BM_GETCHECK      = 0x00F0
 	BM_SETCHECK      = 0x00F1
 	BST_UNCHECKED    = 0
@@ -254,7 +255,8 @@ const (
 	BN_CLICKED = 0
 
 	// Edit messages
-	EM_SETSEL = 0x00B1
+	EM_SETSEL      = 0x00B1
+	EM_SETCUEBANNER = 0x1501
 
 	// Virtual keys
 	VK_SHIFT   = 0x10
@@ -263,6 +265,7 @@ const (
 	VK_ESCAPE  = 0x1B
 	VK_KEY_A   = 0x41
 	VK_KEY_C   = 0x43
+	VK_KEY_F   = 0x46
 
 	// Tab control
 	WC_TABCONTROL   = "SysTabControl32"
@@ -544,6 +547,7 @@ var (
 	procReleaseDC                    = modUser32.NewProc("ReleaseDC")
 	procDrawIconEx                   = modUser32.NewProc("DrawIconEx")
 	procDestroyIcon                  = modUser32.NewProc("DestroyIcon")
+	procIsWindowVisible               = modUser32.NewProc("IsWindowVisible")
 	procSetWindowLongPtrW            = modUser32.NewProc("SetWindowLongPtrW")
 	procCallWindowProcW              = modUser32.NewProc("CallWindowProcW")
 	procSetCapture                   = modUser32.NewProc("SetCapture")
@@ -1053,6 +1057,11 @@ func setFocus(hwnd HWND) {
 
 func isWindow(hwnd HWND) bool {
 	r, _, _ := procIsWindow.Call(uintptr(hwnd))
+	return r != 0
+}
+
+func isWindowVisible(hwnd HWND) bool {
+	r, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
 	return r != 0
 }
 
