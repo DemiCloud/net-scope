@@ -7,7 +7,7 @@ OUI_URL := https://maclookup.app/downloads/json-database/get-db?version=latest
 DEV_LDFLAGS     := -X main.version=$(VERSION)
 RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
 
-# Output naming convention: net-sweep_<os>_<arch>[.exe]
+# Output naming convention: net-scope_<os>_<arch>[.exe]
 cli_out  = build/$(NAME)_$(1)_$(2)$(if $(filter windows,$(1)),.exe,)
 
 .PHONY: help linux windows bsd all test vet release clean
@@ -25,12 +25,12 @@ help: ## Show this help
 linux: fetch-oui ## Build unified binary for linux/amd64 → build/
 	mkdir -p build
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
-		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-sweep
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-scope
 
 windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd64 → build/
 	mkdir -p build
 	GOOS=windows GOARCH=amd64 go build \
-		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-sweep
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-scope
 
 fetch-oui: ## Download OUI JSON database for embedding (requires internet)
 	@if [ ! -f internal/sweep/oui.json ] || [ $$(wc -c < internal/sweep/oui.json) -lt 1000 ]; then \
@@ -73,7 +73,7 @@ release: clean fetch-oui ## Build all platforms stripped → dist/ + checksums.t
 		out=dist/$(NAME)_$${os}_$${arch}$${ext}; \
 		echo "  cli  $$os/$$arch → $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath \
-			-tags with_oui -ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/net-sweep; \
+			-tags with_oui -ldflags "$(RELEASE_LDFLAGS)" -o $$out ./cmd/net-scope; \
 	}; \
 	echo "==> Linux"; \
 	build_cli linux amd64; \

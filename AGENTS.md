@@ -5,7 +5,7 @@
 NetScope (binary: `net-scope`) is a network inspection and reconnaissance tool combining
 active probing, passive signal analysis, and change detection for LAN environments.
 Written in Go 1.25.
-It produces a **single binary per platform** from `cmd/net-sweep/`:
+It produces a **single binary per platform** from `cmd/net-scope/`:
 
 | Platform | Behaviour at launch |
 |---|---|
@@ -15,7 +15,7 @@ It produces a **single binary per platform** from `cmd/net-sweep/`:
 
 The old `cmd/cli/`, `cmd/tui/`, and `cmd/gui-win/` entry points still exist
 and are buildable in isolation, but **the canonical entry point is
-`cmd/net-sweep/`**.
+`cmd/net-scope/`**.
 
 ---
 
@@ -23,7 +23,7 @@ and are buildable in isolation, but **the canonical entry point is
 
 ```
 cmd/
-  net-sweep/          ← unified entry point (build this)
+  net-scope/          ← unified entry point (build this)
     main.go           ← InitVendorDB + calls run()
     cli.go            ← runCLI() — all platforms
     tui_notwindows.go ← runTUI() — Linux/BSD only (!windows build tag)
@@ -51,9 +51,9 @@ internal/
 
 ```bash
 # Dev builds
-make linux           # → build/net-sweep_linux_amd64
-make windows         # → build/net-sweep_windows_amd64.exe  (runs gen-resources first)
-make bsd             # → build/net-sweep_freebsd_amd64
+make linux           # → build/net-scope_linux_amd64
+make windows         # → build/net-scope_windows_amd64.exe  (runs gen-resources first)
+make bsd             # → build/net-scope_freebsd_amd64
 
 # Regenerate icon.ico + resource_windows_amd64.syso (called automatically by make windows)
 make gen-resources
@@ -84,7 +84,7 @@ toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
 Commit commands (run inside the Fedora WSL environment):
 
 ```bash
-wsl -d Fedora -- bash -c "cd /home/lbreitk/dev/net-sweep && git add <files> && git commit -m '<message>'"
+wsl -d Fedora -- bash -c "cd /home/lbreitk/dev/net-scope && git add <files> && git commit -m '<message>'"
 ```
 
 Follow the conventional-commits style already used in the repo:
@@ -111,7 +111,7 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 - All `cmd/gui-win/` files carry `//go:build windows` and `package guiwin`.
   Never change the package back to `main`.
 - Version is injected at link time: `-ldflags "-X main.version=<tag>"`.
-  The variable lives in `cmd/net-sweep/main.go` as `var version = "dev"`.
+  The variable lives in `cmd/net-scope/main.go` as `var version = "dev"`.
 - `config.Load()` returns defaults silently when no file exists — it does
   **not** write a starter file. The GUI prompts on first save.
 
@@ -168,7 +168,7 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 | **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types |
 | **Service** | `cmd/gui-win/service.go` + OS service wrapper | Background capture (DHCP, passive listeners); should serve TUI and future Linux GUI too — not just the Windows GUI |
 | **Config** | `internal/config/` | Serialisation, defaults, path resolution only |
-| **Front-end** | `cmd/gui-win/`, `cmd/net-sweep/{cli,tui}*` | Display, user input, layout — **no business logic here** |
+| **Front-end** | `cmd/gui-win/`, `cmd/net-scope/{cli,tui}*` | Display, user input, layout — **no business logic here** |
 
 **Rules:**
 
