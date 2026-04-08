@@ -109,6 +109,7 @@ const (
 	WM_SETFONT        = 0x0030
 	WM_KEYDOWN        = 0x0100
 	WM_COMMAND        = 0x0111
+	WM_TIMER          = 0x0113
 	WM_NOTIFY         = 0x004E
 	WM_MOUSEMOVE      = 0x0200
 	WM_LBUTTONDOWN    = 0x0201
@@ -558,6 +559,8 @@ var (
 	procEmptyClipboard               = modUser32.NewProc("EmptyClipboard")
 	procSetClipboardData             = modUser32.NewProc("SetClipboardData")
 	procRegisterClipboardFormatW     = modUser32.NewProc("RegisterClipboardFormatW")
+	procSetTimer                     = modUser32.NewProc("SetTimer")
+	procKillTimer                    = modUser32.NewProc("KillTimer")
 
 	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 
@@ -1050,6 +1053,17 @@ func getSaveFileName(owner HWND, title, defExt, filter string) string {
 
 func setForegroundWindow(hwnd HWND) {
 	procSetForegroundWindow.Call(uintptr(hwnd))
+}
+
+// setTimer creates a timer with the given ID and interval (milliseconds).
+// lpTimerFunc should be 0 to deliver WM_TIMER to the window.
+func setTimer(hwnd HWND, nIDEvent uintptr, uElapse uint32, lpTimerFunc uintptr) {
+	procSetTimer.Call(uintptr(hwnd), nIDEvent, uintptr(uElapse), lpTimerFunc)
+}
+
+// killTimer destroys the timer with the given ID.
+func killTimer(hwnd HWND, nIDEvent uintptr) {
+	procKillTimer.Call(uintptr(hwnd), nIDEvent)
 }
 
 func setFocus(hwnd HWND) {
