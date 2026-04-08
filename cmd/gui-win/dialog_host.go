@@ -48,6 +48,7 @@ const (
 	idHostPortEdit   = 606
 	idHostTypeCombo  = 607
 	idHostProbeList  = 608
+	idHostCopyFP     = 609
 
 	// Connect / Ping quick-action buttons.
 	idHostConnHTTP   = 620
@@ -72,6 +73,7 @@ var (
 	hwndHostProbeList HWND
 	hwndHostCopyBtn   HWND
 	hwndHostCloseBtn  HWND
+	hwndHostCopyFPBtn HWND
 
 	// Connect / Ping quick-action buttons.
 	hwndHostConnHTTP   HWND
@@ -126,6 +128,8 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			hostDetailRunAll(HWND(hwnd))
 		case idHostCopyReport:
 			hostDetailCopyReport(HWND(hwnd))
+		case idHostCopyFP:
+			hostDetailCopyFP(HWND(hwnd))
 		case idHostIPCombo:
 			if hiword(wParam) == CBN_SELCHANGE {
 				hostDetailSelectIP(HWND(hwnd))
@@ -235,6 +239,8 @@ func showHostDetailDialog(parent HWND, ip string) {
 	// Fill summary.
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
 	hostDetailUpdateConnectButtons(ip)
+	_, known := hostRegistry[ip]
+	enableWindow(hwndHostCopyFPBtn, known)
 
 	setFontAllChildren(dlg, appFont)
 	// Override the summary pane with a monospace font so padded labels align.
@@ -365,7 +371,10 @@ func createHostDetailControls(hwnd HWND) {
 	btnY := cH - pad - 26
 	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy report",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-210, btnY, 100, 26, hwnd, HMENU(idHostCopyReport), inst)
+		cW-pad-320, btnY, 100, 26, hwnd, HMENU(idHostCopyReport), inst)
+	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy FP JSON",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cW-pad-210, btnY, 110, 26, hwnd, HMENU(idHostCopyFP), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-100, btnY, 100, 26, hwnd, HMENU(idHostClose), inst)
@@ -391,6 +400,8 @@ func hostDetailSelectIP(hwnd HWND) {
 	setWindowText(hwnd, "Host detail — "+ip) // update title bar
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
 	hostDetailUpdateConnectButtons(ip)
+	_, known := hostRegistry[ip]
+	enableWindow(hwndHostCopyFPBtn, known)
 	// Clear the probe list for the new host.
 	sendMessage(hwndHostProbeList, LVM_DELETEALLITEMS, 0, 0)
 }
@@ -497,6 +508,15 @@ func hostDetailCopyReport(hwnd HWND) {
 		}
 	}
 	copyToClipboard(hwnd, sb.String())
+}
+
+// hostDetailCopyFP copies raw fingerprint signals for the current host as JSON.
+func hostDetailCopyFP(hwnd HWND) {
+	e, ok := hostRegistry[currentDetailIP]
+	if !ok {
+		return
+	}
+	copyToClipboard(hwnd, fpBuildJSON(e.Result))
 }
 
 // unescapeDNSLabel removes DNS-SD backslash escapes from a service instance
