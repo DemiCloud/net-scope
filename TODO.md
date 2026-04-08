@@ -32,7 +32,8 @@
 
 ## OS / Host Intelligence
 
-- [x] **Extend `guessOS()` with port-pattern and vendor signals** — add two new signal tiers inserted between the SNMP and SSH checks: (1) **vendor OUI**: "Apple" prefix → macOS; "Raspberry Pi Foundation" → Linux; known network-gear vendors (Cisco, Juniper, Ubiquiti, MikroTik, etc.) → Network Device; (2) **open-port fingerprint**: ports 445 or 139 present → Windows; port 22 present with no 445/139 → Linux (raise confidence, don't override higher-tier signals); port 23 (Telnet) or 161 (SNMP) with no other signals → Network Device; pass the `[]int` open-port slice and `string` vendor into `guessOS()` and update all call sites
+- [x] **Extend `guessOS()` with vendor OUI signals** — vendor OUI tier added between SNMP and SSH checks: Apple → macOS; Raspberry Pi → Linux; Cisco/Juniper/Ubiquiti/MikroTik/Aruba/Fortinet/Palo Alto → Network Device
+- [ ] **TCP SYN window-size probe for OS fingerprinting** — send a raw SYN to a known-open port (elevation-gated, same path as ICMP); read initial window size and TCP options ordering from the SYN-ACK; pass as new inputs to `guessOS()`; well-known values: Linux 29200 (MSS/SACK/TS/WS), Windows 64240 (MSS/NOP/WS/SACK), macOS 65535 (MSS/NOP/WS/TS/SACK), Cisco IOS 4096–8192 (MSS only) — add two new signal tiers inserted between the SNMP and SSH checks: (1) **vendor OUI**: "Apple" prefix → macOS; "Raspberry Pi Foundation" → Linux; known network-gear vendors (Cisco, Juniper, Ubiquiti, MikroTik, etc.) → Network Device; (2) **open-port fingerprint**: ports 445 or 139 present → Windows; port 22 present with no 445/139 → Linux (raise confidence, don't override higher-tier signals); port 23 (Telnet) or 161 (SNMP) with no other signals → Network Device; pass the `[]int` open-port slice and `string` vendor into `guessOS()` and update all call sites
 
 ## ARP Integrity
 
