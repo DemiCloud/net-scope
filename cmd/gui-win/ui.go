@@ -1348,12 +1348,12 @@ func createControls(hwnd HWND) {
 func createFindBar(parent HWND) {
 	inst := getModuleHandle()
 	hwndSearchEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
-		WS_CHILD|WS_CLIPSIBLINGS|ES_AUTOHSCROLL|WS_TABSTOP,
+		WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,
 		0, 0, scale(220), scale(24), parent, HMENU(IDC_SEARCH_EDIT), inst)
 	cueText := utf16("Search\u2026")
 	sendMessage(hwndSearchEdit, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(cueText)))
 	hwndSearchClose, _ = createWindowEx(0, "BUTTON", "\u00d7",
-		WS_CHILD|WS_CLIPSIBLINGS|WS_TABSTOP|BS_FLAT,
+		WS_CHILD|WS_TABSTOP|BS_FLAT,
 		0, 0, scale(26), scale(24), parent, HMENU(IDC_SEARCH_CLOSE), inst)
 	sendMessage(hwndSearchEdit, WM_SETFONT, uintptr(appFont), 1)
 	sendMessage(hwndSearchClose, WM_SETFONT, uintptr(appFont), 1)
