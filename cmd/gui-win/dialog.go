@@ -435,18 +435,126 @@ func showFAQDialog(_ HWND) {
 // Version Info Dialog
 // ---------------------------------------------------------------------------
 
-func showVersionDialog(parent HWND) {
-	body := "NetScope " + version + "\n" +
-		"Network inspection and reconnaissance — active probing, passive signal analysis, change detection.\n\n" +
-		"Build information\n" +
-		"─────────────────\n" +
-		"  Version : " + version + "\n" +
-		"  Source  : https://github.com/demicloud/net-scope\n\n" +
-		"Command-line equivalent\n" +
-		"────────────────────────\n" +
-		"  net-scope --version\n"
+const (
+	idVerClose = 711
+	idVerCopy  = 712
+)
 
-	messageBox(parent, body, "Version — NetScope", 0)
+// verHeaderBgColor is COLORREF 0x00BBGGRR: R=10 G=20 B=40 (dark navy).
+const verHeaderBgColor = uint32(0x0028140A)
+
+var (
+	hwndVerHeader  HWND
+	hwndVerBody    HWND
+	verHeaderBrush HBRUSH
+)
+
+var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case WM_CREATE:
+		inst := getModuleHandle()
+		const pad int32 = 14
+		const cW int32 = 430
+		const hdrH int32 = 44
+		const bodyH int32 = 156
+
+		// Header banner — background painted via WM_CTLCOLORSTATIC.
+		hwndVerHeader, _ = createWindowEx(0, "STATIC",
+			"NetScope  —  Version Information",
+			WS_CHILD|WS_VISIBLE|SS_CENTER,
+			0, 0, cW, hdrH, HWND(hwnd), 0, inst)
+		verHeaderBrush = createSolidBrush(verHeaderBgColor)
+
+		// Read-only body text — WM_CTLCOLOREDIT keeps it white.
+		body := "Version : " + version + "\r\n\r\n" +
+			"Description\r\n" +
+			"     Network inspection and reconnaissance — active probing,\r\n" +
+			"     passive signal analysis, change detection for LAN environments.\r\n\r\n" +
+			"Source\r\n" +
+			"     https://github.com/demicloud/net-scope\r\n\r\n" +
+			"CLI equivalent\r\n" +
+			"     net-scope --version"
+		hwndVerBody, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", body,
+			WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+			pad, hdrH+pad, cW-pad*2, bodyH, HWND(hwnd), 0, inst)
+
+		// Button row: Copy on the left, Close on the right.
+		const btnY int32 = hdrH + pad + bodyH + pad
+		createCtrl("BUTTON", "Copy to Clipboard",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+			pad, btnY, 140, 26, HWND(hwnd), idVerCopy, inst)
+		createCtrl("BUTTON", "Close",
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
+			cW-pad-100, btnY, 100, 26, HWND(hwnd), idVerClose, inst)
+
+		dpi := getDpiForWindow(HWND(hwnd))
+		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
+		return 0
+
+	case WM_CTLCOLORSTATIC:
+		if HWND(lParam) == hwndVerHeader {
+			setBkMode(wParam, OPAQUE)
+			setTextColor(wParam, 0x00FFFFFF)
+			setBkColor(wParam, verHeaderBgColor)
+			return uintptr(verHeaderBrush)
+		}
+		return ctlColorDialog(wParam)
+
+	case WM_CTLCOLOREDIT:
+		setBkMode(wParam, OPAQUE)
+		setTextColor(wParam, 0x00000000)
+		setBkColor(wParam, 0x00FFFFFF)
+		return uintptr(getSysColorBrush(COLOR_WINDOW))
+
+	case WM_COMMAND:
+		switch loword(wParam) {
+		case idVerCopy:
+			copyToClipboard(HWND(hwnd), getWindowText(hwndVerBody))
+		case idVerClose:
+			closeModal(HWND(hwnd))
+		}
+		return 0
+
+	case WM_CLOSE:
+		closeModal(HWND(hwnd))
+		return 0
+
+	case WM_DESTROY:
+		if verHeaderBrush != 0 {
+			deleteObject(uintptr(verHeaderBrush))
+			verHeaderBrush = 0
+		}
+		return 0
+	}
+	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+func showVersionDialog(parent HWND) {
+	registerDialogClass("NetScopeVersion", versionWndProc)
+
+	const (
+		pad        int32  = 14
+		cW         int32  = 430
+		hdrH       int32  = 44
+		bodyH      int32  = 156
+		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
+	)
+	clientH := hdrH + pad + bodyH + pad + 26 + pad
+	outer := adjustWindowRectEx(RECT{0, 0, cW, clientH}, dlgStyle, dlgExStyle, false)
+
+	dlg, err := createWindowEx(
+		dlgExStyle,
+		"NetScopeVersion", "Version — NetScope",
+		dlgStyle,
+		0, 0, outer.Right-outer.Left, outer.Bottom-outer.Top,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return
+	}
+	centerOnParent(dlg, parent, outer.Right-outer.Left, outer.Bottom-outer.Top)
+	runModal(dlg, parent)
 }
 
 // ---------------------------------------------------------------------------
