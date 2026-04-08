@@ -33,7 +33,7 @@
 ## OS / Host Intelligence
 
 - [x] **Extend `guessOS()` with vendor OUI signals** — vendor OUI tier added between SNMP and SSH checks: Apple → macOS; Raspberry Pi → Linux; Cisco/Juniper/Ubiquiti/MikroTik/Aruba/Fortinet/Palo Alto → Network Device
-- [ ] **TCP SYN window-size probe for OS fingerprinting** — send a raw SYN to a known-open port (elevation-gated, same path as ICMP); read initial window size and TCP options ordering from the SYN-ACK; pass as new inputs to `guessOS()`; well-known values: Linux 29200 (MSS/SACK/TS/WS), Windows 64240 (MSS/NOP/WS/SACK), macOS 65535 (MSS/NOP/WS/TS/SACK), Cisco IOS 4096–8192 (MSS only)
+- [x] **TCP SYN window-size probe for OS fingerprinting**
 - [ ] **Raw fingerprint dump tool** — surface raw TCP/IP stack signals collected for a host (ICMP TTL, SYN-ACK window size, TCP options order, SNMP sysDescr, SSH banner, HTTP Server header, mDNS/SSDP service strings) in a copyable text format; useful for crafting new `guessOS()` rules; expose via right-click context menu, Tools menu, or a debug panel
 
 ## ARP Integrity

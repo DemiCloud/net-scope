@@ -8,11 +8,18 @@ import (
 )
 
 // SNMPInfo holds device identity fields retrieved via SNMP.
-type SNMPInfo struct {
-	SysDescr    string // often contains model number and firmware version
+type SNMPInfo struct {	SysDescr    string // often contains model number and firmware version
 	SysName     string
 	SysLocation string
 	SysContact  string
+}
+
+// SYNProbeInfo holds TCP stack fingerprint data extracted from a SYN-ACK.
+// WindowSize and Options are zero/empty when the probe could not be performed
+// (no raw socket privilege on Linux, always on Windows, no open ports found).
+type SYNProbeInfo struct {
+	WindowSize uint16 // initial advertised receive window
+	Options    string // options in order, e.g. "MSS(1460) SACK TS NOP WScale(7)"
 }
 
 // ServiceInfo describes a service or device discovered via broadcast protocols.
@@ -37,6 +44,7 @@ type Result struct {
 	OS          OSHint    // best-guess OS
 	Banner      BannerInfo // per-port service banners
 	SNMP        *SNMPInfo
+	SYNProbe    SYNProbeInfo  // TCP stack fingerprint from SYN-ACK (elevation-gated)
 	Services    []ServiceInfo // mDNS, SSDP discoveries
 }
 

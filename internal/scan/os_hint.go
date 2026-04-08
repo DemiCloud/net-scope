@@ -21,7 +21,8 @@ const (
 // icmpTTL is the TTL observed (0 if unknown). banner is the banner grab
 // result. services is the list of mDNS/SSDP services. snmp is optional.
 // vendor is the OUI vendor string from the MAC address (empty if unknown).
-func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNMPInfo, vendor string) OSHint {
+// syn holds the TCP SYN-ACK window and options (zero when unavailable).
+func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNMPInfo, vendor string, syn SYNProbeInfo) OSHint {
 	// ---------- SNMP sysDescr — highest confidence ----------
 	if snmp != nil && snmp.SysDescr != "" {
 		d := strings.ToLower(snmp.SysDescr)
@@ -57,6 +58,21 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			strings.Contains(v, "unifi"), strings.Contains(v, "aruba"),
 			strings.Contains(v, "fortinet"), strings.Contains(v, "palo alto"):
 			return OSNetwork
+		}
+	}
+
+	// ---------- TCP SYN-ACK window + options ----------
+	// Well-known initial window sizes are highly OS-specific.
+	// Linux 3.12+ default: 29200; Windows 10/11: 64240; macOS: 65535+timestamps.
+	if syn.WindowSize > 0 {
+		hasTS := strings.Contains(syn.Options, "TS")
+		switch {
+		case syn.WindowSize == 64240:
+			return OSWindows
+		case syn.WindowSize == 29200:
+			return OSLinux
+		case syn.WindowSize == 65535 && hasTS:
+			return OSMacOS
 		}
 	}
 

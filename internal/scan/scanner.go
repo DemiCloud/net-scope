@@ -245,7 +245,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			broadcastMu.Unlock()
 
 			// OS hint runs after services are merged.
-			r.OS = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor)
+			r.OS = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
 
 			select {
 			case out <- r:
@@ -392,9 +392,24 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 
 	wg.Wait()
 
-	// Banner grab runs after port scan (needs openPorts list).
-	if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+	// Banner grab and SYN probe run after port scan (both need open ports).
+	if len(r.OpenPorts) > 0 {
+		var postWg sync.WaitGroup
+		if s.Config.BannerGrab {
+			postWg.Add(1)
+			go func() {
+				defer postWg.Done()
+				r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+			}()
+		}
+		if dial == nil {
+			postWg.Add(1)
+			go func() {
+				defer postWg.Done()
+				r.SYNProbe = probeSYN(ctx, ip, r.OpenPorts[0], s.Config.Timeout)
+			}()
+		}
+		postWg.Wait()
 	}
 
 	return r
