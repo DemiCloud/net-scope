@@ -1374,6 +1374,10 @@ func showFindBar(parent HWND) {
 	sendMessage(hwndSearchEdit, EM_SETSEL, 0, ^uintptr(0)) // select all
 	showWindow(hwndSearchEdit, SW_SHOW)
 	showWindow(hwndSearchClose, SW_SHOW)
+	// Ensure the find bar floats on top of sibling ListViews.
+	const hwndTop = 0 // HWND_TOP
+	setWindowPos(hwndSearchEdit, hwndTop, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)
+	setWindowPos(hwndSearchClose, hwndTop, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)
 	setFocus(hwndSearchEdit)
 }
 

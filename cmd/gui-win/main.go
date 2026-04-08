@@ -100,7 +100,7 @@ func Run(v, target string) {
 		0,
 		"NetScopeWnd",
 		"NetScope",
-		WS_OVERLAPPEDWINDOW,
+		WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
 		int32(CW_USEDEFAULT), int32(CW_USEDEFAULT),
 		1160, 700,
 		0, 0, inst,
