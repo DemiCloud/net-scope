@@ -24,6 +24,21 @@ import (
 
 // Win32 COLORREF is 0x00BBGGRR (low byte = red).
 
+// searchEditOrigProc holds the original EDIT window procedure, replaced when
+// the find bar's edit control is subclassed to intercept VK_ESCAPE.
+var searchEditOrigProc uintptr
+
+// searchEditSubclassCb is the subclass proc for the find bar's EDIT control.
+// It intercepts Escape (to dismiss the bar) and forwards everything else
+// to the original EDIT procedure.
+var searchEditSubclassCb = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	if uint32(msg) == WM_KEYDOWN && wParam == VK_ESCAPE {
+		hideFindBar()
+		return 0
+	}
+	return callWindowProc(searchEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
 // proxyEnabled is set at runtime (session-only; never touches the config file).
 // It defaults to true when a SOCKS5 proxy is already configured in settings,
 // meaning the proxy starts active on launch if one is saved.
@@ -66,6 +81,10 @@ var (
 	hwndTabCtrl      HWND
 	hwndScanStatus   HWND // inline scan status label on the scan bar
 	hwndStatus       HWND // bottom status bar (2 parts: listener | service)
+	// Find bar (Ctrl+F): a floating edit + dismiss button, one instance shared
+	// across all tabs.  Both are direct children of the main window.
+	hwndSearchEdit  HWND
+	hwndSearchClose HWND
 )
 
 // ---------------------------------------------------------------------------
@@ -97,6 +116,14 @@ var (
 	allScanResults map[string]scan.Result
 	// activeOnlyFilter reflects the state of the "Active only" checkbox.
 	activeOnlyFilter bool
+
+	// tabSearchFilter stores the Ctrl+F search string for each tab (indexed
+	// by tab number 0–6).  An empty string means no filter is active.
+	tabSearchFilter [7]string
+
+	// dhcpAllEvents is the backing store for DHCP filter repopulation.
+	// Every DHCP event is appended here when received, before being rendered.
+	dhcpAllEvents []scan.DHCPEvent
 )
 
 // ---------------------------------------------------------------------------
@@ -391,7 +418,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			evt = pendingDHCP[int(wParam)]
 		}
 		pendingDHCPMu.Unlock()
-		listViewAddDHCPRow(hwndListDHCP, evt)
+		// Persist every DHCP event so repopulateDHCP can replay them with a filter.
+		dhcpAllEvents = append(dhcpAllEvents, evt)
+		// Respect any active search filter: skip rendering if the event doesn't match.
+		if f := strings.ToLower(tabSearchFilter[4]); f == "" || dhcpEventMatchesFilter(evt, f) {
+			listViewAddDHCPRow(hwndListDHCP, evt)
+		}
 		if bcastDHCP == 0 {
 			showWindow(hwndDHCPPlaceholder, SW_HIDE)
 		}
@@ -529,6 +561,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					if !scanEverCompleted {
 						showWindow(hwndHealthPlaceholder, SW_SHOW)
 					}
+				}
+			}
+			// Update find bar for the new tab: reposition, reload its text,
+			// or hide it if the new tab doesn't support filtering.
+			if isWindowVisible(hwndSearchEdit) {
+				newTab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+				if newTab > 4 {
+					showWindow(hwndSearchEdit, SW_HIDE)
+					showWindow(hwndSearchClose, SW_HIDE)
+				} else {
+					positionFindBar(HWND(hwnd))
+					setWindowText(hwndSearchEdit, tabSearchFilter[newTab])
 				}
 			}
 		}
@@ -693,6 +737,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 						handleCopyAsCmd(HWND(hwnd), hw, IDM_COPY_AS_TSV, rows, nc, hdrs)
 					}
 					return 0
+				case VK_KEY_F:
+					showFindBar(HWND(hwnd))
+					return 0
 				}
 			}
 		}
@@ -788,6 +835,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		setWindowText(hwndScanStatus, "Stopped")
 			} else {
 				startScan(HWND(hwnd))
+			}
+		case IDC_SEARCH_CLOSE:
+			hideFindBar()
+		case IDC_SEARCH_EDIT:
+			if hiword(wParam) == EN_CHANGE {
+				tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+				if tab >= 0 && tab < 7 {
+					tabSearchFilter[tab] = getWindowText(hwndSearchEdit)
+					applyTabFilter()
+				}
 			}
 		case IDM_FILE_EXIT:
 			stopScan()
@@ -1277,6 +1334,134 @@ func createControls(hwnd HWND) {
 	monoFont := createMonoFont()
 	sendMessage(hwndListNetwork, WM_SETFONT, uintptr(monoFont), 1)
 	sendMessage(hwndListHealth, WM_SETFONT, uintptr(monoFont), 1)
+
+	// Find bar: created last so appFont is already set.
+	createFindBar(hwnd)
+}
+
+// ---------------------------------------------------------------------------
+// Ctrl+F find bar
+// ---------------------------------------------------------------------------
+
+// createFindBar creates the Ctrl+F search EDIT and dismiss button as direct
+// children of parent.  Called once at the end of createControls.
+func createFindBar(parent HWND) {
+	inst := getModuleHandle()
+	hwndSearchEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,
+		0, 0, scale(220), scale(24), parent, HMENU(IDC_SEARCH_EDIT), inst)
+	cueText := utf16("Search\u2026")
+	sendMessage(hwndSearchEdit, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(cueText)))
+	hwndSearchClose, _ = createWindowEx(0, "BUTTON", "\u00d7",
+		WS_CHILD|WS_TABSTOP|BS_FLAT,
+		0, 0, scale(26), scale(24), parent, HMENU(IDC_SEARCH_CLOSE), inst)
+	sendMessage(hwndSearchEdit, WM_SETFONT, uintptr(appFont), 1)
+	sendMessage(hwndSearchClose, WM_SETFONT, uintptr(appFont), 1)
+	// Subclass the edit to intercept Escape.
+	searchEditOrigProc = setWindowLongPtr(hwndSearchEdit, GWLP_WNDPROC, uintptr(searchEditSubclassCb))
+}
+
+// showFindBar makes the find bar visible for the currently active tab
+// (tabs 0–4 only) and focuses the search edit.  Safe to call when already
+// visible — just re-focuses.
+func showFindBar(parent HWND) {
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	if tab > 4 {
+		return // Network and Scan Report tabs are text areas — no filter
+	}
+	positionFindBar(parent)
+	setWindowText(hwndSearchEdit, tabSearchFilter[tab])
+	sendMessage(hwndSearchEdit, EM_SETSEL, 0, ^uintptr(0)) // select all
+	showWindow(hwndSearchEdit, SW_SHOW)
+	showWindow(hwndSearchClose, SW_SHOW)
+	setFocus(hwndSearchEdit)
+}
+
+// hideFindBar hides the find bar and clears the current tab's filter.
+func hideFindBar() {
+	showWindow(hwndSearchEdit, SW_HIDE)
+	showWindow(hwndSearchClose, SW_HIDE)
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	if tab >= 0 && tab < 7 && tabSearchFilter[tab] != "" {
+		tabSearchFilter[tab] = ""
+		applyTabFilter()
+	}
+}
+
+// positionFindBar moves the search edit and close button to the top-right
+// corner of the currently active pane.
+func positionFindBar(parent HWND) {
+	r := getClientRect(parent)
+	editW := scale(220)
+	btnW := scale(26)
+	gap := scale(4)
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	var paneTop int32
+	if tab == 0 {
+		paneTop = scale(elevBarH + tabCtrlH + scanBarH)
+	} else {
+		paneTop = scale(elevBarH + tabCtrlH)
+	}
+	y := paneTop + gap
+	x := r.Right - editW - btnW - gap*3
+	moveWindow(hwndSearchEdit, x, y, editW, scale(24))
+	moveWindow(hwndSearchClose, x+editW+gap, y, btnW, scale(24))
+}
+
+// applyTabFilter re-filters the active tab's listview using tabSearchFilter.
+func applyTabFilter() {
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	switch tab {
+	case 0:
+		applyActiveFilter()
+	case 1:
+		repopulateMDNS(hwndListMDNS, tabSearchFilter[1])
+	case 2:
+		repopulateSSDP(hwndListSSDP, tabSearchFilter[2])
+	case 3:
+		repopulateWSD(hwndListWSD, tabSearchFilter[3])
+	case 4:
+		repopulateDHCP(hwndListDHCP, tabSearchFilter[4])
+	}
+}
+
+// repopulateDHCP rebuilds the DHCP listview from dhcpAllEvents, applying filter.
+func repopulateDHCP(hwnd HWND, filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
+	for _, evt := range dhcpAllEvents {
+		if filter == "" || dhcpEventMatchesFilter(evt, filter) {
+			listViewAddDHCPRow(hwnd, evt)
+		}
+	}
+}
+
+// dhcpEventMatchesFilter reports whether any field of evt contains filter.
+func dhcpEventMatchesFilter(evt scan.DHCPEvent, filter string) bool {
+	return strings.Contains(strings.ToLower(evt.ClientMAC), filter) ||
+		strings.Contains(strings.ToLower(evt.Hostname), filter) ||
+		strings.Contains(strings.ToLower(evt.ClientIP), filter) ||
+		strings.Contains(strings.ToLower(evt.OfferedIP), filter) ||
+		strings.Contains(strings.ToLower(evt.ServerIP), filter) ||
+		strings.Contains(strings.ToLower(evt.Type.String()), filter)
+}
+
+// hostsResultMatchesFilter reports whether any visible field of r contains filter.
+func hostsResultMatchesFilter(r scan.Result, filter string) bool {
+	if strings.Contains(strings.ToLower(r.IP.String()), filter) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(r.Hostname), filter) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(r.NetBIOS), filter) {
+		return true
+	}
+	if r.MAC != nil && strings.Contains(strings.ToLower(r.MAC.String()), filter) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(r.Vendor), filter) ||
+		strings.Contains(strings.ToLower(string(r.OS)), filter)
 }
 
 // createCtrl is a shorthand for plain child controls (STATIC, BUTTON).
@@ -1347,6 +1532,11 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
 	moveWindow(hwndHealthPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
+
+	// Keep the find bar pinned to the top-right of the active pane.
+	if isWindowVisible(hwndSearchEdit) {
+		positionFindBar(hwnd)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1383,14 +1573,17 @@ func listViewDeleteRowAndFixMaps(row int32) {
 	rowResultMap = newResMap
 }
 
-// applyActiveFilter rebuilds hwndList from allScanResults, showing only alive
-// hosts when activeOnlyFilter is true, or all hosts when false.
-// Pending IPs (pre-populated but not yet scanned) are always shown.
+// applyActiveFilter rebuilds hwndList from allScanResults, applying both the
+// "Active only" checkbox filter and the Ctrl+F text search filter.
+// Pending IPs (pre-populated but not yet scanned) are also text-filtered.
 func applyActiveFilter() {
+	hostFilter := strings.ToLower(tabSearchFilter[0])
 	results := make([]scan.Result, 0, len(allScanResults))
 	for _, r := range allScanResults {
 		if !activeOnlyFilter || r.Alive {
-			results = append(results, r)
+			if hostFilter == "" || hostsResultMatchesFilter(r, hostFilter) {
+				results = append(results, r)
+			}
 		}
 	}
 	// Sort by IP to preserve natural order.
@@ -1406,7 +1599,10 @@ func applyActiveFilter() {
 	pendingIPs := make([]string, 0)
 	for ip := range ipRowMap {
 		if !resultIPs[ip] && allScanResults[ip].IP == nil {
-			pendingIPs = append(pendingIPs, ip)
+			// Apply text filter to pending rows (IP only — no other data yet).
+			if hostFilter == "" || strings.Contains(strings.ToLower(ip), hostFilter) {
+				pendingIPs = append(pendingIPs, ip)
+			}
 		}
 	}
 	sort.Strings(pendingIPs)
