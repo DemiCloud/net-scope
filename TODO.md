@@ -88,6 +88,30 @@
   - RDP NLA not required (`HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp\UserAuthentication` should be 1)
 - [ ] **Firewall profile surface** — show active Windows Firewall profile(s) (Domain / Private / Public) and their inbound/outbound default action; list services currently listening on each interface (from `GetExtendedTcpTable` / `GetExtendedUdpTable`); optional **port block test** — attempt a loopback connection to a user-specified port and report whether the local firewall intercepts it
 
+## Linux GUI
+
+- [ ] **Linux native GUI** — Gio is the chosen toolkit: no CGo on Windows (cross-compile from WSL unchanged), CGo+EGL on Linux (native build with gcc + wayland-devel/libX11-devel/mesa-libEGL-devel); immediate-mode model suits live scan data well; Linux GUI should reuse the same sensor service IPC channel as the Windows GUI; FreeBSD stays CLI/TUI only
+
+## Diff / Snapshot
+
+- [ ] **Diff / snapshot system** — capture a point-in-time snapshot of the host registry; compare against a later scan or a saved snapshot; surface added/removed/changed hosts; useful for change detection on monitored networks
+
+## Filter Language
+
+- [ ] **Filter language** — typed filter input accepting predicates like `alive`, `open:22`, `vendor:Cisco`; applies to the active tab's list; complements the per-tab search bar
+
+## Debug / Diagnostics Menu
+
+- [ ] **Debug menu (ARP/DNS inspect/clear)** — developer/power-user menu item (hidden behind a flag or key combo) to inspect the live ARP cache, DNS cache, and force-clear them without leaving the app
+
+## Broadcast Tab
+
+- [x] **Broadcast tab auto-poll** — periodic background refresh of the broadcast/mDNS/SSDP/WSD tabs on a configurable interval rather than only on manual trigger
+
+## Admin Mode
+
+- [x] **Admin mode toggle** — in-app button or menu item to relaunch self elevated (UAC prompt) without closing and re-opening manually; Windows only; Linux stub
+
 ## Event Log
 
 - [ ] **Network event log viewer** — `Diagnostics > Network Events…` or a dedicated tab; on-demand query of Windows Event Log for network-relevant entries:

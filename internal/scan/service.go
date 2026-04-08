@@ -24,8 +24,11 @@ type ServiceCmd struct {
 type ServiceMsg struct {
 	// Ready is sent once after connection is established.
 	// Elevated reports whether the service process is running as admin.
+	// Token echoes back the secret passed via --service-token so the client
+	// can verify it connected to its own subprocess (not a hijacker).
 	Ready    bool        `json:"ready,omitempty"`
 	Elevated bool        `json:"elevated,omitempty"`
+	Token    string      `json:"token,omitempty"`
 	// Result carries a single scanned host.
 	Result   *Result     `json:"result,omitempty"`
 	// Done marks end of a scan; Stats is populated.
@@ -44,14 +47,16 @@ type ServiceMsg struct {
 // RunServiceConn is the main loop run by the service subprocess.
 // It handles multiple sequential scan commands over a single connection,
 // staying alive until the GUI sends "shutdown" or closes the connection.
-func RunServiceConn(conn net.Conn) error {
+// token is the hex secret passed via --service-token; it is echoed in the
+// Ready handshake so the client can verify it connected to its own subprocess.
+func RunServiceConn(conn net.Conn, token string) error {
 	defer conn.Close()
 
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
 
-	// Announce readiness and our elevation state.
-	if err := enc.Encode(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
+	// Announce readiness, elevation state, and echo the auth token.
+	if err := enc.Encode(ServiceMsg{Ready: true, Elevated: IsElevated(), Token: token}); err != nil {
 		return fmt.Errorf("service ready: %w", err)
 	}
 

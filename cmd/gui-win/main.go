@@ -1,5 +1,9 @@
 //go:build windows
 
+// Deprecated: package guiwin is the legacy Win32 GUI.
+// New GUI development belongs in cmd/gui-gio (Gio-based, Windows + Linux).
+// This package is kept for reference and regression comparison only.
+// Do not add new features here.
 package guiwin
 
 import (
