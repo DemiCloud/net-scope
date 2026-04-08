@@ -39,6 +39,25 @@ var searchEditSubclassCb = syscall.NewCallback(func(hwnd, msg, wParam, lParam ui
 	return callWindowProc(searchEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
+// filterEditOrigProc holds the original EDIT window procedure for the Scanner
+// tab's inline filter input, replaced to intercept Escape.
+var filterEditOrigProc uintptr
+
+// filterEditSubclassCb intercepts Escape in the inline filter input: if the
+// filter text is non-empty, Escape clears it; if already empty, it defocuses
+// back to the Scanner listview.
+var filterEditSubclassCb = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	if uint32(msg) == WM_KEYDOWN && wParam == VK_ESCAPE {
+		if getWindowText(HWND(hwnd)) != "" {
+			setWindowText(HWND(hwnd), "") // EN_CHANGE will re-apply the empty filter
+		} else {
+			setFocus(hwndList)
+		}
+		return 0
+	}
+	return callWindowProc(filterEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
 // proxyEnabled is set at runtime (session-only; never touches the config file).
 // It defaults to true when a SOCKS5 proxy is already configured in settings,
 // meaning the proxy starts active on launch if one is saved.
@@ -85,6 +104,9 @@ var (
 	// across all tabs.  Both are direct children of the main window.
 	hwndSearchEdit  HWND
 	hwndSearchClose HWND
+	// Inline filter (Scanner tab only): a permanent text input below the scan
+	// bar that filters the Hosts listview as the user types.
+	hwndHostFilter HWND
 )
 
 // ---------------------------------------------------------------------------
@@ -328,7 +350,8 @@ const (
 	toolbarH  = 38 // legacy constant (kept for dialogs that reference it)
 	optionsBarH = 32 // global options bar at very top (Elevate Sensor + Proxy Mode)
 	elevBarH    = optionsBarH // alias kept so WM_SIZE calculations compile unchanged
-	scanBarH  = 36 // scan controls bar (shown only on Hosts tab)
+	scanBarH    = 36 // scan controls bar (shown only on Hosts tab)
+	filterBarH  = 30 // inline filter strip (shown only on Hosts tab, below scan bar)
 	tabCtrlH  = 26 // height of the tab row
 )
 
@@ -513,10 +536,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndScan, SW_SHOW)
 				showWindow(hwndActiveOnly, SW_SHOW)
 				showWindow(hwndScanStatus, SW_SHOW)
+				showWindow(hwndHostFilter, SW_SHOW)
 
-				// Ensure Hosts list is repositioned to account for scan bar.
+				// Ensure Hosts list is repositioned to account for scan bar + filter strip.
 				r := getClientRect(hwndMain)
-				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
+				hostsTop := scale(elevBarH + tabCtrlH + scanBarH + filterBarH)
 				listH := (r.Bottom - r.Top) - hostsTop
 				if listH < 0 {
 					listH = 0
@@ -533,6 +557,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndScan, SW_HIDE)
 				showWindow(hwndActiveOnly, SW_HIDE)
 				showWindow(hwndScanStatus, SW_HIDE)
+				showWindow(hwndHostFilter, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -563,11 +588,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					}
 				}
 			}
-			// Update find bar for the new tab: reposition, reload its text,
-			// or hide it if the new tab doesn't support filtering.
+			// Update the floating find bar for the new tab:
+			// hide it when switching to tab 0 (inline filter) or beyond tab 4.
 			if isWindowVisible(hwndSearchEdit) {
 				newTab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-				if newTab > 4 {
+				if newTab == 0 || newTab > 4 {
 					showWindow(hwndSearchEdit, SW_HIDE)
 					showWindow(hwndSearchClose, SW_HIDE)
 				} else {
@@ -845,6 +870,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					tabSearchFilter[tab] = getWindowText(hwndSearchEdit)
 					applyTabFilter()
 				}
+			}
+		case IDC_HOST_FILTER:
+			if hiword(wParam) == EN_CHANGE {
+				tabSearchFilter[0] = getWindowText(hwndHostFilter)
+				applyActiveFilter()
 			}
 		case IDM_FILE_EXIT:
 			stopScan()
@@ -1178,8 +1208,22 @@ func createControls(hwnd HWND) {
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(894), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
-	// Hosts listview starts below the scan bar.
-	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
+	// Inline filter strip: sits below the scan bar, visible only on the Hosts tab.
+	// Ctrl+F on the Hosts tab focuses this input instead of showing the floating bar.
+	filterBarY := scale(elevBarH + tabCtrlH + scanBarH)
+	createCtrl("STATIC", "Filter:", WS_CHILD|WS_VISIBLE,
+		scale(8), filterBarY+scale(5), scale(48), scale(20), hwnd, 0, inst)
+	hwndHostFilter, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|ES_AUTOHSCROLL|WS_TABSTOP,
+		scale(58), filterBarY+scale(4), scale(400), scale(22), hwnd, IDC_HOST_FILTER, inst)
+	{
+		cue := utf16("Filter by IP, hostname, MAC, vendor\u2026")
+		sendMessage(hwndHostFilter, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(cue)))
+	}
+	filterEditOrigProc = setWindowLongPtr(hwndHostFilter, GWLP_WNDPROC, uintptr(filterEditSubclassCb))
+
+	// Hosts listview starts below the scan bar and filter strip.
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH + filterBarH)
 	// All other panes start just below the tab strip (no scan bar).
 	otherTop := scale(elevBarH + tabCtrlH)
 
@@ -1364,10 +1408,18 @@ func createFindBar(parent HWND) {
 // showFindBar makes the find bar visible for the currently active tab
 // (tabs 0–4 only) and focuses the search edit.  Safe to call when already
 // visible — just re-focuses.
+// For the Scanner tab (tab 0), the inline filter strip is always present so
+// Ctrl+F simply selects-all and focuses that input instead.
 func showFindBar(parent HWND) {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 	if tab > 4 {
 		return // Network and Scan Report tabs are text areas — no filter
+	}
+	if tab == 0 {
+		// Scanner tab has a permanent inline filter — just focus it.
+		sendMessage(hwndHostFilter, EM_SETSEL, 0, ^uintptr(0))
+		setFocus(hwndHostFilter)
+		return
 	}
 	positionFindBar(parent)
 	setWindowText(hwndSearchEdit, tabSearchFilter[tab])
@@ -1381,7 +1433,8 @@ func showFindBar(parent HWND) {
 	setFocus(hwndSearchEdit)
 }
 
-// hideFindBar hides the find bar and clears the current tab's filter.
+// hideFindBar hides the floating find bar and clears the current tab's filter.
+// Not used for the Scanner tab (tab 0), which has a permanent inline filter.
 func hideFindBar() {
 	showWindow(hwndSearchEdit, SW_HIDE)
 	showWindow(hwndSearchClose, SW_HIDE)
@@ -1391,7 +1444,8 @@ func hideFindBar() {
 		invalidateRect(pane, nil, false)
 	}
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	if tab >= 0 && tab < 7 && tabSearchFilter[tab] != "" {
+	// tab 0 uses the inline filter; the floating bar is never shown there.
+	if tab >= 1 && tab < 7 && tabSearchFilter[tab] != "" {
 		tabSearchFilter[tab] = ""
 		applyTabFilter()
 	}
@@ -1430,7 +1484,9 @@ func positionFindBar(parent HWND) {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 	var paneTop int32
 	if tab == 0 {
-		paneTop = scale(elevBarH + tabCtrlH + scanBarH)
+		// Floating bar is not used on tab 0 (inline filter strip takes that role).
+		// If called anyway, position below both scan bar and filter strip.
+		paneTop = scale(elevBarH + tabCtrlH + scanBarH + filterBarH)
 	} else {
 		paneTop = scale(elevBarH + tabCtrlH)
 	}
@@ -1538,8 +1594,16 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndDetect, detectX, scanBarY+scale(5), scale(34), scale(24))
 	moveWindow(hwndScan, scanX, scanBarY+scale(5), scale(100), scale(24))
 
+	// Inline filter strip (below scan bar).
+	filterBarY := scale(elevBarH + tabCtrlH + scanBarH)
+	filterW := width - scale(66) // left margin 58 + 8 right gap
+	if filterW < scale(60) {
+		filterW = scale(60)
+	}
+	moveWindow(hwndHostFilter, scale(58), filterBarY+scale(4), filterW, scale(22))
+
 	// Hosts tab: list fills remaining height above the status bar.
-	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
+	hostsTop := scale(elevBarH + tabCtrlH + scanBarH + filterBarH)
 	hostsH := height - hostsTop - statusH
 	if hostsH < 0 {
 		hostsH = 0
