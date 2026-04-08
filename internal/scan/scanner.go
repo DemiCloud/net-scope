@@ -245,7 +245,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			broadcastMu.Unlock()
 
 			// OS hint runs after services are merged.
-			r.OS = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
+			r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
 
 			select {
 			case out <- r:
