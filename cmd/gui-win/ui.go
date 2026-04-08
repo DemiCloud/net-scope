@@ -1185,7 +1185,7 @@ func createControls(hwnd HWND) {
 
 	// ---- hosts listview (visible) ----
 	hwndList, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
@@ -1209,7 +1209,7 @@ func createControls(hwnd HWND) {
 
 	// ---- mDNS listview (hidden initially) ----
 	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
@@ -1231,7 +1231,7 @@ func createControls(hwnd HWND) {
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
@@ -1253,7 +1253,7 @@ func createControls(hwnd HWND) {
 
 	// ---- WS-Discovery listview (hidden initially) ----
 	hwndListWSD, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
@@ -1275,7 +1275,7 @@ func createControls(hwnd HWND) {
 
 	// ---- DHCP listview (hidden initially) ----
 	hwndListDHCP, _ = createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
@@ -1348,12 +1348,12 @@ func createControls(hwnd HWND) {
 func createFindBar(parent HWND) {
 	inst := getModuleHandle()
 	hwndSearchEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
-		WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,
+		WS_CHILD|WS_CLIPSIBLINGS|ES_AUTOHSCROLL|WS_TABSTOP,
 		0, 0, scale(220), scale(24), parent, HMENU(IDC_SEARCH_EDIT), inst)
 	cueText := utf16("Search\u2026")
 	sendMessage(hwndSearchEdit, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(cueText)))
 	hwndSearchClose, _ = createWindowEx(0, "BUTTON", "\u00d7",
-		WS_CHILD|WS_TABSTOP|BS_FLAT,
+		WS_CHILD|WS_CLIPSIBLINGS|WS_TABSTOP|BS_FLAT,
 		0, 0, scale(26), scale(24), parent, HMENU(IDC_SEARCH_CLOSE), inst)
 	sendMessage(hwndSearchEdit, WM_SETFONT, uintptr(appFont), 1)
 	sendMessage(hwndSearchClose, WM_SETFONT, uintptr(appFont), 1)
@@ -1381,11 +1381,39 @@ func showFindBar(parent HWND) {
 func hideFindBar() {
 	showWindow(hwndSearchEdit, SW_HIDE)
 	showWindow(hwndSearchClose, SW_HIDE)
+	// Repaint the pane that was behind the bar to clear any ghost pixels left
+	// by the now-hidden controls.
+	if pane := activeContentPane(); pane != 0 {
+		invalidateRect(pane, nil, false)
+	}
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 	if tab >= 0 && tab < 7 && tabSearchFilter[tab] != "" {
 		tabSearchFilter[tab] = ""
 		applyTabFilter()
 	}
+}
+
+// activeContentPane returns the HWND of the listview (or text pane) that is
+// currently active based on the selected tab.
+func activeContentPane() HWND {
+	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
+	switch tab {
+	case 0:
+		return hwndList
+	case 1:
+		return hwndListMDNS
+	case 2:
+		return hwndListSSDP
+	case 3:
+		return hwndListWSD
+	case 4:
+		return hwndListDHCP
+	case 5:
+		return hwndListNetwork
+	case 6:
+		return hwndListHealth
+	}
+	return 0
 }
 
 // positionFindBar moves the search edit and close button to the top-right
