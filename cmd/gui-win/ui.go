@@ -518,8 +518,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
+				statusR := getClientRect(hwndStatus)
+				statusH := statusR.Bottom - statusR.Top
 				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
-				listH := (r.Bottom - r.Top) - hostsTop
+				listH := (r.Bottom - r.Top) - hostsTop - statusH
 				if listH < 0 {
 					listH = 0
 				}
