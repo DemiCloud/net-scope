@@ -137,7 +137,9 @@ func spawnService(hwnd HWND, elevated bool) {
 
 // sendScanViaService sends a scan command to the running service and pumps
 // results back through the normal WM_SCAN_RESULT / WM_SCAN_COMPLETE pipeline.
-func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
+// gen is the scan generation counter; it is passed back via WM_SCAN_COMPLETE
+// so the UI thread can discard completions from superseded scans.
+func sendScanViaService(hwnd HWND, target string, cfg scan.Config, gen uint64) {
 	serviceMu.Lock()
 	enc := serviceEnc
 	dec := serviceDec
@@ -145,7 +147,7 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 	serviceMu.Unlock()
 
 	if enc == nil {
-		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 		return
 	}
 
@@ -153,7 +155,7 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 		defer func() {
 			if p := recover(); p != nil {
 				writeCrashLog(hwnd, p)
-				postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+				postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 			}
 		}()
 
@@ -167,7 +169,7 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 		err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg})
 		serviceEncMu.Unlock()
 		if err != nil {
-			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+			postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 			return
 		}
 
@@ -203,7 +205,7 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 				idx := len(pendingResults)
 				pendingResults = append(pendingResults, *msg.Result)
 				pendingMu.Unlock()
-				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), 0)
+				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(gen))
 			}
 			if msg.DHCP != nil {
 				pendingDHCPMu.Lock()
@@ -213,7 +215,7 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 				postMessage(hwnd, WM_DHCP_EVENT, uintptr(idx), 0)
 			}
 		}
-		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 	}()
 }
 

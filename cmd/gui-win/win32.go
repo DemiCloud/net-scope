@@ -26,6 +26,7 @@ const (
 	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
 	WM_PROXY_VALID   = WM_APP + 11 // proxy connectivity test succeeded
 	WM_PROXY_FAIL    = WM_APP + 12 // proxy connectivity test failed (wParam = error index)
+	WM_LISTENER_STATUS = WM_APP + 13 // broadcast listener probe result (wParam = msg index)
 )
 
 // ---------------------------------------------------------------------------
@@ -112,10 +113,9 @@ const (
 	// Checkbox IDs: IDC_EDITCOLS_COL_BASE + col, for col 1..9
 	IDC_EDITCOLS_COL_BASE = 460
 
-	// Status bar part indices
-	statusPartHosts   = 0 // "Ready" / "Hosts: N found"
-	statusPartScan    = 1 // scan state / progress
-	statusPartService = 2 // service / elevation state (rightmost, fixed width)
+	// Status bar part indices (2 parts: Listener | Service)
+	statusPartListener = 0 // passive broadcast listener state
+	statusPartService  = 1 // service / elevation state (rightmost, fixed width)
 
 	// Additional button style (plain push, no default border)
 	BS_PUSHBUTTON = 0x0000

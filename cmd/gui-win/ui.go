@@ -63,8 +63,9 @@ var (
 	hwndListHealth        HWND // Scan Report tab
 	hwndHealthPlaceholder HWND // empty-state overlay for Scan Report tab
 	scanEverCompleted     bool // true once the first scan has completed
-	hwndTabCtrl    HWND
-	hwndStatus     HWND
+	hwndTabCtrl      HWND
+	hwndScanStatus   HWND // inline scan status label on the scan bar
+	hwndStatus       HWND // bottom status bar (2 parts: listener | service)
 )
 
 // ---------------------------------------------------------------------------
@@ -80,9 +81,10 @@ var (
 	pendingMu      sync.Mutex
 	liveCount      int
 	lastStats      scan.ScanStats // populated after scan completes
-	scanStartTime  time.Time       // set when scan begins, used for duration metric
-	listHasHosts  bool            // true once ≥1 alive host found in current/last scan
-	isScanning    bool            // true while a scan is in progress (UI thread only)
+	scanStartTime  time.Time      // set when scan begins, used for duration metric
+	listHasHosts   bool           // true once ≥1 alive host found in current/last scan
+	isScanning     bool           // true while a scan is in progress (UI thread only)
+	scanGeneration uint64         // incremented on each new scan; guards against stale WM_SCAN_COMPLETE
 
 	// ipRowMap maps IP string → row index in hwndList.
 	// Written on the UI thread (startScan), read on the UI thread (WM_SCAN_RESULT).
@@ -111,6 +113,10 @@ var (
 	bcastDHCP      int // DHCP entries
 	pendingBcast   []bcastEntry
 	pendingBcastMu sync.Mutex
+
+	// Listener status messages: probe goroutine appends, UI thread reads via WM_LISTENER_STATUS.
+	pendingListenerMsgs   []string
+	pendingListenerMsgsMu sync.Mutex
 
 	// DHCP event queue: service goroutine appends, UI thread reads via WM_DHCP_EVENT.
 	pendingDHCP   []scan.DHCPEvent
@@ -187,7 +193,7 @@ type bcastEntry struct {
 	svc scan.ServiceInfo
 }
 
-func startBroadcastListener() {
+func startBroadcastListener(hwnd HWND) {
 	bcastMu.Lock()
 	defer bcastMu.Unlock()
 	if bcastCancel != nil {
@@ -196,6 +202,19 @@ func startBroadcastListener() {
 	ctx, cancel := context.WithCancel(context.Background())
 	bcastCancel = cancel
 	go func() {
+		// Probe multicast bind before the long-running listener goroutine starts.
+		// This gives the UI immediate feedback about whether passive discovery works.
+		probeErr := scan.ProbeListenerSupport()
+		msg := ""
+		if probeErr != nil {
+			msg = probeErr.Error()
+		}
+		pendingListenerMsgsMu.Lock()
+		idx := len(pendingListenerMsgs)
+		pendingListenerMsgs = append(pendingListenerMsgs, msg)
+		pendingListenerMsgsMu.Unlock()
+		postMessage(hwnd, WM_LISTENER_STATUS, uintptr(idx), 0)
+
 		bl, err := time.ParseDuration(appConfig.Scan.BroadcastListen)
 		if err != nil || bl <= 0 {
 			bl = 3 * time.Second
@@ -330,19 +349,39 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return uintptr(getSysColorBrush(COLOR_WINDOW))
 
 	case WM_SERVICE_UP:
-		// Update the service-state label overlay and repaint it.
-		refreshServiceStatePart()
+		// Update the service-state part of the status bar.
+		setStatusPart(statusPartService, statusForService())
 		if serviceElevated {
 			enableWindow(hwndServiceBtn, false)
 			// Start passive DHCP capture in the elevated service.
 			startDHCPCapture(HWND(hwnd))
+			// Listener now includes DHCP via the elevated service.
+			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD · DHCP)")
 		}
 		updateNetworkTab()
 		return 0
 
 	case WM_SERVICE_DOWN:
-		// Update the service-state label overlay.
-		refreshServiceStatePart()
+		// Update the service-state part of the status bar.
+		setStatusPart(statusPartService, statusForService())
+		// If service dropped while elevated, DHCP is no longer piped through it.
+		if bcastCancel != nil {
+			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD)")
+		}
+		return 0
+
+	case WM_LISTENER_STATUS:
+		pendingListenerMsgsMu.Lock()
+		errMsg := ""
+		if int(wParam) < len(pendingListenerMsgs) {
+			errMsg = pendingListenerMsgs[int(wParam)]
+		}
+		pendingListenerMsgsMu.Unlock()
+		if errMsg != "" {
+			setStatusPart(statusPartListener, "Not listening — bind error: "+errMsg)
+		} else {
+			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD)")
+		}
 		return 0
 
 	case WM_DHCP_EVENT:
@@ -400,7 +439,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		// Broadcast listener is not useful in proxy mode.
 		if !proxyEnabled {
-			startBroadcastListener()
+			startBroadcastListener(HWND(hwnd))
+		} else {
+			setStatusPart(statusPartListener, "Not listening (proxy mode)")
 		}
 		// Start the sensor service immediately (user-level, no UAC).
 		go startService(HWND(hwnd))
@@ -439,13 +480,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndDetect, SW_SHOW)
 				showWindow(hwndScan, SW_SHOW)
 				showWindow(hwndActiveOnly, SW_SHOW)
+				showWindow(hwndScanStatus, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
-				statusR := getClientRect(hwndStatus)
-				statusH := statusR.Bottom - statusR.Top
 				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
-				listH := (r.Bottom - r.Top) - hostsTop - statusH
+				listH := (r.Bottom - r.Top) - hostsTop
 				if listH < 0 {
 					listH = 0
 				}
@@ -460,6 +500,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndDetect, SW_HIDE)
 				showWindow(hwndScan, SW_HIDE)
 				showWindow(hwndActiveOnly, SW_HIDE)
+				showWindow(hwndScanStatus, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -713,7 +754,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			nowChecked := sendMessage(hwndProxyCheck, BM_GETCHECK, 0, 0) == BST_CHECKED
 			if nowChecked {
 				// Test connectivity to the proxy before enabling.
-				setStatusPart(statusPartScan, "Testing proxy connection…")
+				setWindowText(hwndScanStatus, "Testing proxy connection…")
 				enableWindow(hwndProxyCheck, false)
 				proxyAddr := appConfig.Scan.SOCKSProxy
 				go func() {
@@ -744,7 +785,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				// which may be delayed (especially for service scans).
 				isScanning = false
 				setWindowText(hwndScan, "Scan")
-		setStatusPart(statusPartScan, "Scan stopped")
+		setWindowText(hwndScanStatus, "Stopped")
 			} else {
 				startScan(HWND(hwnd))
 			}
@@ -809,7 +850,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingProxyErrMu.Unlock()
 		enableWindow(hwndProxyCheck, true)
 		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_UNCHECKED, 0)
-		setStatusPart(statusPartScan, "Enter a target and click Scan")
+		setWindowText(hwndScanStatus, "")
 		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
 		return 0
 
@@ -851,6 +892,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_SCAN_RESULT:
+		// Discard results from a superseded scan (rapid Stop → Scan race).
+		if uint64(lParam) != scanGeneration {
+			return 0
+		}
 		pendingMu.Lock()
 		r := pendingResults[int(wParam)]
 		pendingMu.Unlock()
@@ -874,7 +919,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					listHasHosts = true
 					showWindow(hwndListPlaceholder, SW_HIDE)
 				}
-				setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: found %d", liveCount))
+				setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
 			} else if activeOnlyFilter {
 				// Filter is active: immediately remove dead row from the display.
 				listViewDeleteRowAndFixMaps(row)
@@ -890,7 +935,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				listHasHosts = true
 				showWindow(hwndListPlaceholder, SW_HIDE)
 			}
-			setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: found %d", liveCount))
+			setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
 			// Broadcast-only hosts skip per-host probing; request enrichment.
 			if r.Hostname == "" && r.NetBIOS == "" {
 				kickNetBIOSProbe(HWND(hwnd), ipStr)
@@ -923,6 +968,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_SCAN_COMPLETE:
+		// Discard completions from a superseded scan (rapid Stop → Scan race).
+		if uint64(wParam) != scanGeneration {
+			return 0
+		}
 		scanMu.Lock()
 		scanCancel = nil
 		scanMu.Unlock()
@@ -930,8 +979,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		scanEverCompleted = true
 		isScanning = false
 		setWindowText(hwndScan, "Scan")
-		setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: %d found", liveCount))
-		setStatusPart(statusPartScan, fmt.Sprintf("Scan complete in %.1fs", scanDuration.Seconds()))
+		setWindowText(hwndScanStatus, fmt.Sprintf("%d hosts \u00b7 %.1fs", liveCount, scanDuration.Seconds()))
 		if !listHasHosts {
 			setWindowText(hwndListPlaceholder, "No hosts found — try widening the target range")
 			showWindow(hwndListPlaceholder, SW_SHOW)
@@ -1033,7 +1081,7 @@ func createControls(hwnd HWND) {
 	if elevated {
 		enableWindow(hwndServiceBtn, false)
 	}
-	// "Proxy Mode" checkbox on the right; grayed if no proxy is configured.
+	// "Proxy Mode" checkbox next to service button; grayed if no proxy is configured.
 	hwndProxyCheck, _ = createWindowEx(0, "BUTTON", "Proxy Mode",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
 		scale(180), scale(5), scale(120), scale(22), hwnd, IDC_PROXY_CHECK, inst)
@@ -1056,19 +1104,22 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 6, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
+	// Layout (right-anchored): [Target label][Target input …][Scan status][Active only][⟲][Scan/Stop]
 	scanBarY := scale(elevBarH + tabCtrlH)
-	// [Target label] [target input ────────────────────────] [⟲] [Scan/Stop]
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
-		scale(58), scanBarY+scale(6), scale(700), scale(22), hwnd, IDC_TARGET, inst)
-	hwndDetect, _ = createWindowEx(0, "BUTTON", "⟲",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(766), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
-	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
+		scale(58), scanBarY+scale(6), scale(500), scale(22), hwnd, IDC_TARGET, inst)
+	hwndScanStatus, _ = createWindowEx(0, "STATIC", "",
+		WS_CHILD|WS_VISIBLE|SS_LEFT,
+		scale(566), scanBarY+scale(8), scale(160), scale(20), hwnd, 0, inst)
 	hwndActiveOnly, _ = createWindowEx(0, "BUTTON", "Active only",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		scale(626), scanBarY+scale(6), scale(110), scale(22), hwnd, IDC_ACTIVE_ONLY, inst)
+		scale(734), scanBarY+scale(6), scale(110), scale(22), hwnd, IDC_ACTIVE_ONLY, inst)
+	hwndDetect, _ = createWindowEx(0, "BUTTON", "\u27f2",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(852), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
+	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(894), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -1207,11 +1258,14 @@ func createControls(hwnd HWND) {
 		WS_CHILD|SS_CENTER,
 		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
 
-	// ---- status bar — 3 parts: Hosts | Scan state | Service state ----
+	// ---- status bar — 2 parts: Listener state | Service state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
-	setStatusParts(scale(150), -scale(160))
-	setStatusPart(statusPartHosts, "Ready")
-	setStatusPart(statusPartScan, "Enter a target and click Scan")
+	setStatusParts(-scale(200))
+	listenerText := "Listener starting\u2026"
+	if proxyEnabled {
+		listenerText = "Not listening (proxy mode)"
+	}
+	setStatusPart(statusPartListener, listenerText)
 	setStatusPart(statusPartService, statusForService())
 
 	// Apply Segoe UI to every child control (labels, buttons, edits, listviews, tabs).
@@ -1239,36 +1293,44 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	width := loword(lParam)
 	height := hiword(lParam)
 
-	// Status bar resizes itself; then recompute part boundaries.
+	// Status bar resizes itself (SB_SIMPLE or multi-part).
 	sendMessage(hwndStatus, WM_SIZE, 0, lParam)
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
-	// 3 parts: Hosts (fixed 150px) | Scan state (fills) | Service (fixed 160px right).
-	setStatusParts(scale(150), -scale(160))
+	// 2 parts: Listener state (fills) | Service state (200px fixed right).
+	setStatusParts(-scale(200))
 
-	// Global options bar: Elevate Sensor on the left, Proxy Mode checkbox on the right.
+	// Global options bar: Elevate Sensor | Proxy Mode.
 	moveWindow(hwndServiceBtn, scale(8), scale(3), scale(160), scale(26))
 	moveWindow(hwndProxyCheck, scale(180), scale(5), scale(120), scale(22))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar: target stretches, detect + scan/stop buttons anchor to right.
+	// Scan bar (right-anchored): [Target stretches][Scan status 160px][Active only][⟲][Scan]
 	scanBarY := scale(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(346), scale(22))
-	moveWindow(hwndActiveOnly, width-scale(280), scanBarY+scale(6), scale(110), scale(22))
-	moveWindow(hwndDetect, width-scale(162), scanBarY+scale(5), scale(34), scale(24))
-	moveWindow(hwndScan, width-scale(120), scanBarY+scale(5), scale(100), scale(24))
+	scanX := width - scale(108)
+	detectX := scanX - scale(40)
+	activeX := detectX - scale(116)
+	statusX := activeX - scale(168)
+	targetW := statusX - scale(8) - scale(58)
+	if targetW < scale(80) {
+		targetW = scale(80)
+	}
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), targetW, scale(22))
+	moveWindow(hwndScanStatus, statusX, scanBarY+scale(9), scale(160), scale(18))
+	moveWindow(hwndActiveOnly, activeX, scanBarY+scale(6), scale(110), scale(22))
+	moveWindow(hwndDetect, detectX, scanBarY+scale(5), scale(34), scale(24))
+	moveWindow(hwndScan, scanX, scanBarY+scale(5), scale(100), scale(24))
 
-	// Hosts tab: list sits below the scan bar.
+	// Hosts tab: list fills remaining height above the status bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
 	hostsH := height - hostsTop - statusH
 	if hostsH < 0 {
 		hostsH = 0
 	}
 	moveWindow(hwndList, 0, hostsTop, width, hostsH)
-	// Placeholder centered vertically within the list area.
 	moveWindow(hwndListPlaceholder, 0, hostsTop+(hostsH-scale(20))/2, width, scale(20))
 
-	// All other panes fill from just below the tab strip.
+	// All other panes fill from just below the tab strip above the status bar.
 	otherTop := scale(elevBarH + tabCtrlH)
 	otherH := height - otherTop - statusH
 	if otherH < 0 {
@@ -1419,6 +1481,11 @@ func startScan(hwnd HWND) {
 	scanCancel = cancel
 	scanMu.Unlock()
 
+	// Bump the generation counter so stale WM_SCAN_RESULT / WM_SCAN_COMPLETE
+	// messages from a previous goroutine are discarded.
+	scanGeneration++
+	gen := scanGeneration
+
 	// Reset display state.
 	liveCount = 0
 	sortCol = -1
@@ -1445,11 +1512,11 @@ func startScan(hwnd HWND) {
 	scanStartTime = time.Now()
 	setWindowText(hwndScan, "Stop")
 	showWindow(hwndListPlaceholder, SW_HIDE)
-	setStatusPart(statusPartScan, "Scanning…")
+	setWindowText(hwndScanStatus, "Scanning\u2026")
 
 	// Route all scans through the persistent sensor service.
 	if serviceRunning() {
-		sendScanViaService(hwnd, target, scanCfg)
+		sendScanViaService(hwnd, target, scanCfg, gen)
 		return
 	}
 
@@ -1462,13 +1529,13 @@ func startScan(hwnd HWND) {
 		defer func() {
 			if p := recover(); p != nil {
 				writeCrashLog(hwnd, p)
-				postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+				postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 			}
 		}()
 		sc := scan.NewScanner(scanCfg)
 		ch, err := sc.Scan(ctx, target)
 		if err != nil {
-			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+			postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 			return
 		}
 		for r := range ch {
@@ -1476,12 +1543,12 @@ func startScan(hwnd HWND) {
 			idx := len(pendingResults)
 			pendingResults = append(pendingResults, r)
 			pendingMu.Unlock()
-			postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), 0)
+			postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(gen))
 		}
 		pendingMu.Lock()
 		lastStats = sc.Stats
 		pendingMu.Unlock()
-		postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
+		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 	}()
 }
 
@@ -1535,8 +1602,9 @@ func applyProxyMode(hwnd HWND, enable bool) {
 	proxyEnabled = enable
 	if enable {
 		stopBroadcastListener()
+		setStatusPart(statusPartListener, "Not listening (proxy mode)")
 	} else {
-		startBroadcastListener()
+		startBroadcastListener(hwnd)
 	}
 	// Refresh placeholder text for broadcast tabs that are currently visible.
 	proxyMsg := "Not available in proxy mode"
@@ -1643,27 +1711,19 @@ func exportResults(hwnd HWND, format string) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// setStatusParts sets the right-edge pixel positions for the 3 status bar parts.
-// p1 = right edge of Hosts part; p2 = right edge of Scan part (-N means N pixels
-// from the right edge, so the Service part is always a fixed width from the right).
-func setStatusParts(p1, p2 int32) {
-	parts := [3]int32{p1, p2, -1}
-	sendMessage(hwndStatus, SB_SETPARTS, 3, uintptr(unsafe.Pointer(&parts[0])))
+// setStatusParts sets the right-edge pixel position for the 2-part status bar.
+// p1 is the right edge of the Listener part; negative = pixels from right edge,
+// so the Service part is always a fixed width. The Listener part fills the rest.
+func setStatusParts(p1 int32) {
+	right := [2]int32{p1, -1}
+	sendMessage(hwndStatus, SB_SETPARTS, 2, uintptr(unsafe.Pointer(&right[0])))
 }
 
-// setStatusPart sets the text of one status bar part (0=Hosts, 1=Scan, 2=Service).
+// setStatusPart sets the text of one status bar part (0=Listener, 1=Service).
 func setStatusPart(part uintptr, s string) {
 	p, _ := syscall.UTF16PtrFromString(s)
 	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
 }
-
-// refreshServiceStatePart updates the service state text in the status bar.
-func refreshServiceStatePart() {
-	setStatusPart(statusPartService, statusForService())
-}
-
-// setStatus is a convenience wrapper that updates the scan-state part.
-func setStatus(s string) { setStatusPart(statusPartScan, s) }
 
 // updateNetworkTab refreshes the Network tab with live broadcast stats.
 // Called on the UI thread whenever a broadcast entry arrives or service state changes.

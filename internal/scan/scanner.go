@@ -241,7 +241,18 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 
 			r := s.probeHost(ctx, ip, macMap, dial)
 
-			// Stash result; services and OS are finalised after broadcastDone.
+			if broadcastDone == nil {
+				// No broadcast listener: compute OS hint now and stream immediately
+				// so the caller receives live updates as each host completes.
+				r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
+				select {
+				case out <- r:
+				case <-ctx.Done():
+				}
+				return
+			}
+			// Broadcast listener active: buffer until it completes so OS
+			// guessing can incorporate mDNS/SSDP service data.
 			resultsMu.Lock()
 			pendingResults = append(pendingResults, r)
 			resultsMu.Unlock()
@@ -249,28 +260,30 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	}
 	wg.Wait()
 
-	// --- 5. Wait for broadcast listener, then emit all host results ---
-	// Waiting here ensures mDNS/SSDP records collected during host probing
-	// are available when guessOS runs, even for fast-responding hosts.
-	if broadcastDone != nil {
+	// --- 5. Wait for broadcast listener, then emit buffered host results ---
+	// Only reached when BroadcastListen > 0 (broadcastDone is non-nil).
+	// When BroadcastListen == 0 all results were already streamed above.
+	if broadcastDone == nil {
+		// Nothing buffered — fall through to emit broadcast-only hosts below.
+	} else {
 		<-broadcastDone
-	}
 
-	broadcastMu.Lock()
-	for i := range pendingResults {
-		r := &pendingResults[i]
-		if svcs := broadcastMap[r.IP.String()]; len(svcs) > 0 {
-			r.Services = svcs
+		broadcastMu.Lock()
+		for i := range pendingResults {
+			r := &pendingResults[i]
+			if svcs := broadcastMap[r.IP.String()]; len(svcs) > 0 {
+				r.Services = svcs
+			}
+			r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
 		}
-		r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
-	}
-	broadcastMu.Unlock()
+		broadcastMu.Unlock()
 
-	for _, r := range pendingResults {
-		select {
-		case out <- r:
-		case <-ctx.Done():
-			return
+		for _, r := range pendingResults {
+			select {
+			case out <- r:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 
