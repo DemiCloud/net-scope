@@ -17,7 +17,7 @@ func TestGuessOS_SNMP(t *testing.T) {
 		{"Darwin 23.0", OSMacOS},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: tc.descr}, "", SYNProbeInfo{})
+		got, _ := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: tc.descr}, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("SNMP %q: got %q, want %q", tc.descr, got, tc.want)
 		}
@@ -39,7 +39,7 @@ func TestGuessOS_SSHBanner(t *testing.T) {
 		{"SSH-2.0-Cisco-1.25", OSCiscoIOS},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "", SYNProbeInfo{})
+		got, _ := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("SSH %q: got %q, want %q", tc.banner, got, tc.want)
 		}
@@ -57,7 +57,7 @@ func TestGuessOS_HTTPHeader(t *testing.T) {
 		{"nginx/1.24.0", OSLinux},
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{HTTP: tc.server}, nil, nil, "", SYNProbeInfo{})
+		got, _ := guessOS(0, BannerInfo{HTTP: tc.server}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("HTTP %q: got %q, want %q", tc.server, got, tc.want)
 		}
@@ -75,7 +75,7 @@ func TestGuessOS_TTL(t *testing.T) {
 		{50, OSUnknown}, // ambiguous
 	}
 	for _, tc := range cases {
-		got := guessOS(tc.ttl, BannerInfo{}, nil, nil, "", SYNProbeInfo{})
+		got, _ := guessOS(tc.ttl, BannerInfo{}, nil, nil, "", SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("TTL %d: got %q, want %q", tc.ttl, got, tc.want)
 		}
@@ -84,7 +84,7 @@ func TestGuessOS_TTL(t *testing.T) {
 
 func TestGuessOS_Precedence(t *testing.T) {
 	// SNMP should win over TTL
-	got := guessOS(128 /* windows TTL */, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "", SYNProbeInfo{})
+	got, _ := guessOS(128 /* windows TTL */, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "", SYNProbeInfo{})
 	if got != OSLinux {
 		t.Errorf("SNMP should beat TTL: got %q", got)
 	}
@@ -108,7 +108,7 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 		{"Dell Inc.", OSUnknown}, // unknown vendor → falls through to TTL=0 → unknown
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{}, nil, nil, tc.vendor, SYNProbeInfo{})
+		got, _ := guessOS(0, BannerInfo{}, nil, nil, tc.vendor, SYNProbeInfo{})
 		if got != tc.want {
 			t.Errorf("vendor %q: got %q, want %q", tc.vendor, got, tc.want)
 		}
@@ -117,7 +117,7 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 
 func TestGuessOS_SNMPBeatsVendor(t *testing.T) {
 	// SNMP "Linux" should win over Apple vendor OUI
-	got := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "Apple, Inc.", SYNProbeInfo{})
+	got, _ := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "Apple, Inc.", SYNProbeInfo{})
 	if got != OSLinux {
 		t.Errorf("SNMP should beat vendor OUI: got %q", got)
 	}
@@ -137,7 +137,7 @@ func TestGuessOS_SYNProbe(t *testing.T) {
 		{0, "", OSUnknown},                                          // probe unavailable
 	}
 	for _, tc := range cases {
-		got := guessOS(0, BannerInfo{}, nil, nil, "", SYNProbeInfo{WindowSize: tc.win, Options: tc.opts})
+		got, _ := guessOS(0, BannerInfo{}, nil, nil, "", SYNProbeInfo{WindowSize: tc.win, Options: tc.opts})
 		if got != tc.want {
 			t.Errorf("SYN win=%d opts=%q: got %q, want %q", tc.win, tc.opts, got, tc.want)
 		}
@@ -147,7 +147,7 @@ func TestGuessOS_SYNProbe(t *testing.T) {
 func TestGuessOS_SYNBeatsVendor(t *testing.T) {
 	// Vendor OUI fires BEFORE SYN tier, so Apple OUI should still win over
 	// a Linux-looking window (Apple hardware CAN run Linux via Boot Camp, etc.)
-	got := guessOS(0, BannerInfo{}, nil, nil, "Apple, Inc.", SYNProbeInfo{WindowSize: 29200, Options: "MSS(1460) SACK TS NOP WScale(7)"})
+	got, _ := guessOS(0, BannerInfo{}, nil, nil, "Apple, Inc.", SYNProbeInfo{WindowSize: 29200, Options: "MSS(1460) SACK TS NOP WScale(7)"})
 	if got != OSMacOS {
 		t.Errorf("vendor OUI should beat SYN window: got %q", got)
 	}
@@ -157,7 +157,7 @@ func TestGuessOS_RouterOSCHR(t *testing.T) {
 	// RouterOS Cloud Hosted Router: x86 hardware (no MikroTik OUI), no SNMP,
 	// but ROSSSH banner. SYN window would be 29200 (Linux kernel). SSH must
 	// fire before SYN so ROSSSH is correctly identified.
-	got := guessOS(
+	got, _ := guessOS(
 		64, // Linux-looking TTL
 		BannerInfo{SSH: "SSH-2.0-ROSSSH"},
 		nil, nil, "",
@@ -165,5 +165,38 @@ func TestGuessOS_RouterOSCHR(t *testing.T) {
 	)
 	if got != OSRouterOS {
 		t.Errorf("RouterOS CHR should be OSRouterOS, got %q", got)
+	}
+}
+
+func TestGuessOS_Confidence(t *testing.T) {
+	// SNMP alone → near-maximum confidence.
+	_, conf := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Linux Kernel"}, "", SYNProbeInfo{})
+	if conf < 85 {
+		t.Errorf("SNMP alone: expected conf ≥ 85, got %d", conf)
+	}
+
+	// TTL alone → low confidence (30, just above threshold).
+	_, conf = guessOS(64, BannerInfo{}, nil, nil, "", SYNProbeInfo{})
+	if conf > 35 {
+		t.Errorf("TTL alone: expected conf ≤ 35, got %d", conf)
+	}
+
+	// No signals → unknown, confidence 0.
+	hint, conf := guessOS(0, BannerInfo{}, nil, nil, "", SYNProbeInfo{})
+	if hint != OSUnknown || conf != 0 {
+		t.Errorf("no signals: expected (OSUnknown, 0), got (%q, %d)", hint, conf)
+	}
+
+	// Multiple corroborating signals for Windows → higher confidence than SNMP alone.
+	_, confSingle := guessOS(0, BannerInfo{}, nil, &SNMPInfo{SysDescr: "Windows Server"}, "", SYNProbeInfo{})
+	_, confMulti := guessOS(
+		128, // Windows TTL
+		BannerInfo{SSH: "OpenSSH_9.0 Windows", HTTP: "Microsoft-IIS/10.0"},
+		nil, &SNMPInfo{SysDescr: "Windows Server"},
+		"",
+		SYNProbeInfo{WindowSize: 64240},
+	)
+	if confMulti <= confSingle {
+		t.Errorf("corroborating signals should raise confidence: single=%d multi=%d", confSingle, confMulti)
 	}
 }

@@ -40,9 +40,10 @@ type Result struct {
 	Hostname    string
 	NetBIOS     string    // NetBIOS workstation name (Windows hosts)
 	Latency     time.Duration
-	TTL         uint8     // ICMP TTL as received (0 = unknown)
-	OS          OSHint    // best-guess OS
-	Banner      BannerInfo // per-port service banners
+	TTL          uint8     // ICMP TTL as received (0 = unknown)
+	OS           OSHint    // best-guess OS
+	OSConfidence uint8     // 0–100; 0 = no signal reached minimum threshold
+	Banner       BannerInfo // per-port service banners
 	SNMP        *SNMPInfo
 	SYNProbe    SYNProbeInfo  // TCP stack fingerprint from SYN-ACK (elevation-gated)
 	Services    []ServiceInfo // mDNS, SSDP discoveries
