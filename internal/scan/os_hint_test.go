@@ -12,8 +12,8 @@ func TestGuessOS_SNMP(t *testing.T) {
 		{"Windows Server 2022", OSWindows},
 		{"Linux Kernel 5.15", OSLinux},
 		{"RouterOS 7.14.3 (stable) on RB4011iGS+", OSRouterOS},
-		{"Cisco IOS 15.6", OSNetwork},
-		{"JunOS 23.1", OSNetwork},
+		{"Cisco IOS 15.6", OSCiscoIOS},
+		{"JunOS 23.1", OSJunOS},
 		{"Darwin 23.0", OSMacOS},
 	}
 	for _, tc := range cases {
@@ -35,6 +35,8 @@ func TestGuessOS_SSHBanner(t *testing.T) {
 		{"OpenSSH_8.0", OSLinux},
 		// MikroTik RouterOS
 		{"SSH-2.0-ROSSSH", OSRouterOS},
+		// Cisco IOS
+		{"SSH-2.0-Cisco-1.25", OSCiscoIOS},
 	}
 	for _, tc := range cases {
 		got := guessOS(0, BannerInfo{SSH: tc.banner}, nil, nil, "", SYNProbeInfo{})
@@ -96,12 +98,12 @@ func TestGuessOS_VendorOUI(t *testing.T) {
 		{"Apple, Inc.", OSMacOS},
 		{"Apple Inc", OSMacOS},
 		{"Raspberry Pi Foundation", OSLinux},
-		{"Cisco Systems, Inc", OSNetwork},
-		{"Juniper Networks", OSNetwork},
-		{"Ubiquiti Inc.", OSNetwork},
+		{"Cisco Systems, Inc", OSCiscoIOS},
+		{"Juniper Networks", OSJunOS},
+		{"Ubiquiti Inc.", OSUbiquiti},
 		{"MikroTik", OSRouterOS},
-		{"Aruba Networks", OSNetwork},
-		{"Fortinet, Inc.", OSNetwork},
+		{"Aruba Networks", OSAruba},
+		{"Fortinet, Inc.", OSFortinet},
 		{"Palo Alto Networks", OSNetwork},
 		{"Dell Inc.", OSUnknown}, // unknown vendor → falls through to TTL=0 → unknown
 	}
@@ -143,12 +145,25 @@ func TestGuessOS_SYNProbe(t *testing.T) {
 }
 
 func TestGuessOS_SYNBeatsVendor(t *testing.T) {
-	// SYN-ACK window beats vendor OUI (SYN probe is lower latency and more
-	// direct than OUI lookup — but OUI actually runs first; test vendor wins)
 	// Vendor OUI fires BEFORE SYN tier, so Apple OUI should still win over
 	// a Linux-looking window (Apple hardware CAN run Linux via Boot Camp, etc.)
 	got := guessOS(0, BannerInfo{}, nil, nil, "Apple, Inc.", SYNProbeInfo{WindowSize: 29200, Options: "MSS(1460) SACK TS NOP WScale(7)"})
 	if got != OSMacOS {
 		t.Errorf("vendor OUI should beat SYN window: got %q", got)
+	}
+}
+
+func TestGuessOS_RouterOSCHR(t *testing.T) {
+	// RouterOS Cloud Hosted Router: x86 hardware (no MikroTik OUI), no SNMP,
+	// but ROSSSH banner. SYN window would be 29200 (Linux kernel). SSH must
+	// fire before SYN so ROSSSH is correctly identified.
+	got := guessOS(
+		64, // Linux-looking TTL
+		BannerInfo{SSH: "SSH-2.0-ROSSSH"},
+		nil, nil, "",
+		SYNProbeInfo{WindowSize: 29200, Options: "MSS(1460) SACK TS NOP WScale(7)"},
+	)
+	if got != OSRouterOS {
+		t.Errorf("RouterOS CHR should be OSRouterOS, got %q", got)
 	}
 }

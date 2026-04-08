@@ -15,6 +15,11 @@ const (
 	OSMacOS    OSHint = "macOS"
 	OSNetwork  OSHint = "Network Device"
 	OSRouterOS OSHint = "RouterOS"
+	OSCiscoIOS OSHint = "Cisco IOS"
+	OSJunOS    OSHint = "JunOS"
+	OSUbiquiti OSHint = "Ubiquiti"
+	OSAruba    OSHint = "Aruba"
+	OSFortinet OSHint = "Fortinet"
 	OSUnknown  OSHint = ""
 )
 
@@ -35,9 +40,9 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		case strings.Contains(d, "linux"):
 			return OSLinux
 		case strings.Contains(d, "ios") && !strings.Contains(d, "iphone"):
-			return OSNetwork // Cisco IOS
+			return OSCiscoIOS
 		case strings.Contains(d, "junos"):
-			return OSNetwork
+			return OSJunOS
 		case strings.Contains(d, "freebsd"), strings.Contains(d, "netbsd"),
 			strings.Contains(d, "openbsd"):
 			return OSLinux // close enough
@@ -56,11 +61,43 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			return OSLinux
 		case strings.Contains(v, "mikrotik"):
 			return OSRouterOS
-		case strings.Contains(v, "cisco"), strings.Contains(v, "juniper"),
-			strings.Contains(v, "ubiquiti"),
-			strings.Contains(v, "unifi"), strings.Contains(v, "aruba"),
-			strings.Contains(v, "fortinet"), strings.Contains(v, "palo alto"):
+		case strings.Contains(v, "cisco"):
+			return OSCiscoIOS
+		case strings.Contains(v, "juniper"):
+			return OSJunOS
+		case strings.Contains(v, "ubiquiti"), strings.Contains(v, "unifi"):
+			return OSUbiquiti
+		case strings.Contains(v, "aruba"):
+			return OSAruba
+		case strings.Contains(v, "fortinet"):
+			return OSFortinet
+		case strings.Contains(v, "palo alto"):
 			return OSNetwork
+		}
+	}
+
+	// ---------- SSH banner ----------
+	// Application-layer banners are more specific than TCP stack signals —
+	// check before SYN window so RouterOS CHR (Linux kernel, no MikroTik OUI)
+	// is correctly identified via ROSSSH rather than falling through as Linux.
+	if banner.SSH != "" {
+		lower := strings.ToLower(banner.SSH)
+		switch {
+		case strings.Contains(lower, "ubuntu"), strings.Contains(lower, "debian"),
+			strings.Contains(lower, "fedora"), strings.Contains(lower, "centos"),
+			strings.Contains(lower, "rhel"), strings.Contains(lower, "arch"):
+			return OSLinux
+		case strings.Contains(lower, "windows"):
+			return OSWindows
+		case strings.Contains(lower, "rosssh"): // MikroTik RouterOS SSH implementation
+			return OSRouterOS
+		case strings.HasPrefix(lower, "ssh-2.0-cisco"):
+			return OSCiscoIOS
+		case strings.Contains(lower, "freebsd"), strings.Contains(lower, "netbsd"),
+			strings.Contains(lower, "openbsd"):
+			return OSLinux
+		default:
+			return OSLinux // SSH on non-Windows is almost universally Linux/BSD
 		}
 	}
 
@@ -76,26 +113,6 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			return OSLinux
 		case syn.WindowSize == 65535 && hasTS:
 			return OSMacOS
-		}
-	}
-
-	// ---------- SSH banner ----------
-	if banner.SSH != "" {
-		lower := strings.ToLower(banner.SSH)
-		switch {
-		case strings.Contains(lower, "ubuntu"), strings.Contains(lower, "debian"),
-			strings.Contains(lower, "fedora"), strings.Contains(lower, "centos"),
-			strings.Contains(lower, "rhel"), strings.Contains(lower, "arch"):
-			return OSLinux
-		case strings.Contains(lower, "windows"):
-			return OSWindows
-		case strings.Contains(lower, "rosssh"): // MikroTik RouterOS SSH implementation
-			return OSRouterOS
-		case strings.Contains(lower, "freebsd"), strings.Contains(lower, "netbsd"),
-			strings.Contains(lower, "openbsd"):
-			return OSLinux
-		default:
-			return OSLinux // SSH on non-Windows is almost universally Linux/BSD
 		}
 	}
 
@@ -129,10 +146,14 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			return OSLinux
 		case strings.Contains(t, "windows") || strings.Contains(n, "windows"):
 			return OSWindows
-		case strings.Contains(n, "cisco") || strings.Contains(n, "juniper") ||
-			strings.Contains(n, "mikrotik") || strings.Contains(n, "ubiquiti") ||
-			strings.Contains(n, "unifi"):
-			return OSNetwork
+		case strings.Contains(n, "mikrotik"):
+			return OSRouterOS
+		case strings.Contains(n, "cisco"):
+			return OSCiscoIOS
+		case strings.Contains(n, "juniper"):
+			return OSJunOS
+		case strings.Contains(n, "ubiquiti") || strings.Contains(n, "unifi"):
+			return OSUbiquiti
 		}
 	}
 
