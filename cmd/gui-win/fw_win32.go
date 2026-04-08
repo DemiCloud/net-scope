@@ -213,6 +213,7 @@ const (
 	LVM_SETCOLUMN                = LVM_FIRST + 96
 	LVM_INSERTITEM               = LVM_FIRST + 77
 	LVM_SETITEM                  = LVM_FIRST + 76
+	LVM_DELETEITEM               = LVM_FIRST + 8
 	LVM_DELETEALLITEMS           = LVM_FIRST + 9
 	LVM_SETEXTENDEDLISTVIEWSTYLE = LVM_FIRST + 54
 	LVM_HITTEST                  = LVM_FIRST + 18

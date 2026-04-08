@@ -47,6 +47,7 @@ var (
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
+	hwndActiveOnly      HWND // "Active only" filter checkbox
 	// Content panes
 	hwndList            HWND
 	hwndListPlaceholder HWND // empty-state overlay for Scanner tab
@@ -88,6 +89,12 @@ var (
 	ipRowMap    map[string]int32
 	// rowResultMap maps ListView row index → scan Result, for right-click menus.
 	rowResultMap map[int32]scan.Result
+	// allScanResults holds every result received in the current scan (by IP),
+	// including dead hosts. Used by applyActiveFilter to restore rows when
+	// the "Active only" filter is toggled off.
+	allScanResults map[string]scan.Result
+	// activeOnlyFilter reflects the state of the "Active only" checkbox.
+	activeOnlyFilter bool
 )
 
 // ---------------------------------------------------------------------------
@@ -431,6 +438,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndTarget, SW_SHOW)
 				showWindow(hwndDetect, SW_SHOW)
 				showWindow(hwndScan, SW_SHOW)
+				showWindow(hwndActiveOnly, SW_SHOW)
 
 				// Ensure Hosts list is repositioned to account for scan bar.
 				r := getClientRect(hwndMain)
@@ -451,6 +459,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				showWindow(hwndTarget, SW_HIDE)
 				showWindow(hwndDetect, SW_HIDE)
 				showWindow(hwndScan, SW_HIDE)
+				showWindow(hwndActiveOnly, SW_HIDE)
 				switch tab {
 				case 1:
 					showWindow(hwndListMDNS, SW_SHOW)
@@ -725,6 +734,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 		case IDC_DETECT:
 			detectSubnet(HWND(hwnd))
+		case IDC_ACTIVE_ONLY:
+			activeOnlyFilter = sendMessage(hwndActiveOnly, BM_GETCHECK, 0, 0) == BST_CHECKED
+			applyActiveFilter()
 		case IDC_SCAN:
 			if isScanning {
 				stopScan()
@@ -844,6 +856,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingMu.Unlock()
 
 		ipStr := r.IP.String()
+		// Keep the full result set so applyActiveFilter can restore dead rows.
+		allScanResults[ipStr] = r
 		// Always update the registry with the latest scan data.
 		{
 			en := ensureHostEntry(ipStr)
@@ -861,6 +875,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					showWindow(hwndListPlaceholder, SW_HIDE)
 				}
 				setStatusPart(statusPartHosts, fmt.Sprintf("Hosts: found %d", liveCount))
+			} else if activeOnlyFilter {
+				// Filter is active: immediately remove dead row from the display.
+				listViewDeleteRowAndFixMaps(row)
 			}
 		} else if r.Alive {
 			// Broadcast-only or out-of-range host.
@@ -1049,6 +1066,9 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(766), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(808), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
+	hwndActiveOnly, _ = createWindowEx(0, "BUTTON", "Active only",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		scale(626), scanBarY+scale(6), scale(110), scale(22), hwnd, IDC_ACTIVE_ONLY, inst)
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -1233,7 +1253,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 
 	// Scan bar: target stretches, detect + scan/stop buttons anchor to right.
 	scanBarY := scale(elevBarH + tabCtrlH)
-	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(228), scale(22))
+	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), width-scale(346), scale(22))
+	moveWindow(hwndActiveOnly, width-scale(280), scanBarY+scale(6), scale(110), scale(22))
 	moveWindow(hwndDetect, width-scale(162), scanBarY+scale(5), scale(34), scale(24))
 	moveWindow(hwndScan, width-scale(120), scanBarY+scale(5), scale(100), scale(24))
 
@@ -1269,6 +1290,82 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 // ---------------------------------------------------------------------------
 // Scan start / stop
 // ---------------------------------------------------------------------------
+
+// listViewDeleteRowAndFixMaps removes a row from hwndList and repairs ipRowMap
+// and rowResultMap so all indices above the deleted row are decremented.
+func listViewDeleteRowAndFixMaps(row int32) {
+	sendMessage(hwndList, LVM_DELETEITEM, uintptr(row), 0)
+
+	newIPMap := make(map[string]int32, len(ipRowMap)-1)
+	for ip, r := range ipRowMap {
+		switch {
+		case r < row:
+			newIPMap[ip] = r
+		case r > row:
+			newIPMap[ip] = r - 1
+		// r == row: omit (deleted)
+		}
+	}
+	ipRowMap = newIPMap
+
+	newResMap := make(map[int32]scan.Result, len(rowResultMap))
+	for r, res := range rowResultMap {
+		switch {
+		case r < row:
+			newResMap[r] = res
+		case r > row:
+			newResMap[r-1] = res
+		// r == row: omit (deleted)
+		}
+	}
+	rowResultMap = newResMap
+}
+
+// applyActiveFilter rebuilds hwndList from allScanResults, showing only alive
+// hosts when activeOnlyFilter is true, or all hosts when false.
+// Pending IPs (pre-populated but not yet scanned) are always shown.
+func applyActiveFilter() {
+	results := make([]scan.Result, 0, len(allScanResults))
+	for _, r := range allScanResults {
+		if !activeOnlyFilter || r.Alive {
+			results = append(results, r)
+		}
+	}
+	// Sort by IP to preserve natural order.
+	sort.SliceStable(results, func(i, j int) bool {
+		return compareHostResult(results[i], results[j], colIP) < 0
+	})
+
+	// Pending IPs: pre-populated rows not yet in allScanResults.
+	resultIPs := make(map[string]bool, len(results))
+	for _, r := range results {
+		resultIPs[r.IP.String()] = true
+	}
+	pendingIPs := make([]string, 0)
+	for ip := range ipRowMap {
+		if !resultIPs[ip] && allScanResults[ip].IP == nil {
+			pendingIPs = append(pendingIPs, ip)
+		}
+	}
+	sort.Strings(pendingIPs)
+
+	// Rebuild the ListView.
+	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
+	ipRowMap = make(map[string]int32, len(results)+len(pendingIPs))
+	rowResultMap = make(map[int32]scan.Result, len(results))
+
+	for _, r := range results {
+		ip := r.IP.String()
+		row := listViewInsertPendingRow(hwndList, ip)
+		ipRowMap[ip] = row
+		listViewUpdateRow(hwndList, row, r)
+		rowResultMap[row] = r
+	}
+	for _, ip := range pendingIPs {
+		row := listViewInsertPendingRow(hwndList, ip)
+		ipRowMap[ip] = row
+	}
+}
 
 func startScan(hwnd HWND) {
 	scanMu.Lock()
@@ -1334,6 +1431,7 @@ func startScan(hwnd HWND) {
 	sendMessage(hwndList, LVM_DELETEALLITEMS, 0, 0)
 	ipRowMap = make(map[string]int32, len(hosts))
 	rowResultMap = make(map[int32]scan.Result, len(hosts))
+	allScanResults = make(map[string]scan.Result, len(hosts))
 
 	// Pre-populate every IP with a "Pending" row so they appear in order.
 	for _, ip := range hosts {
