@@ -5,44 +5,59 @@
 NetScope (binary: `net-scope`) is a network inspection and reconnaissance tool combining
 active probing, passive signal analysis, and change detection for LAN environments.
 Written in Go 1.25.
-It produces a **single binary per platform** from `cmd/net-scope/`:
+It produces a **single binary per platform** from `cmd/net-scope/`.
+The binary exposes all modes as subcommands:
 
-| Platform | Behaviour at launch |
-|---|---|
-| Windows (terminal) | `AttachConsole` succeeds → CLI mode |
-| Windows (double-click) | No console → GUI mode (Win32, pure syscall) |
-| Linux / BSD | `--tui` flag → Bubbletea TUI; otherwise CLI |
+```text
+net-scope cli    [target] [flags]   # plain-text output — all platforms
+net-scope tui    [target] [flags]   # Bubbletea TUI — Linux/BSD only
+net-scope gui    [target]           # Gio GUI — Windows + Linux only
+net-scope service <addr> <token>    # internal: sensor service subprocess
+```
+
+When run with **no subcommand**, the platform default is used unless
+`default_mode` is set in `config.toml`:
+
+| Platform | Default mode | Notes |
+| --- | --- | --- |
+| Windows (terminal) | `cli` | `AttachConsole` succeeds |
+| Windows (double-click) | `gui` | No parent console |
+| Linux | `cli` | Override via `default_mode = "gui"` or `"tui"` in config |
+| FreeBSD / BSD | `cli` | GUI subcommand not available (no Gio backend) |
 
 The old `cmd/cli/`, `cmd/tui/`, and `cmd/gui-win/` entry points still exist
 and are buildable in isolation, but **the canonical entry point is
 `cmd/net-scope/`**.
 
+`cmd/gui-win/` is the **legacy Win32 GUI** — deprecated in favour of `cmd/gui-gio/`.
+It is kept intact for reference and regression comparison during the Gio transition.
+Do not add new features to `cmd/gui-win/`.
+
 ---
 
 ## Repository Layout
 
-```
+```text
 cmd/
   net-scope/          ← unified entry point (build this)
     main.go           ← InitVendorDB + calls run()
     cli.go            ← runCLI() — all platforms
     tui_notwindows.go ← runTUI() — Linux/BSD only (!windows build tag)
-    dispatch_windows.go ← AttachConsole → CLI or guiwin.Run()
-    dispatch_other.go   ← --tui flag routing
-  gui-win/            ← package guiwin (NOT package main)
+    dispatch_windows.go ← subcommand dispatch; AttachConsole heuristic for default
+    dispatch_other.go   ← subcommand dispatch; CLI default for Linux/BSD
+  gui-gio/            ← package guigio — Gio-based GUI (Windows + Linux)
     main.go           ← Run(version, target string)
-    win32.go          ← all syscall wrappers
-    ui.go             ← main window + message loop
-    dialog.go         ← settings, FAQ, version, config-location dialogs
-    listview.go       ← custom listview helpers
-    icon.go           ← programmatic radar-sweep icon
+    ui.go             ← main window, layout, event loop
+    service.go        ← sensor service IPC client (reusable; no Gio imports)
+  gui-win/            ← package guiwin — DEPRECATED Win32 GUI (Windows only)
+    (do not add new features here)
   gen-ico/            ← go run ./cmd/gen-ico/ → cmd/gui-win/icon.ico
   gen-rsrc/           ← go run ./cmd/gen-rsrc/ → cmd/gui-win/resource_windows_amd64.syso
   cli/                ← standalone CLI (legacy, keep for reference)
   tui/                ← standalone TUI (legacy, keep for reference)
 internal/
   config/             ← TOML config; Load() never auto-writes on first run
-  scan/              ← core scanner library
+  scan/               ← core scanner library; all wire types (ServiceCmd/ServiceMsg)
 ```
 
 ---
@@ -66,8 +81,15 @@ make test
 make vet
 ```
 
-Cross-compilation is done from Linux (WSL Fedora). No CGo; no external
-toolchains required. `CGO_ENABLED=0` for Linux/BSD targets.
+Cross-compilation is done from Linux (WSL Fedora).
+
+| Target | CGo | Notes |
+| --- | --- | --- |
+| Windows (amd64) | **None** — `CGO_ENABLED=0` | Gio uses Direct3D 11 via pure syscalls |
+| Linux (amd64) | Required — `gcc` + `wayland-devel libX11-devel mesa-libEGL-devel libxkbcommon-x11-devel` | Native build on Linux only |
+| FreeBSD (amd64) | **None** — `CGO_ENABLED=0` | CLI / TUI only; no GUI |
+
+The "no CGo" rule applies to **Windows and FreeBSD targets only**. CGo is acceptable for the Linux GUI target.
 
 ---
 
@@ -107,22 +129,36 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 ## Key Conventions
 
 ### Go
-- **No CGo anywhere.** The Windows GUI uses `syscall.NewLazyDLL` exclusively.
+
+- **No CGo on Windows or FreeBSD targets.** The legacy Win32 GUI uses `syscall.NewLazyDLL` exclusively. The Gio Windows backend also uses pure syscalls. CGo is permitted for the Linux GUI target.
 - All `cmd/gui-win/` files carry `//go:build windows` and `package guiwin`.
   Never change the package back to `main`.
+- All `cmd/gui-gio/` files carry `package guigio` (no build constraint needed — Gio selects the right backend per platform automatically).
 - Version is injected at link time: `-ldflags "-X main.version=<tag>"`.
   The variable lives in `cmd/net-scope/main.go` as `var version = "dev"`.
 - `config.Load()` returns defaults silently when no file exists — it does
   **not** write a starter file. The GUI prompts on first save.
 
-### Windows GUI
+### GUI (all front-ends)
 
-- **All network I/O on Windows goes through the sensor service subprocess.**
-  The GUI process itself must never call scan functions, open sockets, or
-  perform any probing directly. Use `startService` / the service IPC channel
-  to trigger scans and receive results. This rule applies to every new feature:
-  if it touches the network, it belongs in `internal/scan/` and is invoked via
-  the service, not from a WndProc or dialog handler.
+- **All network I/O goes through the sensor service subprocess — on every platform.**
+  No GUI package (Win32 or Gio) may call scan functions, open sockets, or
+  perform probing directly. The service IPC channel is the only allowed path.
+  If a new feature touches the network, it belongs in `internal/scan/` and is
+  invoked via `scan.ServiceCmd` / `scan.ServiceMsg`, not from a UI event handler.
+- **The service IPC client** (`cmd/gui-gio/service.go`) must have **zero GUI imports**.
+  It only imports `internal/scan`, `encoding/json`, `net`, and stdlib. This makes it
+  reusable from the TUI, future frontends, and tests without pulling in Gio.
+- **All display logic** (layouts, colours, font sizes, widget state) lives in the
+  front-end package only. No display constants or widget references in `internal/`.
+- When adding a feature: implement in `internal/scan/` first, expose via `ServiceCmd`/`ServiceMsg` if it needs elevation or background capture, then wire into the front-end last.
+
+### Legacy Win32 GUI (`cmd/gui-win/`) — deprecated
+
+- This package is **frozen**. Do not add features. It exists for reference and
+  regression comparison during the Gio migration.
+- `runtime.LockOSThread()` is called inside `guiwin.Run()` before any Win32
+  call. Do not move or remove it.
 - `runtime.LockOSThread()` is called inside `guiwin.Run()` before any Win32
   call. Do not move or remove it.
 - **Framework vs application split** — `cmd/gui-win/` is divided into framework
@@ -172,25 +208,21 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types |
-| **Service** | `cmd/gui-win/service.go` + OS service wrapper | Background capture (DHCP, passive listeners); should serve TUI and future Linux GUI too — not just the Windows GUI |
-| **Config** | `internal/config/` | Serialisation, defaults, path resolution only |
-| **Front-end** | `cmd/gui-win/`, `cmd/net-scope/{cli,tui}*` | Display, user input, layout — **no business logic here** |
+| **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types, wire protocol types (`ServiceCmd`/`ServiceMsg`) |
+| **Service IPC client** | `cmd/gui-gio/service.go` | Platform-agnostic subprocess spawn + JSON-over-TCP channel; **no Gio/Win32 imports** — reusable by any front-end |
+| **Config** | `internal/config/` | Serialisation, defaults, path resolution, `ToScanConfig()` conversion |
+| **Front-end (Gio)** | `cmd/gui-gio/` | Gio layout, widgets, event loop — Windows + Linux |
+| **Front-end (Win32, legacy)** | `cmd/gui-win/` | Frozen Win32 GUI — no new features |
+| **Front-end (TUI)** | `cmd/net-scope/tui_notwindows.go` + `cmd/tui/` | Bubbletea TUI — Linux/BSD |
+| **Front-end (CLI)** | `cmd/net-scope/cli.go` + `cmd/cli/` | Plain text output — all platforms |
 
 **Rules:**
 
 - Do not add scanning, enrichment, or capture logic to any GUI or CLI file.
 - Do not add Win32 or platform-specific code outside `cmd/gui-win/`.
-- The service layer (sensor service / Windows service shim) should be reusable from the TUI and any future Linux GUI — it is not a GUI-only component.
+- Do not add Gio imports outside `cmd/gui-gio/` UI files — the service IPC client in `cmd/gui-gio/service.go` must remain GUI-framework-free.
+- The service IPC client is shared infrastructure — treat it like a library, not a GUI component. Any front-end (Gio, TUI, future Linux CLI) can import and use it.
 - Config parsing and defaults live in `internal/config/`; frontends only call `Load()` / `SaveTo()`.
+- `internal/scan/` is the single source of truth for all wire protocol types. Never duplicate `ServiceCmd`/`ServiceMsg`/`Result` in a front-end package.
 
 ---
-
-## Shelved Work (do not implement without discussion)
-
-- Linux native GUI (toolkit not decided)
-- Diff / snapshot system
-- Filter language (`alive`, `open:22`, `vendor:X`)
-- Debug menu (ARP/DNS inspect/clear)
-- Broadcast tab auto-poll
-- Admin mode toggle

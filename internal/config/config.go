@@ -26,6 +26,11 @@ const File = "config.toml"
 // Config is the top-level structure that maps to the TOML file.
 type Config struct {
 	Scan ScanConfig `toml:"scan"`
+
+	// DefaultMode controls which UI is launched when net-scope is run with no
+	// subcommand.  Valid values: "cli", "tui", "gui", "" (empty = platform
+	// default: GUI on Windows, CLI elsewhere).
+	DefaultMode string `toml:"default_mode"`
 }
 
 // ScanConfig holds all tunable scan parameters.
