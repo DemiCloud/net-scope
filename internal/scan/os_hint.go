@@ -28,6 +28,8 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 		switch {
 		case strings.Contains(d, "windows"):
 			return OSWindows
+		case strings.Contains(d, "routeros"):
+			return OSNetwork
 		case strings.Contains(d, "linux"):
 			return OSLinux
 		case strings.Contains(d, "ios") && !strings.Contains(d, "iphone"):
@@ -68,6 +70,8 @@ func guessOS(icmpTTL uint8, banner BannerInfo, services []ServiceInfo, snmp *SNM
 			return OSLinux
 		case strings.Contains(lower, "windows"):
 			return OSWindows
+		case strings.Contains(lower, "rosssh"): // MikroTik RouterOS SSH implementation
+			return OSNetwork
 		case strings.Contains(lower, "freebsd"), strings.Contains(lower, "netbsd"),
 			strings.Contains(lower, "openbsd"):
 			return OSLinux
