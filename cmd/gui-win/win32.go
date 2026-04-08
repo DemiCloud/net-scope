@@ -52,6 +52,7 @@ const (
 	IDC_ACTIVE_ONLY   = 118 // "Active only" checkbox in scan bar
 	IDC_SEARCH_EDIT   = 119 // Ctrl+F find bar — text input
 	IDC_SEARCH_CLOSE  = 120 // Ctrl+F find bar — "×" dismiss button
+	IDC_HOST_FILTER   = 121 // Scanner tab inline filter input
 )
 
 // ---------------------------------------------------------------------------
