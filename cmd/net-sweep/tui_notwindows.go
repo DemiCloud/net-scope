@@ -14,7 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 	"github.com/spf13/pflag"
 )
 
@@ -22,7 +22,7 @@ import (
 // Tea messages
 // ---------------------------------------------------------------------------
 
-type tuiResultMsg sweep.Result
+type tuiResultMsg scan.Result
 type tuiDoneMsg struct{}
 type tuiErrMsg struct{ err error }
 
@@ -50,7 +50,7 @@ type tuiModel struct {
 	total    int
 	done     int
 	found    int
-	results  []sweep.Result
+	results  []scan.Result
 	finished bool
 	scanErr  error
 	width    int
@@ -72,7 +72,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tuiResultMsg:
-		r := sweep.Result(msg)
+		r := scan.Result(msg)
 		m.done++
 		if r.Alive {
 			m.found++
@@ -136,7 +136,7 @@ func (m tuiModel) View() string {
 	return b.String()
 }
 
-func tuiRenderRow(r sweep.Result) string {
+func tuiRenderRow(r scan.Result) string {
 	hostname := r.Hostname
 	if hostname == "" && r.NetBIOS != "" {
 		hostname = r.NetBIOS
@@ -261,13 +261,13 @@ func runTUI() {
 		os.Exit(2)
 	}
 
-	hosts, err := sweep.ExpandTarget(target)
+	hosts, err := scan.ExpandTarget(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if !sweep.IsPrivate(target) {
+	if !scan.IsPrivate(target) {
 		fmt.Fprintf(os.Stderr,
 			"warning: target %q is not RFC1918/private. Proceed? [y/N] ", target)
 		var answer string
@@ -278,7 +278,7 @@ func runTUI() {
 		}
 	}
 
-	scanCfg := cfg.ToSweepConfig()
+	scanCfg := cfg.ToScanConfig()
 	scanCfg.Timeout = *timeout
 	scanCfg.Concurrency = *concurrency
 	scanCfg.PingFirst = !*noPing
@@ -306,7 +306,7 @@ func runTUI() {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	go func() {
-		ch, err := sweep.NewScanner(scanCfg).Scan(ctx, target)
+		ch, err := scan.NewScanner(scanCfg).Scan(ctx, target)
 		if err != nil {
 			p.Send(tuiErrMsg{err})
 			return

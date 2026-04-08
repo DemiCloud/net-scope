@@ -14,7 +14,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ var (
 	currentDetailIP string
 
 	// pendingProbeResults: goroutines append, UI thread reads via WM_PROBE_RESULT.
-	pendingProbeResults   []sweep.ProbeResult
+	pendingProbeResults   []scan.ProbeResult
 	pendingProbeResultsMu sync.Mutex
 
 	// activeProbes is the count of probe goroutines still running.
@@ -154,7 +154,7 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 
 	case WM_PROBE_RESULT:
 		pendingProbeResultsMu.Lock()
-		var pr sweep.ProbeResult
+		var pr scan.ProbeResult
 		if int(wParam) < len(pendingProbeResults) {
 			pr = pendingProbeResults[int(wParam)]
 		}
@@ -186,7 +186,7 @@ func hostDetailClose(hwnd HWND) {
 
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
-	registerDialogClass("NetSweepHostDetail", hostDetailWndProc)
+	registerDialogClass("NetScopeHostDetail", hostDetailWndProc)
 
 	// Reset probe state.
 	pendingProbeResultsMu.Lock()
@@ -202,7 +202,7 @@ func showHostDetailDialog(parent HWND, ip string) {
 	const dlgW, dlgH int32 = 740, 600
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepHostDetail", "Host detail — "+ip,
+		"NetScopeHostDetail", "Host detail — "+ip,
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -430,7 +430,7 @@ func hostDetailRunSingle(hwnd HWND) {
 	if int(typeIdx) < len(probeTypeLabels) {
 		probeType = probeTypeLabels[int(typeIdx)]
 	}
-	spec := sweep.ProbeSpec{Port: port, Type: probeType}
+	spec := scan.ProbeSpec{Port: port, Type: probeType}
 	startProbe(hwnd, currentDetailIP, spec)
 }
 
@@ -438,20 +438,20 @@ func hostDetailRunSingle(hwnd HWND) {
 func hostDetailRunAll(hwnd HWND) {
 	enableWindow(hwndHostRunAllBtn, false)
 	setWindowText(hwndHostRunAllBtn, "Running…")
-	for _, spec := range sweep.CommonProbes {
+	for _, spec := range scan.CommonProbes {
 		startProbe(hwnd, currentDetailIP, spec)
 	}
 }
 
 // startProbe launches one probe goroutine. Results arrive via WM_PROBE_RESULT.
-func startProbe(hwnd HWND, ip string, spec sweep.ProbeSpec) {
+func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 	atomic.AddInt32(&activeProbes, 1)
 	ctx := dialogProbeCtx
 	// Use the proxy dialer if one is configured in the current app config.
-	dial, _ := sweep.MakeDialFunc(appConfig.Scan.SOCKSProxy)
+	dial, _ := scan.MakeDialFunc(appConfig.Scan.SOCKSProxy)
 	go func() {
 		defer atomic.AddInt32(&activeProbes, -1)
-		res := sweep.RunProbe(ctx, ip, spec, 3*time.Second, dial)
+		res := scan.RunProbe(ctx, ip, spec, 3*time.Second, dial)
 		pendingProbeResultsMu.Lock()
 		idx := len(pendingProbeResults)
 		pendingProbeResults = append(pendingProbeResults, res)
@@ -463,7 +463,7 @@ func startProbe(hwnd HWND, ip string, spec sweep.ProbeSpec) {
 }
 
 // hostDetailAddProbeRow inserts one probe result into the probe listview.
-func hostDetailAddProbeRow(hwnd HWND, pr sweep.ProbeResult) {
+func hostDetailAddProbeRow(hwnd HWND, pr scan.ProbeResult) {
 	_ = hwnd
 	portStr := strconv.Itoa(pr.Port)
 	p := utf16(portStr)
@@ -487,7 +487,7 @@ func hostDetailCopyReport(hwnd HWND) {
 
 	// Append probe results.
 	pendingProbeResultsMu.Lock()
-	probes := append([]sweep.ProbeResult{}, pendingProbeResults...)
+	probes := append([]scan.ProbeResult{}, pendingProbeResults...)
 	pendingProbeResultsMu.Unlock()
 	if len(probes) > 0 {
 		sb.WriteString("\n── On-demand probes ───────────────────────────────────\n")
@@ -645,7 +645,7 @@ func buildHostSummary(ip string) string {
 	}
 
 	// ── Services (mDNS / SSDP / WSD) ────────────────────────────────────────
-	allSvcs := append([]sweep.ServiceInfo{}, r.Services...)
+	allSvcs := append([]scan.ServiceInfo{}, r.Services...)
 	allSvcs = append(allSvcs, e.ExtraServices...)
 	if len(allSvcs) > 0 {
 		sb.WriteString("\n── Services ────────────────────────────────────────────\n")
@@ -863,12 +863,12 @@ func showAllHostsDialog(parent HWND) {
 		return
 	}
 
-	registerDialogClass("NetSweepAllHosts", allHostsWndProc)
+	registerDialogClass("NetScopeAllHosts", allHostsWndProc)
 
 	const dlgW, dlgH int32 = 480, 400
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepAllHosts", "All Hosts",
+		"NetScopeAllHosts", "All Hosts",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -1007,12 +1007,12 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // showPickHostDialog opens the Query Host dialog.
 // Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
-	registerDialogClass("NetSweepPickHost", pickHostWndProc)
+	registerDialogClass("NetScopePickHost", pickHostWndProc)
 
 	const dlgW, dlgH int32 = 460, 360
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepPickHost", "Query Host",
+		"NetScopePickHost", "Query Host",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),

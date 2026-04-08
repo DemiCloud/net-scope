@@ -14,7 +14,7 @@ import (
 	"time"
 	"unsafe"
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 })
 
 func showSettingsDialog(parent HWND) {
-	registerDialogClass("NetSweepSettings", settingsWndProc)
+	registerDialogClass("NetScopeSettings", settingsWndProc)
 
 	// Populate fields from the current in-memory config (appConfig), which
 	// reflects any changes already made this session.
@@ -93,7 +93,7 @@ func showSettingsDialog(parent HWND) {
 	const dlgW, dlgH int32 = 560, 470
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepSettings", "Settings — "+titleSuffix,
+		"NetScopeSettings", "Settings — "+titleSuffix,
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -245,7 +245,7 @@ func applySettings(hwnd HWND) bool {
 	}
 
 	if socksProxy != "" {
-		if _, err := sweep.MakeDialFunc(socksProxy); err != nil {
+		if _, err := scan.MakeDialFunc(socksProxy); err != nil {
 			messageBox(hwnd, "SOCKS5 Proxy address is invalid:\n"+err.Error(), "Invalid Input", 0)
 			return false
 		}
@@ -357,13 +357,13 @@ var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 })
 
 func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
-	registerDialogClass("NetSweepCfgLoc", cfgLocWndProc)
+	registerDialogClass("NetScopeCfgLoc", cfgLocWndProc)
 	cfgLocResult = "neither"
 
 	const dlgW, dlgH int32 = 520, 360
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepCfgLoc", "Where should net-sweep save its config?",
+		"NetScopeCfgLoc", "Where should NetScope save its config?",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -479,7 +479,7 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 			parent := HWND(hwnd)
 			go func() {
 				dataDir := config.DataDir()
-				_, err := sweep.DownloadOUIDB(dataDir)
+				_, err := scan.DownloadOUIDB(dataDir)
 				if err != nil {
 					postMessage(parent, WM_APP+20, 0, 0) // failure
 				} else {
@@ -495,7 +495,7 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		return 0
 	case WM_APP + 21: // download succeeded
 		dataDir := config.DataDir()
-		setWindowText(hwndDBStatus, sweep.OUIStatus(dataDir))
+		setWindowText(hwndDBStatus, scan.OUIStatus(dataDir))
 		return 0
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
@@ -505,11 +505,11 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 })
 
 func showDatabasesDialog(parent HWND) {
-	registerDialogClass("NetSweepDatabases", databasesWndProc)
+	registerDialogClass("NetScopeDatabases", databasesWndProc)
 	const dlgW, dlgH int32 = 560, 330
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepDatabases", "Databases",
+		"NetScopeDatabases", "Databases",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -521,7 +521,7 @@ func showDatabasesDialog(parent HWND) {
 
 	// Populate the OUI status now that the HWND exists.
 	dataDir := config.DataDir()
-	setWindowText(hwndDBStatus, sweep.OUIStatus(dataDir))
+	setWindowText(hwndDBStatus, scan.OUIStatus(dataDir))
 
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
@@ -1116,7 +1116,7 @@ func applyProtoHandlers() {
 }
 
 func showProtocolHandlersDialog(parent HWND) {
-	registerDialogClass("NetSweepProtoHandlers", protoHandlersWndProc)
+	registerDialogClass("NetScopeProtoHandlers", protoHandlersWndProc)
 
 	n := int32(len(protoHandlerRows))
 	const (
@@ -1136,7 +1136,7 @@ func showProtocolHandlersDialog(parent HWND) {
 
 	dlg, err := createWindowEx(
 		dlgExStyle,
-		"NetSweepProtoHandlers", "Protocol Handlers",
+		"NetScopeProtoHandlers", "Protocol Handlers",
 		dlgStyle,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -1222,7 +1222,7 @@ func createConnHandlersControls(hwnd HWND) {
 }
 
 func showConnHandlersDialog(parent HWND) {
-	registerDialogClass("NetSweepConnHandlers", connHandlersWndProc)
+	registerDialogClass("NetScopeConnHandlers", connHandlersWndProc)
 
 	n := int32(len(protoHandlerRows))
 	const (
@@ -1235,7 +1235,7 @@ func showConnHandlersDialog(parent HWND) {
 
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetSweepConnHandlers", "Connection Handlers",
+		"NetScopeConnHandlers", "Connection Handlers",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),

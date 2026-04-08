@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // ---------------------------------------------------------------------------
-// Persistent sweep service state
+// Persistent scan service state
 // ---------------------------------------------------------------------------
 
 var (
@@ -55,7 +55,7 @@ func stopService() {
 		serviceDec = nil
 		serviceElevated = false
 		// Best-effort graceful shutdown.
-		_ = enc.Encode(sweep.ServiceCmd{Cmd: "shutdown"})
+		_ = enc.Encode(scan.ServiceCmd{Cmd: "shutdown"})
 	}
 }
 
@@ -98,7 +98,7 @@ func spawnService(hwnd HWND, elevated bool) {
 		enc := json.NewEncoder(conn)
 
 		// First message must be the ready handshake.
-		var msg sweep.ServiceMsg
+		var msg scan.ServiceMsg
 		if err := dec.Decode(&msg); err != nil || !msg.Ready {
 			conn.Close()
 			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
@@ -122,7 +122,7 @@ func spawnService(hwnd HWND, elevated bool) {
 
 // sendScanViaService sends a scan command to the running service and pumps
 // results back through the normal WM_SCAN_RESULT / WM_SCAN_COMPLETE pipeline.
-func sendScanViaService(hwnd HWND, target string, cfg sweep.Config) {
+func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 	serviceMu.Lock()
 	enc := serviceEnc
 	dec := serviceDec
@@ -142,13 +142,13 @@ func sendScanViaService(hwnd HWND, target string, cfg sweep.Config) {
 			}
 		}()
 
-		if err := enc.Encode(sweep.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg}); err != nil {
+		if err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg}); err != nil {
 			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 			return
 		}
 
 		for {
-			var msg sweep.ServiceMsg
+			var msg scan.ServiceMsg
 			if err := dec.Decode(&msg); err != nil {
 				// Connection lost mid-scan.
 				serviceMu.Lock()
@@ -200,7 +200,7 @@ func stopServiceScan() {
 	enc := serviceEnc
 	serviceMu.Unlock()
 	if enc != nil {
-		_ = enc.Encode(sweep.ServiceCmd{Cmd: "stop"})
+		_ = enc.Encode(scan.ServiceCmd{Cmd: "stop"})
 	}
 }
 
@@ -214,7 +214,7 @@ func startDHCPCapture(hwnd HWND) {
 	if enc == nil {
 		return
 	}
-	_ = enc.Encode(sweep.ServiceCmd{Cmd: "dhcp-start"})
+	_ = enc.Encode(scan.ServiceCmd{Cmd: "dhcp-start"})
 }
 
 // statusForService returns a short label for the service-state overlay.

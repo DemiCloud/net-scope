@@ -60,7 +60,7 @@
 - [ ] **MAC flapping detection** — across successive scans within a session, track MAC→IP history; flag any MAC that appears at a different IP than previously seen; distinguish normal DHCP renewal (short gap) from suspicious rapid changes; show in the Scan Report or a dedicated anomaly list
 - [ ] **Stale ARP entry detection** — flag ARP table entries whose IP was not confirmed alive by the current scan; helps surface ghost hosts and stale DHCP leases; surface in Scan Report
 - [ ] **"Flush ARP for this IP" context action** — right-click a host row; on Windows runs `arp -d <ip>` (requires elevation); on Linux `ip neigh del <ip> dev <iface>`; prompt for elevation if not already elevated
-- [ ] **"Ping sweep → repopulate ARP"** — toolbar or context action that sends a fast ICMP echo to every address in the target subnet before scanning, forcing the OS ARP cache to populate; useful when cache is cold or stale; reuses the existing ICMP prober
+- [ ] **"Ping scan → repopulate ARP"** — toolbar or context action that sends a fast ICMP echo to every address in the target subnet before scanning, forcing the OS ARP cache to populate; useful when cache is cold or stale; reuses the existing ICMP prober
 
 ## Extended Service Probes
 
@@ -73,6 +73,10 @@
 ## Wake-on-LAN
 
 - [ ] **Wake-on-LAN tool** — `Tools > Wake on LAN…`: MAC address field (auto-populated from selected Scanner row if available) + optional broadcast IP (defaults to subnet broadcast derived from current target); sends the 102-byte magic packet (6× `0xFF` + 16× target MAC) as a UDP broadcast on port 9; no elevation required; show confirmation in the status bar on send
+
+## MAC Vendor Lookup
+
+- [ ] **MAC Vendor Lookup tool** — `Tools > MAC Vendor Lookup…`: MAC address input field (accepts full MAC or OUI prefix, colon/hyphen/dot-separated or plain hex); looks up the vendor string from the embedded OUI database; shows result inline in the dialog; useful for identifying unknown hardware without running a full scan
 
 ## Network Interfaces
 

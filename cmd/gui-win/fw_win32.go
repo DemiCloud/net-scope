@@ -4,7 +4,7 @@
 //
 // This file contains all Win32 API surface used by the package: handle
 // type aliases, numeric constants, structs, DLL procedure references, and
-// thin Go wrappers.  There is zero net-sweep application logic here.
+// thin Go wrappers.  There is zero NetScope application logic here.
 //
 // Goal: fw_win32.go (together with fw_dialog.go) should be self-contained
 // enough to be extracted into a standalone module in the future without

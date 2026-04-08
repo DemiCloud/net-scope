@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 	"github.com/spf13/pflag"
 )
 
@@ -43,7 +43,7 @@ func init() {
 }
 
 func main() {
-	sweep.InitVendorDB()
+	scan.InitVendorDB(config.DataDir())
 
 	cfg, cfgPath, err := config.Load()
 	if err != nil {
@@ -124,7 +124,7 @@ func main() {
 	}
 
 	// WAN safety: warn if the target is not an RFC1918/link-local range.
-	if !sweep.IsPrivate(target) {
+	if !scan.IsPrivate(target) {
 		fmt.Fprintf(os.Stderr,
 			"%swarning:%s target %q is not an RFC1918/private address.\n"+
 				"         Scanning hosts you do not own may be illegal. Proceed? [y/N] ",
@@ -137,7 +137,7 @@ func main() {
 		}
 	}
 
-	scanCfg := cfg.ToSweepConfig()
+	scanCfg := cfg.ToScanConfig()
 	scanCfg.Timeout = *timeout
 	scanCfg.Concurrency = *concurrency
 	scanCfg.PingFirst = !*noPing
@@ -161,7 +161,7 @@ func main() {
 	}
 
 	// Expand target early so we know total count for progress indicator.
-	hosts, err := sweep.ExpandTarget(target)
+	hosts, err := scan.ExpandTarget(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -171,7 +171,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	ch, err := sweep.NewScanner(scanCfg).Scan(ctx, target)
+	ch, err := scan.NewScanner(scanCfg).Scan(ctx, target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -181,7 +181,7 @@ func main() {
 		printHeader()
 	}
 
-	var results []sweep.Result
+	var results []scan.Result
 	done := 0
 	found := 0
 
@@ -212,12 +212,12 @@ func main() {
 
 	switch *format {
 	case "json":
-		if err := sweep.WriteJSON(out, results); err != nil {
+		if err := scan.WriteJSON(out, results); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 	case "csv":
-		if err := sweep.WriteCSV(out, results); err != nil {
+		if err := scan.WriteCSV(out, results); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -232,7 +232,7 @@ func printHeader() {
 	fmt.Println(strings.Repeat("─", 140))
 }
 
-func printResult(w io.Writer, r sweep.Result) {
+func printResult(w io.Writer, r scan.Result) {
 	hostname := r.Hostname
 	if hostname == "" && r.NetBIOS != "" {
 		hostname = r.NetBIOS

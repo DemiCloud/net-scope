@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/demicloud/net-scope/internal/config"
-	"github.com/demicloud/net-scope/internal/sweep"
+	"github.com/demicloud/net-scope/internal/scan"
 	"github.com/spf13/pflag"
 )
 
@@ -23,7 +23,7 @@ var version = "dev"
 // Tea messages
 // ---------------------------------------------------------------------------
 
-type resultMsg sweep.Result
+type resultMsg scan.Result
 type doneMsg struct{}
 type errMsg struct{ err error }
 
@@ -51,7 +51,7 @@ type model struct {
 	total    int
 	done     int
 	found    int
-	results  []sweep.Result
+	results  []scan.Result
 	finished bool
 	scanErr  error
 	width    int
@@ -77,7 +77,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case resultMsg:
-		r := sweep.Result(msg)
+		r := scan.Result(msg)
 		m.done++
 		if r.Alive {
 			m.found++
@@ -145,7 +145,7 @@ func (m model) View() string {
 	return b.String()
 }
 
-func renderRow(r sweep.Result) string {
+func renderRow(r scan.Result) string {
 	hostname := r.Hostname
 	if hostname == "" && r.NetBIOS != "" {
 		hostname = r.NetBIOS
@@ -279,14 +279,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	hosts, err := sweep.ExpandTarget(target)
+	hosts, err := scan.ExpandTarget(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// WAN safety: warn if the target is not a private range.
-	if !sweep.IsPrivate(target) {
+	if !scan.IsPrivate(target) {
 		fmt.Fprintf(os.Stderr,
 			"warning: target %q is not an RFC1918/private address.\n"+
 				"         Scanning hosts you do not own may be illegal. Proceed? [y/N] ",
@@ -299,7 +299,7 @@ func main() {
 		}
 	}
 
-	scanCfg := cfg.ToSweepConfig()
+	scanCfg := cfg.ToScanConfig()
 	scanCfg.Timeout = *timeout
 	scanCfg.Concurrency = *concurrency
 	scanCfg.PingFirst = !*noPing
@@ -324,7 +324,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(sigCtx)
 
-	sweep.InitVendorDB()
+	scan.InitVendorDB(config.DataDir())
 
 	m := model{
 		target: target,
@@ -335,7 +335,7 @@ func main() {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	go func() {
-		ch, err := sweep.NewScanner(scanCfg).Scan(ctx, target)
+		ch, err := scan.NewScanner(scanCfg).Scan(ctx, target)
 		if err != nil {
 			p.Send(errMsg{err})
 			return
