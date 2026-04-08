@@ -3,6 +3,8 @@
 package guiwin
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"os"
@@ -77,21 +79,34 @@ func stopService() {
 func spawnService(hwnd HWND, elevated bool) {
 	exe, err := os.Executable()
 	if err != nil {
-				messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "NetScope", MB_ICONERROR)
 		return
 	}
 
+	// Generate a per-session 32-byte random token. This token is passed to
+	// the service subprocess via argv and echoed back in the Ready handshake.
+	// The UI rejects any connection whose reflected token does not match,
+	// preventing a local process from hijacking the socket by racing Accept.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		messageBox(hwnd, "Cannot generate service token:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		return
+	}
+	token := hex.EncodeToString(raw)
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-				messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		messageBox(hwnd, "Cannot open service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
 		return
 	}
 	addr := ln.Addr().String()
 
+	// Spawn: net-scope service <addr> <token>
+	params := "service " + addr + " " + token
 	if elevated {
-		shellExecute(0, "runas", exe, "--service="+addr, "", SW_HIDE)
+		shellExecute(0, "runas", exe, params, "", SW_HIDE)
 	} else {
-		shellExecute(0, "open", exe, "--service="+addr, "", SW_HIDE)
+		shellExecute(0, "open", exe, params, "", SW_HIDE)
 	}
 
 	go func() {
@@ -112,9 +127,10 @@ func spawnService(hwnd HWND, elevated bool) {
 		dec := json.NewDecoder(conn)
 		enc := json.NewEncoder(conn)
 
-		// First message must be the ready handshake.
+		// First message must be the ready handshake; validate reflected token.
 		var msg scan.ServiceMsg
-		if err := dec.Decode(&msg); err != nil || !msg.Ready {
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+		if err := dec.Decode(&msg); err != nil || !msg.Ready || msg.Token != token {
 			conn.Close()
 			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
 			return
@@ -125,6 +141,7 @@ func spawnService(hwnd HWND, elevated bool) {
 		if serviceConn != nil {
 			serviceConn.Close()
 		}
+		conn.SetDeadline(time.Time{}) // clear deadline for subsequent reads
 		serviceConn = conn
 		serviceEnc = enc
 		serviceDec = dec
