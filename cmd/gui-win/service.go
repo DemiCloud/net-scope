@@ -17,11 +17,17 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	serviceMu      sync.Mutex
-	serviceConn    net.Conn
-	serviceEnc     *json.Encoder
-	serviceDec     *json.Decoder
+	serviceMu       sync.Mutex
+	serviceConn     net.Conn
+	serviceEnc      *json.Encoder
+	serviceDec      *json.Decoder
 	serviceElevated bool // true if the running service process is admin
+
+	// serviceDecMu serialises access to serviceDec. The JSON decoder is not
+	// goroutine-safe; holding this for the entire decode loop in
+	// sendScanViaService prevents a second scan goroutine from reading
+	// concurrently with an outgoing one (stop → immediate rescan race).
+	serviceDecMu sync.Mutex
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -141,6 +147,12 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config) {
 				postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
 			}
 		}()
+
+		// Acquire exclusive ownership of the decoder for the lifetime of this
+		// scan's response stream. A previous scan goroutine may still be
+		// draining its final messages; block until it is done.
+		serviceDecMu.Lock()
+		defer serviceDecMu.Unlock()
 
 		if err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg}); err != nil {
 			postMessage(hwnd, WM_SCAN_COMPLETE, 0, 0)
