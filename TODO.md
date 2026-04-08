@@ -34,7 +34,7 @@
 
 - [x] **Extend `guessOS()` with vendor OUI signals** — vendor OUI tier added between SNMP and SSH checks: Apple → macOS; Raspberry Pi → Linux; Cisco/Juniper/Ubiquiti/MikroTik/Aruba/Fortinet/Palo Alto → Network Device
 - [x] **TCP SYN window-size probe for OS fingerprinting**
-- [ ] **Raw fingerprint dump tool** — surface raw TCP/IP stack signals collected for a host (ICMP TTL, SYN-ACK window size, TCP options order, SNMP sysDescr, SSH banner, HTTP Server header, mDNS/SSDP service strings) in a copyable text format; useful for crafting new `guessOS()` rules; expose via right-click context menu, Tools menu, or a debug panel
+- [x] **Raw fingerprint dump tool** — surface raw TCP/IP stack signals collected for a host (ICMP TTL, SYN-ACK window size, TCP options order, SNMP sysDescr, SSH banner, HTTP Server header, mDNS/SSDP service strings) in a copyable text format; useful for crafting new `guessOS()` rules; expose via right-click context menu, Tools menu, or a debug panel
 
 ## ARP Integrity
 
