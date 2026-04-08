@@ -29,7 +29,7 @@
 - [x] **Scanner tab — inline search/filter** — Ctrl+F floating bar on the Scanner tab filters visible rows by IP, MAC address, hostname, vendor, and OS hint as the user types; same popup used on mDNS/SSDP/WSD/DHCP tabs; Escape dismisses and clears the filter
 - [x] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
 - [x] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
-- [ ] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
+- [x] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
 
 ## Export
 
