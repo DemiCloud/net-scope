@@ -11,7 +11,7 @@ The binary exposes all modes as subcommands:
 ```text
 net-scope cli    [target] [flags]   # plain-text output — all platforms
 net-scope tui    [target] [flags]   # Bubbletea TUI — Linux/BSD only
-net-scope gui    [target]           # Gio GUI — Windows + Linux only
+net-scope gui    [target]           # native GUI — Windows (Win32) or Linux GUI build
 net-scope service <addr> <token>    # internal: sensor service subprocess
 ```
 
@@ -22,16 +22,19 @@ When run with **no subcommand**, the platform default is used unless
 | --- | --- | --- |
 | Windows (terminal) | `cli` | `AttachConsole` succeeds |
 | Windows (double-click) | `gui` | No parent console |
-| Linux | `cli` | Override via `default_mode = "gui"` or `"tui"` in config |
-| FreeBSD / BSD | `cli` | GUI subcommand not available (no Gio backend) |
+| Linux (static build) | `cli` | Override via `default_mode = "tui"` in config; no GUI in static binary |
+| Linux (GUI build) | `cli` | Override via `default_mode = "gui"` or `"tui"` in config |
+| FreeBSD / BSD | `cli` | GUI subcommand not available; TUI is the interactive interface |
 
-The old `cmd/cli/`, `cmd/tui/`, and `cmd/gui-win/` entry points still exist
-and are buildable in isolation, but **the canonical entry point is
-`cmd/net-scope/`**.
+The old `cmd/cli/` and `cmd/tui/` entry points still exist and are buildable
+in isolation, but **the canonical entry point is `cmd/net-scope/`**.
 
-`cmd/gui-win/` is the **legacy Win32 GUI** — deprecated in favour of `cmd/gui-gio/`.
-It is kept intact for reference and regression comparison during the Gio transition.
-Do not add new features to `cmd/gui-win/`.
+`cmd/gui-win/` is the **primary Windows GUI** — native Win32 controls, no CGo,
+no framework dependencies. This is the active development path.
+
+`cmd/gui-gtk/` is the **optional Linux GUI** — GTK3, CGo required, dynamically
+linked. Only included when built with the `gui` build tag (`make linux-gui`).
+The standard static Linux binary does not include the GUI subcommand.
 
 ---
 
@@ -43,14 +46,22 @@ cmd/
     main.go           ← InitVendorDB + calls run()
     cli.go            ← runCLI() — all platforms
     tui_notwindows.go ← runTUI() — Linux/BSD only (!windows build tag)
-    dispatch_windows.go ← subcommand dispatch; AttachConsole heuristic for default
-    dispatch_other.go   ← subcommand dispatch; CLI default for Linux/BSD
-  gui-gio/            ← package guigio — Gio-based GUI (Windows + Linux)
+    dispatch_windows.go  ← subcommand dispatch; AttachConsole heuristic for default
+    dispatch_linux_gui.go   ← subcommand dispatch for Linux GUI build (linux,gui tag)
+    dispatch_other.go       ← subcommand dispatch; CLI default for Linux static + BSD
+  gui-win/            ← package guiwin — Win32 GUI (Windows only, primary graphical target)
+    fw_win32.go       ← Win32 types, constants, DLL procs, thin wrappers (no app logic)
+    fw_dialog.go      ← modal loop, registerDialogClass, ctlColorDialog helper
+    fw_listview.go    ← ListView helpers
+    win32.go          ← app constants: WM_APP IDs, IDC_*, IDM_*, isElevated()
+    main.go           ← Run(version, target string); LockOSThread
+    ui.go             ← main window WndProc, layout, menus
+    service.go        ← sensor service IPC client (no Win32 imports; reusable)
+    (other app files: dialog.go, dialog_host.go, listview.go, crash.go, icon.go)
+  gui-gtk/            ← package guigtk — GTK3 GUI (Linux only, build tag: linux,gui)
     main.go           ← Run(version, target string)
-    ui.go             ← main window, layout, event loop
-    service.go        ← sensor service IPC client (reusable; no Gio imports)
-  gui-win/            ← package guiwin — DEPRECATED Win32 GUI (Windows only)
-    (do not add new features here)
+    ui.go             ← GTK window, widgets, event loop
+    (service.go is shared from cmd/gui-win/service.go logic — or duplicated minimally)
   gen-ico/            ← go run ./cmd/gen-ico/ → cmd/gui-win/icon.ico
   gen-rsrc/           ← go run ./cmd/gen-rsrc/ → cmd/gui-win/resource_windows_amd64.syso
   cli/                ← standalone CLI (legacy, keep for reference)
@@ -66,9 +77,10 @@ internal/
 
 ```bash
 # Dev builds
-make linux           # → build/net-scope_linux_amd64
-make windows         # → build/net-scope_windows_amd64.exe  (runs gen-resources first)
-make bsd             # → build/net-scope_freebsd_amd64
+make linux           # → build/net-scope_linux_amd64        (static; CLI + TUI only)
+make linux-gui       # → build/net-scope_linux_amd64_gui     (CGo + GTK3; CLI + TUI + GUI)
+make windows         # → build/net-scope_windows_amd64.exe   (runs gen-resources first)
+make bsd             # → build/net-scope_freebsd_amd64       (static; CLI + TUI only)
 
 # Regenerate icon.ico + resource_windows_amd64.syso (called automatically by make windows)
 make gen-resources
@@ -81,15 +93,18 @@ make test
 make vet
 ```
 
-Cross-compilation is done from Linux (WSL Fedora).
+Windows cross-compilation is done from Linux (WSL Fedora). Linux and BSD can also be
+cross-compiled from Linux. The Linux GUI build must be done natively on Linux.
 
 | Target | CGo | Notes |
 | --- | --- | --- |
-| Windows (amd64) | **None** — `CGO_ENABLED=0` | Gio uses Direct3D 11 via pure syscalls |
-| Linux (amd64) | Required — `gcc` + `wayland-devel libX11-devel mesa-libEGL-devel libxkbcommon-x11-devel` | Native build on Linux only |
-| FreeBSD (amd64) | **None** — `CGO_ENABLED=0` | CLI / TUI only; no GUI |
+| Windows (amd64) | **None** — `CGO_ENABLED=0` | Win32 via `syscall.NewLazyDLL`; no framework deps |
+| Linux static (amd64) | **None** — `CGO_ENABLED=0` | CLI + TUI only; fully static binary |
+| Linux GUI (amd64) | **Required** — `gcc` + `libgtk-3-dev libglib2.0-dev` | GTK3; dynamically linked; desktop use |
+| FreeBSD (amd64) | **None** — `CGO_ENABLED=0` | CLI + TUI only; no GUI |
 
-The "no CGo" rule applies to **Windows and FreeBSD targets only**. CGo is acceptable for the Linux GUI target.
+The "no CGo" rule applies to **Windows, Linux static, and FreeBSD targets**.
+CGo is required for the Linux GUI build only.
 
 ---
 
@@ -130,10 +145,10 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 
 ### Go
 
-- **No CGo on Windows or FreeBSD targets.** The legacy Win32 GUI uses `syscall.NewLazyDLL` exclusively. The Gio Windows backend also uses pure syscalls. CGo is permitted for the Linux GUI target.
+- **No CGo on Windows, Linux static, or FreeBSD targets.** The Win32 GUI uses `syscall.NewLazyDLL` exclusively. CGo is required only for the Linux GTK GUI build.
 - All `cmd/gui-win/` files carry `//go:build windows` and `package guiwin`.
   Never change the package back to `main`.
-- All `cmd/gui-gio/` files carry `package guigio` (no build constraint needed — Gio selects the right backend per platform automatically).
+- All `cmd/gui-gtk/` files carry `//go:build linux && gui` and `package guigtk`.
 - Version is injected at link time: `-ldflags "-X main.version=<tag>"`.
   The variable lives in `cmd/net-scope/main.go` as `var version = "dev"`.
 - `config.Load()` returns defaults silently when no file exists — it does
@@ -142,23 +157,20 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 ### GUI (all front-ends)
 
 - **All network I/O goes through the sensor service subprocess — on every platform.**
-  No GUI package (Win32 or Gio) may call scan functions, open sockets, or
+  No GUI package (Win32 or GTK) may call scan functions, open sockets, or
   perform probing directly. The service IPC channel is the only allowed path.
   If a new feature touches the network, it belongs in `internal/scan/` and is
   invoked via `scan.ServiceCmd` / `scan.ServiceMsg`, not from a UI event handler.
-- **The service IPC client** (`cmd/gui-gio/service.go`) must have **zero GUI imports**.
+- **The service IPC client** (`cmd/gui-win/service.go`) must have **zero GUI imports**.
   It only imports `internal/scan`, `encoding/json`, `net`, and stdlib. This makes it
-  reusable from the TUI, future frontends, and tests without pulling in Gio.
+  reusable from the GTK front-end, the TUI, and tests.
 - **All display logic** (layouts, colours, font sizes, widget state) lives in the
   front-end package only. No display constants or widget references in `internal/`.
 - When adding a feature: implement in `internal/scan/` first, expose via `ServiceCmd`/`ServiceMsg` if it needs elevation or background capture, then wire into the front-end last.
 
-### Legacy Win32 GUI (`cmd/gui-win/`) — deprecated
+### Win32 GUI (`cmd/gui-win/`) — primary Windows graphical target
 
-- This package is **frozen**. Do not add features. It exists for reference and
-  regression comparison during the Gio migration.
-- `runtime.LockOSThread()` is called inside `guiwin.Run()` before any Win32
-  call. Do not move or remove it.
+- This package is the **active Windows GUI**. New Windows GUI features go here.
 - `runtime.LockOSThread()` is called inside `guiwin.Run()` before any Win32
   call. Do not move or remove it.
 - **Framework vs application split** — `cmd/gui-win/` is divided into framework
@@ -192,6 +204,17 @@ Do **not** push automatically; only commit locally unless the user explicitly as
   `cmd/gen-rsrc/` reading `cmd/gui-win/versioninfo.json`. Do not hand-edit
   the `.syso`.
 
+### Linux GTK GUI (`cmd/gui-gtk/`) — optional Linux graphical target
+
+- Build tag: `//go:build linux && gui`. Only compiled when `make linux-gui` is run.
+- Uses GTK3 via `gotk3`. CGo required. Dynamically linked against system GTK libraries.
+- The static Linux binary (`make linux`) does NOT include this package.
+- The `gui` subcommand in the static build prints "not available in this build" and exits.
+- GTK dev dependencies for building: `libgtk-3-dev libglib2.0-dev` (Debian/Ubuntu) or
+  `gtk3-devel glib2-devel` (Fedora/RHEL).
+- The service IPC client logic mirrors `cmd/gui-win/service.go` — same protocol, no
+  GTK imports, only stdlib + `internal/scan`.
+
 ### Module / dependencies
 
 - No network access during CI. All dependencies must already be in the module
@@ -199,6 +222,7 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 - If `golang.org/x/sync` is missing, add a `replace` directive pinning it to
   `v0.10.0` as a workaround until `go mod tidy` can run with network access.
 - Use `GONOSUMDB='*'` when running `go mod tidy` in an air-gapped environment.
+- Gio (`gioui.org`) has been removed from the project. Do not re-introduce it.
 
 ---
 
@@ -209,20 +233,21 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
 | **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types, wire protocol types (`ServiceCmd`/`ServiceMsg`) |
-| **Service IPC client** | `cmd/gui-gio/service.go` | Platform-agnostic subprocess spawn + JSON-over-TCP channel; **no Gio/Win32 imports** — reusable by any front-end |
+| **Service IPC client** | `cmd/gui-win/service.go` | Platform-agnostic subprocess spawn + JSON-over-TCP channel; **no Win32/GTK imports** — reusable by any front-end |
 | **Config** | `internal/config/` | Serialisation, defaults, path resolution, `ToScanConfig()` conversion |
-| **Front-end (Gio)** | `cmd/gui-gio/` | Gio layout, widgets, event loop — Windows + Linux |
-| **Front-end (Win32, legacy)** | `cmd/gui-win/` | Frozen Win32 GUI — no new features |
-| **Front-end (TUI)** | `cmd/net-scope/tui_notwindows.go` + `cmd/tui/` | Bubbletea TUI — Linux/BSD |
+| **Front-end (Win32)** | `cmd/gui-win/` | Native Win32 GUI — Windows only; primary graphical target |
+| **Front-end (GTK)** | `cmd/gui-gtk/` | GTK3 GUI — Linux only; optional GUI build (`linux,gui` tag) |
+| **Front-end (TUI)** | `cmd/net-scope/tui_notwindows.go` + `cmd/tui/` | Bubbletea TUI — Linux/BSD; first-class interactive interface |
 | **Front-end (CLI)** | `cmd/net-scope/cli.go` + `cmd/cli/` | Plain text output — all platforms |
 
 **Rules:**
 
 - Do not add scanning, enrichment, or capture logic to any GUI or CLI file.
-- Do not add Win32 or platform-specific code outside `cmd/gui-win/`.
-- Do not add Gio imports outside `cmd/gui-gio/` UI files — the service IPC client in `cmd/gui-gio/service.go` must remain GUI-framework-free.
-- The service IPC client is shared infrastructure — treat it like a library, not a GUI component. Any front-end (Gio, TUI, future Linux CLI) can import and use it.
+- Do not add Win32 platform-specific code outside `cmd/gui-win/`.
+- Do not add GTK imports outside `cmd/gui-gtk/` UI files.
+- The service IPC client is shared infrastructure — treat it like a library, not a GUI component. Any front-end (Win32, GTK, TUI) can import and use it.
 - Config parsing and defaults live in `internal/config/`; frontends only call `Load()` / `SaveTo()`.
 - `internal/scan/` is the single source of truth for all wire protocol types. Never duplicate `ServiceCmd`/`ServiceMsg`/`Result` in a front-end package.
+- Do not introduce Gio, Fyne, Qt, or any other GUI framework. Win32 and GTK3 are the only permitted GUI backends.
 
 ---

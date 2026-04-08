@@ -10,7 +10,7 @@ RELEASE_LDFLAGS := -s -w -X main.version=$(VERSION)
 # Output naming convention: net-scope_<os>_<arch>[.exe]
 cli_out  = build/$(NAME)_$(1)_$(2)$(if $(filter windows,$(1)),.exe,)
 
-.PHONY: help linux windows bsd all test vet release clean
+.PHONY: help linux linux-gui windows bsd all test vet release clean
 
 ## ── Dev shortcuts ────────────────────────────────────────────────────────────
 
@@ -22,10 +22,16 @@ help: ## Show this help
 
 ## ── Platform targets (dev builds, unstripped) ────────────────────────────────
 
-linux: fetch-oui ## Build unified binary for linux/amd64 → build/
+linux: fetch-oui ## Build unified binary for linux/amd64 (static; CLI+TUI only) → build/
 	mkdir -p build
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
 		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,linux,amd64) ./cmd/net-scope
+
+linux-gui: fetch-oui ## Build Linux GUI binary (CGo + GTK3; must run natively on Linux) → build/
+	mkdir -p build
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build \
+		-tags "with_oui gui" -ldflags "$(DEV_LDFLAGS)" \
+		-o build/$(NAME)_linux_amd64_gui ./cmd/net-scope
 
 windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd64 → build/
 	mkdir -p build
@@ -46,12 +52,12 @@ gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
 	go run ./cmd/gen-ico/ -o cmd/gui-win/icon.ico
 	go run ./cmd/gen-rsrc/ -dir cmd/gui-win
 
-bsd: fetch-oui ## Cross-compile unified binary for freebsd/amd64 (OPNsense) → build/
+bsd: fetch-oui ## Cross-compile unified binary for freebsd/amd64 (OPNsense; CLI+TUI only) → build/
 	mkdir -p build
 	GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build \
-		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,freebsd,amd64) ./cmd/cli
+		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,freebsd,amd64) ./cmd/net-scope
 
-all: linux windows bsd ## Build all platforms → build/
+all: linux windows bsd ## Build all platforms (static) → build/
 
 ## ── Tests ────────────────────────────────────────────────────────────────────
 
