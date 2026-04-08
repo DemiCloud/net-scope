@@ -48,6 +48,7 @@ const (
 	IDC_LIST_NETWORK  = 114 // Network tab text pane
 	IDC_DETECT        = 115 // detect local subnet button
 	IDC_PROXY_CHECK   = 117 // "Proxy Mode" checkbox in global options bar
+	IDC_ACTIVE_ONLY   = 118 // "Active only" checkbox in scan bar
 )
 
 // ---------------------------------------------------------------------------
