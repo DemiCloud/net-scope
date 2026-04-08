@@ -32,7 +32,7 @@
 
 ## OS / Host Intelligence
 
-- [ ] **Extend `guessOS()` with port-pattern and vendor signals** — add two new signal tiers inserted between the SNMP and SSH checks: (1) **vendor OUI**: "Apple" prefix → macOS; "Raspberry Pi Foundation" → Linux; known network-gear vendors (Cisco, Juniper, Ubiquiti, MikroTik, etc.) → Network Device; (2) **open-port fingerprint**: ports 445 or 139 present → Windows; port 22 present with no 445/139 → Linux (raise confidence, don't override higher-tier signals); port 23 (Telnet) or 161 (SNMP) with no other signals → Network Device; pass the `[]int` open-port slice and `string` vendor into `guessOS()` and update all call sites
+- [x] **Extend `guessOS()` with port-pattern and vendor signals** — add two new signal tiers inserted between the SNMP and SSH checks: (1) **vendor OUI**: "Apple" prefix → macOS; "Raspberry Pi Foundation" → Linux; known network-gear vendors (Cisco, Juniper, Ubiquiti, MikroTik, etc.) → Network Device; (2) **open-port fingerprint**: ports 445 or 139 present → Windows; port 22 present with no 445/139 → Linux (raise confidence, don't override higher-tier signals); port 23 (Telnet) or 161 (SNMP) with no other signals → Network Device; pass the `[]int` open-port slice and `string` vendor into `guessOS()` and update all call sites
 
 ## ARP Integrity
 
