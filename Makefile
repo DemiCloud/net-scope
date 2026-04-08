@@ -33,13 +33,13 @@ windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd
 		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-scope
 
 fetch-oui: ## Download OUI JSON database for embedding (requires internet)
-	@if [ ! -f internal/sweep/oui.json ] || [ $$(wc -c < internal/sweep/oui.json) -lt 1000 ]; then \
+	@if [ ! -f internal/scan/oui.json ] || [ $$(wc -c < internal/scan/oui.json) -lt 1000 ]; then \
 		echo "Fetching OUI database…"; \
-		curl -fsSL --max-time 60 '$(OUI_URL)' -o internal/sweep/oui.json \
-			&& echo "OUI: $$(wc -c < internal/sweep/oui.json) bytes" \
+		curl -fsSL --max-time 60 '$(OUI_URL)' -o internal/scan/oui.json \
+			&& echo "OUI: $$(wc -c < internal/scan/oui.json) bytes" \
 			|| (echo "OUI download failed — build will use stub (no vendor lookup)"; exit 1); \
 	else \
-		echo "OUI: using cached internal/sweep/oui.json ($$(wc -c < internal/sweep/oui.json) bytes)"; \
+		echo "OUI: using cached internal/scan/oui.json ($$(wc -c < internal/scan/oui.json) bytes)"; \
 	fi
 
 gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
@@ -98,5 +98,5 @@ clean: ## Remove build/ and dist/
 	rm -rf build dist
 
 refresh-oui: ## Force re-download of OUI database (ignores cached file)
-	rm -f internal/sweep/oui.json
+	rm -f internal/scan/oui.json
 	$(MAKE) fetch-oui
