@@ -146,6 +146,78 @@ type mdnsBackupEntry struct {
 	svc scan.ServiceInfo
 }
 
+// bcastIPLastSeen records the last time any mDNS/SSDP/WSD packet was observed
+// for each IP address. Updated on real events only (not during filter repopulate).
+// Used for broadcast host decay colours and the "Last Seen" column.
+var bcastIPLastSeen = map[string]time.Time{}
+
+// fmtRelativeAge returns a human-readable relative age string for a timestamp.
+// Returns "—" for a zero time value.
+func fmtRelativeAge(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	d := time.Since(t)
+	switch {
+	case d < 10*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
+// bcastDecayBg returns the COLORREF background colour for a broadcast row.
+// Rows with no last-seen time or age < 2 min use the normal alternating pattern.
+// 2–5 min → light yellow; 5–15 min → light orange; 15+ min → light red.
+// COLORREF encoding: 0x00BBGGRR.
+func bcastDecayBg(ip string, row int32) uint32 {
+	t, ok := bcastIPLastSeen[ip]
+	if !ok {
+		if row%2 == 0 {
+			return 0x00FFFFFF
+		}
+		return 0x00F5F5F5
+	}
+	switch age := time.Since(t); {
+	case age < 2*time.Minute:
+		if row%2 == 0 {
+			return 0x00FFFFFF
+		}
+		return 0x00F5F5F5
+	case age < 5*time.Minute:
+		return 0x00C8FFFF // light yellow: RGB(255, 255, 200)
+	case age < 15*time.Minute:
+		return 0x00A0D8FF // light orange: RGB(255, 216, 160)
+	default:
+		return 0x00BEBEFF // light red:  RGB(255, 190, 190)
+	}
+}
+
+// refreshBcastLastSeenCols updates the "Last Seen" column text for every row
+// in the mDNS, SSDP, and WSD ListViews, then invalidates them so decay colours
+// are repainted. Must be called on the UI thread.
+func refreshBcastLastSeenCols() {
+	for _, pair := range []struct {
+		hwnd    HWND
+		lastCol int32
+	}{
+		{hwndListMDNS, int32(len(mdnsColTitles) - 1)},
+		{hwndListSSDP, int32(len(ssdpColTitles) - 1)},
+		{hwndListWSD, int32(len(wsdColTitles) - 1)},
+	} {
+		n := int32(sendMessage(pair.hwnd, LVM_GETITEMCOUNT, 0, 0))
+		for row := int32(0); row < n; row++ {
+			ip := listViewGetCellText(pair.hwnd, row, 0)
+			setSubItem(pair.hwnd, row, pair.lastCol, fmtRelativeAge(bcastIPLastSeen[ip]))
+		}
+		invalidateRect(pair.hwnd, nil, false)
+	}
+}
+
 var (
 	// mdnsRaw stores the original TXT records for each mDNS row so the
 	// right-click "Copy raw data" option can reproduce the full record.
@@ -202,6 +274,7 @@ var (
 func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	if !inRepopulate {
 		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
+		bcastIPLastSeen[ip] = time.Now()
 		// Respect the active search filter: skip the listview insert if this
 		// entry doesn't match.  It stays in mdnsBackup for later repopulation.
 		if f := strings.ToLower(tabSearchFilter[1]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
@@ -249,6 +322,9 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 
 	// col 5: remaining useful key:value pairs
 	setSubItem(hwnd, row, 5, mdnsNotes(txt))
+
+	// col 6: last broadcast seen (relative age)
+	setSubItem(hwnd, row, 6, fmtRelativeAge(bcastIPLastSeen[ip]))
 }
 
 // mdnsCleanName removes DNS label backslash escapes and strips the leading
@@ -389,6 +465,7 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	// Accumulate raw data (skip during repopulate — data is already present).
 	if !inRepopulate {
 		ssdpRawData[ip] = append(ssdpRawData[ip], svc)
+		bcastIPLastSeen[ip] = time.Now()
 	}
 
 	loc, server := "", ""
@@ -450,6 +527,7 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	setSubItem(hwnd, row, 2, ssdpPrettyType(svc.Type))
 	ssdpUpdateServices(hwnd, row, ip)
 	setSubItem(hwnd, row, 4, loc)
+	setSubItem(hwnd, row, 5, fmtRelativeAge(bcastIPLastSeen[ip]))
 }
 
 // ssdpUpdateServices rebuilds the Services column for a row from accumulated data.
@@ -583,6 +661,7 @@ func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	// Accumulate raw data (skip during repopulate — data is already present).
 	if !inRepopulate {
 		wsdRawData[ip] = append(wsdRawData[ip], svc)
+		bcastIPLastSeen[ip] = time.Now()
 	}
 
 	dev := scan.WsdServiceInfoToDevice(svc)
@@ -633,6 +712,7 @@ func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		ep = "—"
 	}
 	setSubItem(hwnd, row, 4, ep)
+	setSubItem(hwnd, row, 5, fmtRelativeAge(bcastIPLastSeen[ip]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1114,21 +1194,21 @@ func restoreAllColumns() {
 // Edit Columns dialog uses them for checkbox labels.
 
 var (
-	mdnsColTitles = []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes"}
-	mdnsDefWidths = []int32{120, 210, 130, 180, 170, 300}
-	mdnsColVis    = []bool{true, true, true, true, true, true}
+	mdnsColTitles = []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes", "Last Seen"}
+	mdnsDefWidths = []int32{120, 210, 130, 180, 170, 260, 80}
+	mdnsColVis    = []bool{true, true, true, true, true, true, true}
 	mdnsSortCol   int32 = -1
 	mdnsSortAsc         = true
 
-	ssdpColTitles = []string{"IP", "Server", "Type", "Services", "Location"}
-	ssdpDefWidths = []int32{120, 220, 160, 280, 300}
-	ssdpColVis    = []bool{true, true, true, true, true}
+	ssdpColTitles = []string{"IP", "Server", "Type", "Services", "Location", "Last Seen"}
+	ssdpDefWidths = []int32{120, 220, 160, 280, 260, 80}
+	ssdpColVis    = []bool{true, true, true, true, true, true}
 	ssdpSortCol   int32 = -1
 	ssdpSortAsc         = true
 
-	wsdColTitles = []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID"}
-	wsdDefWidths = []int32{120, 180, 300, 200, 280}
-	wsdColVis    = []bool{true, true, true, true, true}
+	wsdColTitles = []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID", "Last Seen"}
+	wsdDefWidths = []int32{120, 180, 300, 200, 240, 80}
+	wsdColVis    = []bool{true, true, true, true, true, true}
 	wsdSortCol   int32 = -1
 	wsdSortAsc         = true
 

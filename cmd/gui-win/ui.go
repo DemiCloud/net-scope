@@ -466,6 +466,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// proxyEnabled is initialised before the window is created (in Run());
 		// it defaults to true when a SOCKS5 address is saved in settings.
 		createControls(HWND(hwnd))
+		// 30-second timer for broadcast host decay colours and "Last Seen" update.
+		setTimer(HWND(hwnd), IDT_DECAY, 30000, 0)
 		if noConfigFile {
 			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
 		}
@@ -743,7 +745,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 		}
-		// LVN_KEYDOWN is handled above; fall through to custom draw.
 		// Custom draw: alternating row backgrounds, dim dead rows, colour ●/✕ status dot.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_CUSTOMDRAW {
 			cd := (*NMLVCUSTOMDRAW)(unsafe.Pointer(lParam)) //nolint:govet
@@ -789,6 +790,35 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 				return CDRF_NEWFONT
 			}
+		}
+		// Custom draw: broadcast tab decay colours (mDNS / SSDP / WSD).
+		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP || hdr.IdFrom == IDC_LIST_WSD) &&
+			hdr.Code == NM_CUSTOMDRAW {
+			cd := (*NMLVCUSTOMDRAW)(unsafe.Pointer(lParam)) //nolint:govet
+			switch cd.DwDrawStage {
+			case CDDS_PREPAINT:
+				return CDRF_NOTIFYITEMDRAW
+			case CDDS_ITEMPREPAINT:
+				var hwndSrc HWND
+				switch hdr.IdFrom {
+				case IDC_LIST_MDNS:
+					hwndSrc = hwndListMDNS
+				case IDC_LIST_SSDP:
+					hwndSrc = hwndListSSDP
+				case IDC_LIST_WSD:
+					hwndSrc = hwndListWSD
+				}
+				row := int32(cd.DwItemSpec)
+				ip := listViewGetCellText(hwndSrc, row, 0)
+				cd.ClrTextBk = bcastDecayBg(ip, row)
+				return CDRF_NEWFONT
+			}
+		}
+		return 0
+
+	case WM_TIMER:
+		if wParam == IDT_DECAY {
+			refreshBcastLastSeenCols()
 		}
 		return 0
 
@@ -1106,6 +1136,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_DESTROY:
+		killTimer(HWND(hwnd), IDT_DECAY)
 		stopScan()
 		stopService()
 		stopBroadcastListener()
