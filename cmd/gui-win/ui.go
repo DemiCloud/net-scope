@@ -1260,7 +1260,7 @@ func createControls(hwnd HWND) {
 
 	// ---- status bar — 2 parts: Listener state | Service state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
-	setStatusParts(-scale(200))
+	setStatusParts(scale(900)) // will be recalculated on first WM_SIZE
 	listenerText := "Listener starting\u2026"
 	if proxyEnabled {
 		listenerText = "Not listening (proxy mode)"
@@ -1298,7 +1298,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	statusR := getClientRect(hwndStatus)
 	statusH := statusR.Bottom - statusR.Top
 	// 2 parts: Listener state (fills) | Service state (200px fixed right).
-	setStatusParts(-scale(200))
+	setStatusParts(width)
 
 	// Global options bar: Elevate Sensor | Proxy Mode.
 	moveWindow(hwndServiceBtn, scale(8), scale(3), scale(160), scale(26))
@@ -1711,11 +1711,15 @@ func exportResults(hwnd HWND, format string) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// setStatusParts sets the right-edge pixel position for the 2-part status bar.
-// p1 is the right edge of the Listener part; negative = pixels from right edge,
-// so the Service part is always a fixed width. The Listener part fills the rest.
-func setStatusParts(p1 int32) {
-	right := [2]int32{p1, -1}
+// setStatusParts sets the right-edge pixel positions for the 2-part status bar.
+// windowWidth is the current client width; the Service part is a fixed 200px from
+// the right, and the Listener part fills the remainder.
+func setStatusParts(windowWidth int32) {
+	serviceW := scale(200)
+	if windowWidth < serviceW*2 {
+		windowWidth = serviceW * 2
+	}
+	right := [2]int32{windowWidth - serviceW, -1}
 	sendMessage(hwndStatus, SB_SETPARTS, 2, uintptr(unsafe.Pointer(&right[0])))
 }
 
