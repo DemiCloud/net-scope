@@ -520,7 +520,15 @@ func hostDetailCopyFP(hwnd HWND) {
 }
 
 // fpBuildJSON serialises the fingerprint-relevant fields of a scan result as
-// indented JSON. Used by the Copy FP JSON button in the host detail dialog.
+// indented JSON. Used by the Copy Fingerprint button in the host detail dialog.
+//
+// Field semantics:
+//   - string/slice fields with omitempty: absent = not discovered
+//   - icmp_ttl: null = no ICMP response received; number = observed TTL
+//   - latency_ms: null = not measured (e.g. no ICMP); number = round-trip ms
+//   - syn_probe: null = probe ran but no SYN-ACK captured; object = TCP stack data
+//   - banner: null = BannerGrab ran but no recognisable headers; object = banners
+//   - snmp: null = SNMP queried but no response; object = sysDescr etc.
 func fpBuildJSON(r scan.Result) string {
 	type jSYN struct {
 		WindowSize uint16 `json:"window_size"`
@@ -553,14 +561,14 @@ func fpBuildJSON(r scan.Result) string {
 		Vendor       string     `json:"vendor,omitempty"`
 		Hostname     string     `json:"hostname,omitempty"`
 		NetBIOS      string     `json:"netbios,omitempty"`
-		LatencyMs    int64      `json:"latency_ms,omitempty"`
+		LatencyMs    *int64     `json:"latency_ms"`  // null = not measured
 		OpenPorts    []int      `json:"open_ports,omitempty"`
 		OS           string     `json:"os"`
 		OSConfidence uint8      `json:"os_confidence"`
-		ICMPTTL      uint8      `json:"icmp_ttl,omitempty"`
-		SYN          *jSYN      `json:"syn_probe,omitempty"`
-		Banner       *jBanner   `json:"banner,omitempty"`
-		SNMP         *jSNMP     `json:"snmp,omitempty"`
+		ICMPTTL      *uint8     `json:"icmp_ttl"`    // null = no ICMP response
+		SYN          *jSYN      `json:"syn_probe"`   // null = probe ran, no SYN-ACK
+		Banner       *jBanner   `json:"banner"`      // null = grab ran, no headers
+		SNMP         *jSNMP     `json:"snmp"`        // null = queried, no response
 		Services     []jService `json:"services,omitempty"`
 	}
 
@@ -570,14 +578,20 @@ func fpBuildJSON(r scan.Result) string {
 		Vendor:       r.Vendor,
 		Hostname:     r.Hostname,
 		NetBIOS:      r.NetBIOS,
-		LatencyMs:    r.Latency.Milliseconds(),
 		OpenPorts:    r.OpenPorts,
 		OS:           string(r.OS),
 		OSConfidence: r.OSConfidence,
-		ICMPTTL:      r.TTL,
 	}
 	if r.MAC != nil {
 		out.MAC = r.MAC.String()
+	}
+	if r.TTL != 0 {
+		ttl := r.TTL
+		out.ICMPTTL = &ttl
+	}
+	if r.Latency != 0 {
+		ms := r.Latency.Milliseconds()
+		out.LatencyMs = &ms
 	}
 	if r.SYNProbe.WindowSize > 0 {
 		out.SYN = &jSYN{WindowSize: r.SYNProbe.WindowSize, Options: r.SYNProbe.Options}
