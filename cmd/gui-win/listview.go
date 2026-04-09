@@ -1269,55 +1269,116 @@ func applyDHCPSort(_ HWND, col int32, asc bool) {
 // Column-state persistence (snapshot → State / State → restore)
 // ---------------------------------------------------------------------------
 
-// snapshotAllColumnStates collects the current column visibility, pixel widths,
-// and sort state for every tab that has configurable columns.
-// Tab keys: "hosts", "mdns", "ssdp", "wsd", "dhcp".
-func snapshotAllColumnStates() map[string]config.TabColumnState {
-	snapshot := func(hwnd HWND, vis []bool, colTitles []string) config.TabColumnState {
-		n := len(vis)
-		v := make([]bool, n)
-		copy(v, vis)
-		w := listViewGetColumnWidths(hwnd, n)
-		col, asc := getLVSortState(hwnd)
-		_ = colTitles // kept for future per-tab title changes
-		return config.TabColumnState{Visible: v, Widths: w, SortCol: col, SortAsc: asc}
+// colKeys maps each tab's stable column key (persisted to disk) to its
+// column index. Keys are derived from column titles, lowercased and
+// whitespace-collapsed; they must never change after release 1.0.
+// Separate maps per tab to avoid collisions (e.g. "ip" appears in several).
+
+var hostsColKeys = []string{
+	"status",   // colStatus 0
+	"ip",       // colIP     1
+	"hostname", // colHost   2
+	"mac",      // colMAC    3
+	"vendor",   // colVendor 4
+	"os",       // colOS     5
+	"latency",  // colLatency 6
+	"ports",    // colPorts  7
+	"banner",   // colBanner 8
+	"services", // colServices 9
+}
+
+var mdnsColKeys = []string{"ip", "name", "service", "device_model", "capabilities", "notes", "last_seen"}
+var ssdpColKeys = []string{"ip", "server", "type", "services", "location", "last_seen"}
+var wsdColKeys  = []string{"ip", "types", "transport_urls", "scopes", "endpoint_uuid", "last_seen"}
+var dhcpColKeys = []string{"time", "type", "client_mac", "hostname", "client_ip", "requested_ip", "offered_ip", "server_ip"}
+
+// snapshotColState builds a TabColumnState for one listview using named column
+// keys. Any column key in keys[] becomes a Cols entry. Only called on the UI thread.
+func snapshotColState(hwnd HWND, vis []bool, keys []string) config.TabColumnState {
+	widths := listViewGetColumnWidths(hwnd, len(keys))
+	cols := make(map[string]config.ColumnState, len(keys))
+	for i, key := range keys {
+		v := i < len(vis) && vis[i]
+		w := 0
+		if i < len(widths) {
+			w = widths[i]
+		}
+		cols[key] = config.ColumnState{Visible: v, Width: w}
 	}
+	sortCol, sortAsc := getLVSortState(hwnd)
+	var sortColKey *string
+	if sortCol >= 0 && sortCol < len(keys) {
+		k := keys[sortCol]
+		sortColKey = &k
+	}
+	return config.TabColumnState{
+		Cols: cols,
+		Sort: config.SortState{Column: sortColKey, Asc: sortAsc},
+	}
+}
+
+// applyColState restores a TabColumnState onto a listview using named column
+// keys. Unknown keys in st are ignored; missing keys keep their current state.
+// Only called on the UI thread, after columns have been added.
+func applyColState(hwnd HWND, vis []bool, keys []string, colTitles []string, st config.TabColumnState) {
+	if len(st.Cols) > 0 {
+		for i, key := range keys {
+			if i >= len(vis) {
+				break
+			}
+			cs, ok := st.Cols[key]
+			if !ok {
+				continue // missing key → keep default
+			}
+			vis[i] = cs.Visible
+			w := cs.Width
+			if !cs.Visible {
+				w = 0
+			}
+			sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(i), uintptr(uint32(w)))
+		}
+	}
+	// Restore sort: look up the key → index, then apply.
+	sortCol := -1
+	if st.Sort.Column != nil {
+		for i, key := range keys {
+			if key == *st.Sort.Column {
+				sortCol = i
+				break
+			}
+		}
+	}
+	applyLVSortState(hwnd, sortCol, st.Sort.Asc, colTitles)
+}
+
+// snapshotAllColumnStates collects column visibility, pixel widths, and sort
+// state for every tab that has configurable columns, keyed by stable column names.
+func snapshotAllColumnStates() map[string]config.TabColumnState {
 	return map[string]config.TabColumnState{
-		"hosts": snapshot(hwndList, colVisible[:], hostsColTitles[:]),
-		"mdns":  snapshot(hwndListMDNS, mdnsColVis, mdnsColTitles),
-		"ssdp":  snapshot(hwndListSSDP, ssdpColVis, ssdpColTitles),
-		"wsd":   snapshot(hwndListWSD, wsdColVis, wsdColTitles),
-		"dhcp":  snapshot(hwndListDHCP, dhcpColVis, dhcpColTitles),
+		ViewHosts: snapshotColState(hwndList, colVisible[:], hostsColKeys),
+		ViewMDNS:  snapshotColState(hwndListMDNS, mdnsColVis, mdnsColKeys),
+		ViewSSDP:  snapshotColState(hwndListSSDP, ssdpColVis, ssdpColKeys),
+		ViewWSD:   snapshotColState(hwndListWSD, wsdColVis, wsdColKeys),
+		ViewDHCP:  snapshotColState(hwndListDHCP, dhcpColVis, dhcpColKeys),
 	}
 }
 
 // restoreAllColumnStates applies persisted column state for every tab.
-// Entries with mismatched column counts are silently skipped so a schema
-// change never crashes or corrupts the UI.
+// Unknown keys in the file are silently ignored; missing tabs keep defaults.
 func restoreAllColumnStates(m map[string]config.TabColumnState) {
-	apply := func(hwnd HWND, vis []bool, colTitles []string, st config.TabColumnState) {
-		n := len(vis)
-		if len(st.Widths) == n {
-			listViewApplyColumnWidths(hwnd, st.Widths, vis)
-		} else if len(st.Visible) == n {
-			// Older state without widths: honour visibility only.
-			copy(vis, st.Visible)
-		}
-		applyLVSortState(hwnd, st.SortCol, st.SortAsc, colTitles)
+	if st, ok := m[ViewHosts]; ok {
+		applyColState(hwndList, colVisible[:], hostsColKeys, hostsColTitles[:], st)
 	}
-	if st, ok := m["hosts"]; ok {
-		apply(hwndList, colVisible[:], hostsColTitles[:], st)
+	if st, ok := m[ViewMDNS]; ok {
+		applyColState(hwndListMDNS, mdnsColVis, mdnsColKeys, mdnsColTitles, st)
 	}
-	if st, ok := m["mdns"]; ok {
-		apply(hwndListMDNS, mdnsColVis, mdnsColTitles, st)
+	if st, ok := m[ViewSSDP]; ok {
+		applyColState(hwndListSSDP, ssdpColVis, ssdpColKeys, ssdpColTitles, st)
 	}
-	if st, ok := m["ssdp"]; ok {
-		apply(hwndListSSDP, ssdpColVis, ssdpColTitles, st)
+	if st, ok := m[ViewWSD]; ok {
+		applyColState(hwndListWSD, wsdColVis, wsdColKeys, wsdColTitles, st)
 	}
-	if st, ok := m["wsd"]; ok {
-		apply(hwndListWSD, wsdColVis, wsdColTitles, st)
-	}
-	if st, ok := m["dhcp"]; ok {
-		apply(hwndListDHCP, dhcpColVis, dhcpColTitles, st)
+	if st, ok := m[ViewDHCP]; ok {
+		applyColState(hwndListDHCP, dhcpColVis, dhcpColKeys, dhcpColTitles, st)
 	}
 }

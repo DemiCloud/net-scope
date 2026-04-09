@@ -59,7 +59,6 @@ var (
 	hwndServiceBtn  HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
 	hwndProxyCheck  HWND // "Proxy Mode" checkbox
 	// Scan bar (shown only when Hosts tab is active)
-	hwndTargetLabel     HWND // "Target:" static label — hidden on non-Scanner tabs
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
@@ -440,10 +439,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if stateDirPath != "" && len(appState.Columns) > 0 {
 			restoreAllColumnStates(appState.Columns)
 		}
-		// Restore last active tab.
-		if stateDirPath != "" && appState.ActiveTab > 0 {
-			sendMessage(hwndTabCtrl, TCM_SETCURSEL, uintptr(appState.ActiveTab), 0)
-			activateTab(HWND(hwnd), int32(appState.ActiveTab))
+		// Restore last active view by stable name.
+		if stateDirPath != "" && appState.ActiveView != "" {
+			if idx, ok := viewToTabIndex[appState.ActiveView]; ok && idx > 0 {
+				sendMessage(hwndTabCtrl, TCM_SETCURSEL, uintptr(idx), 0)
+				activateTab(HWND(hwnd), idx)
+			}
 		}
 		// 30-second timer for broadcast host decay colours and "Last Seen" update.
 		setTimer(HWND(hwnd), IDT_DECAY, 30000, 0)
@@ -523,11 +524,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// Handles tabs where header NM_RCLICK is reflected to the main window
 		// rather than being intercepted by the listview's subclass WndProc.
 		if hdr.Code == NM_RCLICK {
-			hdrHwnd := HWND(hdr.HwndFrom)
-			lvHwnd := getParent(hdrHwnd)
+			nm := (*NMMOUSE)(unsafe.Pointer(lParam)) //nolint:govet
+			lvHwnd := getParent(HWND(hdr.HwndFrom))
 			if s, ok := lvManagedStates[lvHwnd]; ok && s.colVis != nil {
-				col := headerHitColumn(hdrHwnd)
-				showColumnHeaderMenu(HWND(hwnd), lvHwnd, s, col, getCursorPos())
+				showColumnHeaderMenu(HWND(hwnd), lvHwnd, s, int32(nm.DwItemSpec), getCursorPos())
 				return 0
 			}
 		}
@@ -1028,19 +1028,26 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			var ws config.WindowState
 			if wp, ok := getWindowPlacement(HWND(hwnd)); ok {
 				r := wp.RcNormalPosition
+				winState := "normal"
+				if wp.ShowCmd == SW_SHOWMAXIMIZED {
+					winState = "maximized"
+				}
 				ws = config.WindowState{
-					X:         int(r.Left),
-					Y:         int(r.Top),
-					W:         int(r.Right - r.Left),
-					H:         int(r.Bottom - r.Top),
-					Maximized: wp.ShowCmd == SW_SHOWMAXIMIZED,
-					Valid:     true,
+					X:      int(r.Left),
+					Y:      int(r.Top),
+					Width:  int(r.Right - r.Left),
+					Height: int(r.Bottom - r.Top),
+					State:  winState,
 				}
 			}
+			activeView := ViewHosts
+			if activeTab >= 0 && activeTab < len(tabIndexToView) {
+				activeView = tabIndexToView[activeTab]
+			}
 			config.SaveState(stateDirPath, config.State{
-				Window:    ws,
-				ActiveTab: activeTab,
-				Columns:   snapshotAllColumnStates(),
+				Window:     ws,
+				ActiveView: activeView,
+				Columns:    snapshotAllColumnStates(),
 			})
 		}
 		killTimer(HWND(hwnd), IDT_DECAY)
@@ -1083,7 +1090,6 @@ func activateTab(hwnd HWND, tab int32) {
 	// On Hosts tab the scan bar is visible and the list sits below it;
 	// on all other tabs the list fills from just below the tab strip.
 	if tab == 0 {
-		showWindow(hwndTargetLabel, SW_SHOW)
 		showWindow(hwndTarget, SW_SHOW)
 		showWindow(hwndDetect, SW_SHOW)
 		showWindow(hwndScan, SW_SHOW)
@@ -1106,7 +1112,6 @@ func activateTab(hwnd HWND, tab int32) {
 			showWindow(hwndListPlaceholder, SW_SHOW)
 		}
 	} else {
-		showWindow(hwndTargetLabel, SW_HIDE)
 		showWindow(hwndTarget, SW_HIDE)
 		showWindow(hwndDetect, SW_HIDE)
 		showWindow(hwndScan, SW_HIDE)
@@ -1198,7 +1203,7 @@ func createControls(hwnd HWND) {
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
 	scanBarY := scale(elevBarH + tabCtrlH)
-	hwndTargetLabel = createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
+	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
 		scale(58), scanBarY+scale(6), scale(460), scale(22), hwnd, IDC_TARGET, inst)

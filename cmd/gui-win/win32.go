@@ -128,6 +128,43 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// Stable view identifiers (used in state.json active_view and column keys)
+// ---------------------------------------------------------------------------
+
+// These strings are persisted to disk; do not rename them.
+const (
+	ViewHosts   = "hosts"
+	ViewMDNS    = "mdns"
+	ViewSSDP    = "ssdp"
+	ViewWSD     = "wsd"
+	ViewDHCP    = "dhcp"
+	ViewNetwork = "network"
+	ViewHealth  = "health"
+)
+
+// tabIndexToView maps a tab control index to its stable view identifier.
+// Index must be kept in sync with the TCM_INSERTITEM calls in createControls.
+var tabIndexToView = []string{
+	ViewHosts,   // 0
+	ViewMDNS,    // 1
+	ViewSSDP,    // 2
+	ViewWSD,     // 3
+	ViewDHCP,    // 4
+	ViewNetwork, // 5
+	ViewHealth,  // 6
+}
+
+// viewToTabIndex is the reverse map, built once at init time.
+var viewToTabIndex map[string]int32
+
+func init() {
+	viewToTabIndex = make(map[string]int32, len(tabIndexToView))
+	for i, v := range tabIndexToView {
+		viewToTabIndex[v] = int32(i)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Elevation helper
 // ---------------------------------------------------------------------------
 

@@ -113,16 +113,16 @@ func Run(v, target string) {
 	// the window off-screen (e.g. after a monitor is disconnected).
 	winX, winY := CW_USEDEFAULT, CW_USEDEFAULT
 	winW, winH := int32(1160), int32(700)
-	if ws := appState.Window; ws.Valid {
+	if ws := appState.Window; ws.Width > 0 {
 		rc := RECT{
 			Left:   int32(ws.X),
 			Top:    int32(ws.Y),
-			Right:  int32(ws.X + ws.W),
-			Bottom: int32(ws.Y + ws.H),
+			Right:  int32(ws.X + ws.Width),
+			Bottom: int32(ws.Y + ws.Height),
 		}
 		if monitorFromRect(&rc, MONITOR_DEFAULTTONULL) != 0 {
 			winX, winY = int32(ws.X), int32(ws.Y)
-			winW, winH = int32(ws.W), int32(ws.H)
+			winW, winH = int32(ws.Width), int32(ws.Height)
 		}
 	}
 
@@ -177,7 +177,7 @@ func Run(v, target string) {
 
 	setMenu(hwnd, hMenu)
 
-	if appState.Window.Maximized {
+	if appState.Window.State == "maximized" {
 		showWindow(hwnd, SW_SHOWMAXIMIZED)
 	} else {
 		showWindow(hwnd, SW_SHOWNORMAL)

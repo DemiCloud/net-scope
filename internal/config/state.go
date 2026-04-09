@@ -11,6 +11,7 @@ const StateFile = "state.json"
 
 // stateVersion is incremented when the State schema changes incompatibly.
 // Mismatched versions are silently discarded and defaults are used.
+// Do not bump until after release 1.0.
 const stateVersion = 1
 
 // State holds transient UI state that survives process restarts.
@@ -23,41 +24,54 @@ const stateVersion = 1
 //   - State is written automatically; Config is only written on explicit save.
 //   - Mixing them would make diffs of config.toml noisy.
 type State struct {
-	Version   int                       `json:"v"`
-	Window    WindowState               `json:"window"`
-	ActiveTab int                       `json:"active_tab"`
-	Columns   map[string]TabColumnState `json:"columns,omitempty"`
+	Version    int                       `json:"version"`
+	Window     WindowState               `json:"window,omitempty"`
+	ActiveView string                    `json:"active_view,omitempty"`
+	Columns    map[string]TabColumnState `json:"columns,omitempty"`
 }
 
-// WindowState captures the main window geometry and maximized flag.
-// Valid is false for the zero value; the GUI falls back to defaults when false.
+// WindowState captures main window geometry and show state.
+// Window placement validity is computed at restore time by checking against
+// the current monitor layout — it is not stored in the file.
+// Zero value (Width == 0) means "no saved state"; the GUI uses CW_USEDEFAULT.
 type WindowState struct {
-	X         int  `json:"x"`
-	Y         int  `json:"y"`
-	W         int  `json:"w"`
-	H         int  `json:"h"`
-	Maximized bool `json:"maximized"`
-	Valid     bool `json:"valid"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	// State is "normal" or "maximized". Unknown values are treated as "normal".
+	State  string `json:"state,omitempty"`
 }
 
-// TabColumnState holds per-tab column persistence data.
+// TabColumnState holds per-tab column persistence keyed by stable column IDs.
+// Using named keys instead of parallel arrays means adding, removing, or
+// reordering columns does not corrupt existing persisted state — unknown keys
+// are silently ignored and missing keys use application defaults.
 type TabColumnState struct {
-	// Visible[i] is false when the user has hidden column i.
-	Visible []bool `json:"visible,omitempty"`
-	// Widths[i] is the column width in Win32 device pixels (0 for hidden columns).
-	Widths []int `json:"widths,omitempty"`
-	// SortCol is the sorted column index, or -1 when unsorted.
-	SortCol int  `json:"sort_col"`
-	SortAsc bool `json:"sort_asc"`
+	// Cols maps a stable column key to its visual state.
+	Cols map[string]ColumnState `json:"cols,omitempty"`
+	Sort SortState              `json:"sort"`
+}
+
+// ColumnState holds the visibility and device-pixel width of one column.
+type ColumnState struct {
+	Visible bool `json:"visible"`
+	Width   int  `json:"width"`
+}
+
+// SortState identifies the sorted column by its stable string key.
+// Column is nil (JSON null) when the view is unsorted.
+type SortState struct {
+	Column *string `json:"column"`
+	Asc    bool    `json:"asc"`
 }
 
 // DefaultState returns the baseline: default window placement, Hosts tab
 // active, all columns visible at their default widths, no sort applied.
 func DefaultState() State {
 	return State{
-		Version:   stateVersion,
-		ActiveTab: 0,
-		Window:    WindowState{}, // Valid = false → GUI uses CW_USEDEFAULT
+		Version:    stateVersion,
+		ActiveView: "hosts",
 	}
 }
 
@@ -81,12 +95,13 @@ func LoadState(dir string) State {
 // SaveState writes s atomically to state.json in dir (temp file → rename).
 // Errors are silently discarded — state loss on a single exit is not critical.
 // dir == "" is a no-op (no config file was found at startup).
+// The file is pretty-printed for human debuggability.
 func SaveState(dir string, s State) {
 	if dir == "" {
 		return
 	}
 	s.Version = stateVersion
-	data, err := json.Marshal(s)
+	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return
 	}
