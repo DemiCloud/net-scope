@@ -1175,16 +1175,14 @@ func createControls(hwnd HWND) {
 
 	// ---- global options bar (top strip) ----
 	// "Elevate Sensor" button on the left.
-	hwndServiceBtn, _ = createWindowEx(0, "BUTTON", "Elevate Sensor",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		scale(8), scale(3), scale(160), scale(26), hwnd, IDC_SERVICE_BTN, inst)
+	hwndServiceBtn = makePushButton(hwnd, "Elevate Sensor", IDC_SERVICE_BTN,
+		scale(8), scale(3), scale(160), scale(26))
 	if elevated {
 		enableWindow(hwndServiceBtn, false)
 	}
 	// "Proxy Mode" checkbox next to service button; grayed if no proxy is configured.
-	hwndProxyCheck, _ = createWindowEx(0, "BUTTON", "Proxy Mode",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		scale(180), scale(5), scale(120), scale(22), hwnd, IDC_PROXY_CHECK, inst)
+	hwndProxyCheck = makeCheckBox(hwnd, "Proxy Mode", IDC_PROXY_CHECK,
+		scale(180), scale(5), scale(120), scale(22))
 	if appConfig.Scan.SOCKSProxy == "" {
 		enableWindow(hwndProxyCheck, false)
 	} else if proxyEnabled {
@@ -1210,16 +1208,15 @@ func createControls(hwnd HWND) {
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
 		scale(58), scanBarY+scale(6), scale(460), scale(22), hwnd, IDC_TARGET, inst)
-	hwndDetect, _ = createWindowEx(0, "BUTTON", "\u27f2",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(524), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
+	hwndDetect = makePushButton(hwnd, "\u27f2", IDC_DETECT,
+		scale(524), scanBarY+scale(5), scale(34), scale(24))
 	hwndScanStatus, _ = createWindowEx(WS_EX_STATICEDGE, "STATIC", "Ready to scan",
 		WS_CHILD|WS_VISIBLE|SS_CENTER,
 		scale(566), scanBarY+scale(6), scale(160), scale(22), hwnd, 0, inst)
-	hwndActiveOnly, _ = createWindowEx(0, "BUTTON", "Active only",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		scale(734), scanBarY+scale(6), scale(110), scale(22), hwnd, IDC_ACTIVE_ONLY, inst)
-	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(852), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
+	hwndActiveOnly = makeCheckBox(hwnd, "Active only", IDC_ACTIVE_ONLY,
+		scale(734), scanBarY+scale(6), scale(110), scale(22))
+	hwndScan = makePushButton(hwnd, "Scan", IDC_SCAN,
+		scale(852), scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)

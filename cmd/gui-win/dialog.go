@@ -167,20 +167,17 @@ func createSettingsControls(hwnd HWND) {
 
 	// Ping First checkbox
 	checkY := y0 + int32(len(fields))*rh + 4
-	hwndSettPingFirst, _ = createWindowEx(0, "BUTTON",
+	hwndSettPingFirst = makeCheckBox(hwnd,
 		"Ping First  (ICMP fallback when ARP misses a host)",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		lx, checkY, lw+ew, 22, hwnd, HMENU(idSettPingFirst), inst)
+		idSettPingFirst, lx, checkY, lw+ew, 22)
 
-	hwndSettBanner, _ = createWindowEx(0, "BUTTON",
+	hwndSettBanner = makeCheckBox(hwnd,
 		"Banner Grab  (HTTP Server header, SSH version, FTP/SMTP greeting)",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		lx, checkY+28, lw+ew, 22, hwnd, HMENU(idSettBannerGrab), inst)
+		idSettBannerGrab, lx, checkY+28, lw+ew, 22)
 
-	hwndSettNetBIOS, _ = createWindowEx(0, "BUTTON",
+	hwndSettNetBIOS = makeCheckBox(hwnd,
 		"NetBIOS Queries  (Windows computer names via UDP 137)",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
-		lx, checkY+56, lw+ew, 22, hwnd, HMENU(idSettNetBIOS), inst)
+		idSettNetBIOS, lx, checkY+56, lw+ew, 22)
 
 	// Config file path (informational) — allow 3 lines for long paths
 	hwndSettPath, _ = createWindowEx(0, "STATIC", "",
@@ -189,12 +186,9 @@ func createSettingsControls(hwnd HWND) {
 
 	// Protocol Handlers button + OK / Cancel — below path label + 8px gap
 	btnY := checkY + 132
-	createCtrl("BUTTON", "Protocol Handlers\u2026", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		lx, btnY, 140, 26, hwnd, idSettProtoHandlers, inst)
-	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		306, btnY, 78, 26, hwnd, idSettOK, inst)
-	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		392, btnY, 78, 26, hwnd, idSettCancel, inst)
+	makePushButton(hwnd, "Protocol Handlers\u2026", idSettProtoHandlers, lx, btnY, 140, 26)
+	makePushButton(hwnd, "OK", idSettOK, 306, btnY, 78, 26)
+	makePushButton(hwnd, "Cancel", idSettCancel, 392, btnY, 78, 26)
 }
 
 // applySettings reads and validates the dialog values, applies them to memory,
@@ -388,9 +382,7 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	createCtrl("STATIC", "  "+appDataPath,
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 28, dlg, 0, inst)
 	y += 32
-	createCtrl("BUTTON", "Save to AppData",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		14, y, 160, 26, dlg, idCfgAppData, inst)
+	makePushButton(dlg, "Save to AppData", idCfgAppData, 14, y, 160, 26)
 	y += 38
 
 	createCtrl("STATIC", "Option 2 — Beside the executable (portable):",
@@ -399,17 +391,13 @@ func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	createCtrl("STATIC", "  "+exePath,
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 28, dlg, 0, inst)
 	y += 32
-	createCtrl("BUTTON", "Save beside exe",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		14, y, 160, 26, dlg, idCfgExeDir, inst)
+	makePushButton(dlg, "Save beside exe", idCfgExeDir, 14, y, 160, 26)
 	y += 38
 
 	createCtrl("STATIC", "Option 3 — Don't save (settings apply this session only):",
 		WS_CHILD|WS_VISIBLE, 14, y, dlgW-28, 18, dlg, 0, inst)
 	y += 22
-	createCtrl("BUTTON", "Don't save",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		14, y, 160, 26, dlg, idCfgNeither, inst)
+	makePushButton(dlg, "Don't save", idCfgNeither, 14, y, 160, 26)
 
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
@@ -475,12 +463,8 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 		hwndVerBody = createDlgBodyEdit(HWND(hwnd), inst, body, pad, bodyY, cW-pad*2, bodyH)
 
 		// Button row: Copy on the left, Close on the right.
-		createCtrl("BUTTON", "Copy to Clipboard",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			pad, btnY, 140, 26, HWND(hwnd), idVerCopy, inst)
-		createCtrl("BUTTON", "Close",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			cW-pad-100, btnY, 100, 26, HWND(hwnd), idVerClose, inst)
+		makePushButton(HWND(hwnd), "Copy to Clipboard", idVerCopy, pad, btnY, 140, 26)
+		makeDefPushButton(HWND(hwnd), "Close", idVerClose, cW-pad-100, btnY, 100, 26)
 
 		dpi := getDpiForWindow(HWND(hwnd))
 		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
@@ -652,14 +636,10 @@ func createDatabasesControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE, lx, y, cw, 36, hwnd, 0, inst)
 	y += 46
 
-	hwndDBDownload, _ = createWindowEx(0, "BUTTON", "Download updated database",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		lx, y, 210, 26, hwnd, idDBDownload, inst)
+	hwndDBDownload = makePushButton(hwnd, "Download updated database", idDBDownload, lx, y, 210, 26)
 
 	// ── Close button — same right margin as Download has left margin ─────────
-	createCtrl("BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cw-80, y, 80, 26, hwnd, idDBClose, inst)
+	makePushButton(hwnd, "Close", idDBClose, cw-80, y, 80, 26)
 }
 
 // ---------------------------------------------------------------------------
@@ -723,10 +703,7 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 			HWND(hwnd), 0, inst)
 
 		btnY, btnXs := dlgBottomRight(cW, cH, 1)
-		createWindowEx(0, "BUTTON", "OK",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			btnXs[0], btnY, 100, 26,
-			HWND(hwnd), HMENU(idAboutOK), inst)
+		makeDefPushButton(HWND(hwnd), "OK", idAboutOK, btnXs[0], btnY, 100, 26)
 
 		dpi := getDpiForWindow(HWND(hwnd))
 		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
@@ -1043,10 +1020,8 @@ func createProtoHandlerControls(hwnd HWND) {
 
 	// Buttons.
 	btnY := hintY + 26
-	createCtrl("BUTTON", "OK", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-174, btnY, 78, 26, hwnd, idProtoOK, inst)
-	createCtrl("BUTTON", "Cancel", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-86, btnY, 78, 26, hwnd, idProtoCancel, inst)
+	makePushButton(hwnd, "OK", idProtoOK, cW-pad-174, btnY, 78, 26)
+	makePushButton(hwnd, "Cancel", idProtoCancel, cW-pad-86, btnY, 78, 26)
 }
 
 // applyProtoHandlers reads the edit fields and stores non-empty values into
@@ -1177,10 +1152,8 @@ func createConnHandlersControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE, pad, hintY, cW-pad*2, 16, hwnd, 0, inst)
 
 	btnY := hintY + 28
-	createCtrl("BUTTON", "Configure\u2026", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad, btnY, 110, 26, hwnd, idConnHandlersConfigure, inst)
-	createCtrl("BUTTON", "Close", WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-86, btnY, 78, 26, hwnd, idConnHandlersClose, inst)
+	makePushButton(hwnd, "Configure\u2026", idConnHandlersConfigure, pad, btnY, 110, 26)
+	makePushButton(hwnd, "Close", idConnHandlersClose, cW-pad-86, btnY, 78, 26)
 }
 
 func showConnHandlersDialog(parent HWND) {

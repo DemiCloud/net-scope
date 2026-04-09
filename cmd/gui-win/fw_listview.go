@@ -703,17 +703,15 @@ func showEditColumnsDialog(parent, hwndLV HWND, colTitles []string, colVis []boo
 func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_CREATE:
-		sendMessage(HWND(hwnd), WM_SETFONT, uintptr(appFont), 1)
 		n := int32(len(editColsDlgState.colTitles))
 
 		// One checkbox per column 1..n-1 (col 0 is always visible).
 		for col := int32(1); col < n; col++ {
 			y := scale(12) + (col-1)*scale(26)
-			editColsChecks[col], _ = createWindowEx(0, "BUTTON", editColsDlgState.colTitles[col],
-				WS_CHILD|WS_VISIBLE|BS_AUTOCHECKBOX,
-				scale(12), y, scale(240), scale(22),
-				HWND(hwnd), HMENU(IDC_EDITCOLS_COL_BASE+int(col)), getModuleHandle())
-			sendMessage(editColsChecks[col], WM_SETFONT, uintptr(appFont), 1)
+			editColsChecks[col] = makeCheckBox(HWND(hwnd),
+				editColsDlgState.colTitles[col],
+				HMENU(IDC_EDITCOLS_COL_BASE+int(col)),
+				scale(12), y, scale(240), scale(22))
 			check := BST_UNCHECKED
 			if editColsDlgState.colVis[col] {
 				check = BST_CHECKED
@@ -728,21 +726,10 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		// Button row: Restore Defaults left, Cancel + OK right.
 		cr := getClientRect(HWND(hwnd))
 		btnY, leftXs, rightXs := dlgButtonRowSplit(cr.Right-cr.Left, cr.Bottom-cr.Top, 1, 2)
-		okHwnd, _ := createWindowEx(0, "BUTTON", "OK",
-			WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
-			rightXs[0], btnY, 100, 26,
-			HWND(hwnd), HMENU(IDC_EDITCOLS_OK), getModuleHandle())
-		sendMessage(okHwnd, WM_SETFONT, uintptr(appFont), 1)
-		cancelHwnd, _ := createWindowEx(0, "BUTTON", "Cancel",
-			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-			rightXs[1], btnY, 100, 26,
-			HWND(hwnd), HMENU(IDC_EDITCOLS_CANCEL), getModuleHandle())
-		sendMessage(cancelHwnd, WM_SETFONT, uintptr(appFont), 1)
-		restoreHwnd, _ := createWindowEx(0, "BUTTON", "Restore Defaults",
-			WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-			leftXs[0], btnY, 100, 26,
-			HWND(hwnd), HMENU(IDC_EDITCOLS_RESTORE), getModuleHandle())
-		sendMessage(restoreHwnd, WM_SETFONT, uintptr(appFont), 1)
+		makeDefPushButton(HWND(hwnd), "OK", IDC_EDITCOLS_OK, rightXs[0], btnY, 100, 26)
+		makePushButton(HWND(hwnd), "Cancel", IDC_EDITCOLS_CANCEL, rightXs[1], btnY, 100, 26)
+		// "Restore Defaults" is wider than the standard 100 px to give the label room to breathe.
+		makePushButton(HWND(hwnd), "Restore Defaults", IDC_EDITCOLS_RESTORE, leftXs[0], btnY, 130, 26)
 		return 0
 
 	case WM_COMMAND:

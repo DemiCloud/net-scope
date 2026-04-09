@@ -197,6 +197,42 @@ func ctlColorDlgBody(hdc uintptr) uintptr {
 }
 
 // ---------------------------------------------------------------------------
+// Button factories
+// ---------------------------------------------------------------------------
+
+// makePushButton creates a WS_TABSTOP|BS_PUSHBUTTON child button, applies
+// appFont, and returns the HWND. Callers do not need a separate WM_SETFONT
+// call.
+func makePushButton(parent HWND, text string, id HMENU, x, y, w, h int32) HWND {
+	hw, _ := createWindowEx(0, "BUTTON", text,
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
+		x, y, w, h, parent, id, getModuleHandle())
+	sendMessage(hw, WM_SETFONT, uintptr(appFont), 1)
+	return hw
+}
+
+// makeDefPushButton creates a WS_TABSTOP|BS_DEFPUSHBUTTON child button.
+// The default button is activated by the Enter key inside the dialog.
+// appFont is applied immediately.
+func makeDefPushButton(parent HWND, text string, id HMENU, x, y, w, h int32) HWND {
+	hw, _ := createWindowEx(0, "BUTTON", text,
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
+		x, y, w, h, parent, id, getModuleHandle())
+	sendMessage(hw, WM_SETFONT, uintptr(appFont), 1)
+	return hw
+}
+
+// makeCheckBox creates a WS_TABSTOP|BS_AUTOCHECKBOX child button and applies
+// appFont. Use BM_SETCHECK / BM_GETCHECK to read and write the toggle state.
+func makeCheckBox(parent HWND, text string, id HMENU, x, y, w, h int32) HWND {
+	hw, _ := createWindowEx(0, "BUTTON", text,
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+		x, y, w, h, parent, id, getModuleHandle())
+	sendMessage(hw, WM_SETFONT, uintptr(appFont), 1)
+	return hw
+}
+
+// ---------------------------------------------------------------------------
 // Button layout helpers
 // ---------------------------------------------------------------------------
 
