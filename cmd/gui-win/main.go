@@ -132,8 +132,7 @@ func Run(v, target string) {
 	appendMenu(hMenu, MF_POPUP, uintptr(hOptions), "&Options")
 
 	hHosts := createPopupMenu()
-	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_ALL, "View &All Hosts…")
-	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_HOST, "&Query Host…")
+	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_HOST, "&Hosts\u2026")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")
 
 	hHelp := createPopupMenu()

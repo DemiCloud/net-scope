@@ -906,8 +906,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showSettingsDialog(HWND(hwnd))
 		case IDM_OPT_DATABASES:
 			showDatabasesDialog(HWND(hwnd))
-		case IDM_HOSTS_VIEW_ALL:
-			showAllHostsDialog(HWND(hwnd))
 		case IDM_HOSTS_VIEW_HOST:
 			showPickHostDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:

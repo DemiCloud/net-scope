@@ -141,6 +141,12 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		return 0
 
 	case WM_CTLCOLORSTATIC:
+		// The obs empty-state overlay should appear as gray text on white background.
+		if HWND(lParam) == hwndHostObsHint {
+			setBkMode(wParam, TRANSPARENT)
+			setTextColor(wParam, 0x00999999)
+			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		}
 		return ctlColorDialog(wParam)
 
 	case WM_CTLCOLOREDIT:
@@ -214,7 +220,7 @@ func hostDetailClose(hwnd HWND) {
 func buildStatusLine(ip string) string {
 	e, ok := hostRegistry[ip]
 	if !ok {
-		return "No prior data  \u2014  manually entered address"
+		return "No prior data"
 	}
 
 	var parts []string
@@ -259,56 +265,37 @@ func buildStatusLine(ip string) string {
 	return strings.Join(parts, "   \u00b7   ")
 }
 
-// showConnectMenu builds a dynamic protocol menu anchored below the Connect
-// button. Items are sorted by evidence: ports confirmed open appear first;
-// plausible-but-unconfirmed ports appear in a "More options" sub-menu.
-// Telnet is always relegated to More options regardless of evidence.
+// showConnectMenu builds a flat protocol menu anchored below the Connect
+// button. Items that have a confirmed-open port are enabled; items whose
+// port hasn't appeared in a scan result are grayed out. Port numbers are
+// not shown in the labels — the user picks by protocol name.
 func showConnectMenu(hwnd HWND) {
 	type entry struct {
-		port    int
-		proto   string
-		label   string
-		id      int32
-		legacy  bool // always demoted to More
+		port  int
+		proto string
+		label string
+		id    int32
 	}
 	candidates := []entry{
-		{443, "https", "HTTPS  (port 443)", idHostConnHTTPS, false},
-		{80, "http", "HTTP  (port 80)", idHostConnHTTP, false},
-		{22, "ssh", "SSH  (port 22)", idHostConnSSH, false},
-		{3389, "rdp", "RDP  (port 3389)", idHostConnRDP, false},
-		{445, "smb", "SMB  (port 445)", idHostConnSMB, false},
-		{21, "ftp", "FTP  (port 21)", idHostConnFTP, false},
-		{23, "telnet", "Telnet  (port 23)", idHostConnTelnet, true},
+		{443, "https", "HTTPS", idHostConnHTTPS},
+		{80, "http", "HTTP", idHostConnHTTP},
+		{22, "ssh", "SSH", idHostConnSSH},
+		{3389, "rdp", "RDP", idHostConnRDP},
+		{445, "smb", "SMB", idHostConnSMB},
+		{21, "ftp", "FTP", idHostConnFTP},
+		{23, "telnet", "Telnet", idHostConnTelnet},
 	}
 
 	e, known := hostRegistry[currentDetailIP]
 
-	var confirmed, other []entry
-	for _, c := range candidates {
-		if c.legacy {
-			other = append(other, c)
-			continue
-		}
-		if !known || portOpen(e.Result, c.port) {
-			confirmed = append(confirmed, c)
-		} else {
-			other = append(other, c)
-		}
-	}
-
 	menu := createPopupMenu()
-	for _, c := range confirmed {
-		appendMenu(menu, MF_STRING, uintptr(c.id), c.label)
-	}
-	if len(other) > 0 {
-		if len(confirmed) > 0 {
-			appendMenu(menu, MF_SEPARATOR, 0, "")
+	for _, c := range candidates {
+		flags := uint32(MF_STRING)
+		// Gray out if we have scan data and this port wasn't found open.
+		if known && e.HasResult && !portOpen(e.Result, c.port) {
+			flags |= MF_GRAYED
 		}
-		moreSub := createPopupMenu()
-		for _, c := range other {
-			appendMenu(moreSub, MF_STRING, uintptr(c.id), c.label)
-		}
-		appendMenu(menu, MF_POPUP, uintptr(moreSub), "More options")
+		appendMenu(menu, flags, uintptr(c.id), c.label)
 	}
 
 	cmd := popupMenuFromButton(hwnd, menu, hwndHostConnect)
@@ -322,11 +309,29 @@ func showConnectMenu(hwnd HWND) {
 	}
 }
 
+// hasFPData returns true when the host has enough fingerprint data to make
+// the "Copy OS Fingerprint" option meaningful (OS guess, TCP SYN info, banners,
+// or SNMP identity).
+func hasFPData(ip string) bool {
+	e, ok := hostRegistry[ip]
+	if !ok {
+		return false
+	}
+	r := e.Result
+	return string(r.OS) != "" || r.SYNProbe.WindowSize > 0 ||
+		r.Banner.SSH != "" || r.Banner.HTTP != "" || r.Banner.HTTPS != "" ||
+		r.Banner.TLSCert != "" || r.SNMP != nil
+}
+
 // showCopyMenu shows a dropdown from the footer Copy ▾ button.
 func showCopyMenu(hwnd HWND) {
+	fpFlags := uint32(MF_STRING)
+	if !hasFPData(currentDetailIP) {
+		fpFlags |= MF_GRAYED
+	}
 	menu := createPopupMenu()
 	appendMenu(menu, MF_STRING, idHostCopyReport, "Report")
-	appendMenu(menu, MF_STRING, idHostCopyFP, "OS Fingerprint")
+	appendMenu(menu, fpFlags, idHostCopyFP, "OS Fingerprint")
 	cmd := popupMenuFromButton(hwnd, menu, hwndHostCopyBtn)
 	destroyMenu(menu)
 	switch int32(cmd) {
@@ -403,6 +408,13 @@ func showHostDetailDialog(parent HWND, ip string) {
 	}
 	centerOnParent(dlg, parent, dlgW, dlgH)
 
+	// Auto-create a minimal registry entry so probe/scan results are persisted
+	// for manually entered addresses that aren't yet in the session registry.
+	if _, ok := hostRegistry[ip]; !ok {
+		hostRegistry[ip] = &hostEntry{LastSeen: time.Now()}
+		postMessage(hwndMain, WM_SCAN_RESULT, 0, 0) // refresh main host list
+	}
+
 	// Fill identity section: status line + summary body.
 	setWindowText(hwndHostStatus, buildStatusLine(ip))
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
@@ -461,21 +473,21 @@ func createHostDetailControls(hwnd HWND) {
 	const actionBtnH int32 = 28
 	const actionGap  int32 = 6
 
+	hwndHostScanBtn, _ = createWindowEx(0, "BUTTON", "Scan",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		pad, y, 70, actionBtnH, hwnd, HMENU(idHostScan), inst)
+
 	hwndHostConnect, _ = createWindowEx(0, "BUTTON", "Connect \u25be",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad, y, 100, actionBtnH, hwnd, HMENU(idHostConnect), inst)
+		pad+70+actionGap, y, 100, actionBtnH, hwnd, HMENU(idHostConnect), inst)
 
 	hwndHostProbesBtn, _ = createWindowEx(0, "BUTTON", "Probes",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+100+actionGap, y, 80, actionBtnH, hwnd, HMENU(idHostProbes), inst)
-
-	hwndHostScanBtn, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+100+actionGap+80+actionGap, y, 70, actionBtnH, hwnd, HMENU(idHostScan), inst)
+		pad+70+actionGap+100+actionGap, y, 80, actionBtnH, hwnd, HMENU(idHostProbes), inst)
 
 	hwndHostDiagBtn, _ = createWindowEx(0, "BUTTON", "Diagnostics",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+100+actionGap+80+actionGap+70+actionGap, y, 110, actionBtnH, hwnd, HMENU(idHostDiagnostics), inst)
+		pad+70+actionGap+100+actionGap+80+actionGap, y, 110, actionBtnH, hwnd, HMENU(idHostDiagnostics), inst)
 
 	y += actionBtnH + 8
 
@@ -486,13 +498,6 @@ func createHostDetailControls(hwnd HWND) {
 	createCtrl("STATIC", "Observations", WS_CHILD|WS_VISIBLE,
 		pad, y+3, 100, 14, hwnd, 0, inst)
 	y += 20
-
-	// Empty-state hint: shown until the first observation row is inserted.
-	hwndHostObsHint, _ = createWindowEx(0, "STATIC",
-		"No observations yet  \u2014  use Scan or Probes to gather evidence.",
-		WS_CHILD|WS_VISIBLE,
-		pad+2, y, cW-pad*2-4, 18, hwnd, 0, inst)
-	y += 22
 
 	// Observations listview: heterogeneous rows (ports, banners, services, OS…).
 	const btnRowH int32 = pad + 28 + pad
@@ -514,6 +519,11 @@ func createHostDetailControls(hwnd HWND) {
 	listViewAddColumn(hwndHostProbeList, 1, "Target", colTargetW)
 	listViewAddColumn(hwndHostProbeList, 2, "Source", colSourceW)
 	listViewAddColumn(hwndHostProbeList, 3, "Result", cW-pad*2-colTypeW-colTargetW-colSourceW-4)
+
+	// Empty-state overlay: floats on top of the listview when no rows are present.
+	hwndHostObsHint, _ = createWindowEx(0, "STATIC", "No data yet",
+		WS_CHILD|WS_VISIBLE|SS_CENTER,
+		pad, y+(obsListH-18)/2, cW-pad*2, 18, hwnd, 0, inst)
 
 	// Footer: [ Copy ▾ ]  [ Forget Host ]  ·····  [ Close ]
 	// Copy starts disabled; enabled once observations exist.
@@ -877,7 +887,7 @@ func buildHostSummary(ip string) string {
 	e := hostRegistry[ip]
 	if e == nil {
 		sb.WriteString("IP:         " + ip + "\r\n")
-		sb.WriteString("State:      Manually entered  \u2014  no observations yet\r\n")
+		sb.WriteString("State:      No data yet\r\n")
 		sb.WriteString("OS:         Unknown\r\n")
 		return sb.String()
 	}
@@ -1104,7 +1114,7 @@ func showProbesDialog(parent HWND) {
 	// Disable the Probes button while the dialog is open.
 	enableWindow(hwndHostProbesBtn, false)
 
-	const dlgW, dlgH int32 = 520, 60
+	const dlgW, dlgH int32 = 520, 90
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetScopeProbes", "Probes \u2014 "+currentDetailIP,
@@ -1200,7 +1210,7 @@ func createDiagnosticsControls(hwnd HWND) {
 func showDiagnosticsDialog(parent HWND) {
 	registerDialogClass("NetScopeDiagnostics", diagWndProc)
 
-	const dlgW, dlgH int32 = 380, 60
+	const dlgW, dlgH int32 = 400, 90
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
@@ -1443,11 +1453,16 @@ const (
 	idPickHostList   = 713
 	idPickHostOK     = 711
 	idPickHostCancel = 712
+	// context menu (TPM_RETURNCMD; not WM_COMMAND)
+	idPickHostCtxView   = 730
+	idPickHostCtxCopy   = 731
+	idPickHostCtxForget = 732
 )
 
 var (
-	hwndPickEdit HWND
-	hwndPickList HWND
+	hwndPickEdit            HWND
+	hwndPickList            HWND
+	hwndPickHostPlaceholder HWND // empty-state overlay for Hosts dialog
 )
 
 // pickHostRepopulate filters hwndPickList to rows matching filter and
@@ -1455,6 +1470,12 @@ var (
 func pickHostRepopulate(filter string) {
 	hostsListViewRepopulate(hwndPickList, filter)
 	listViewSelectFirst(hwndPickList)
+	// Show or hide the empty-state overlay based on row count.
+	if sendMessage(hwndPickList, LVM_GETITEMCOUNT, 0, 0) == 0 {
+		showWindow(hwndPickHostPlaceholder, SW_SHOW)
+	} else {
+		showWindow(hwndPickHostPlaceholder, SW_HIDE)
+	}
 }
 
 // pickHostSelectedIP returns the IP of the selected row, or "".
@@ -1511,12 +1532,27 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 			btnXs[1], btnY, 100, btnH, HWND(hwnd), HMENU(idPickHostCancel), inst)
 
+		// Set placeholder (cue) text on the search field.
+		cueTxt, _ := syscall.UTF16PtrFromString("Search or enter host address")
+		sendMessage(hwndPickEdit, EM_SETCUEBANNER, 0, uintptr(unsafe.Pointer(cueTxt)))
+
+		// Empty-state overlay sits on top of the listview.
+		hwndPickHostPlaceholder, _ = createWindowEx(0, "STATIC", "No hosts yet",
+			WS_CHILD|SS_CENTER,
+			pad, listTop+(listH-18)/2, cW-pad*2, 18, HWND(hwnd), 0, inst)
+
 		// Populate list with all hosts on open; focus the edit field.
 		pickHostRepopulate("")
 		setFocus(hwndPickEdit)
 		return 0
 
-	case WM_COMMAND:
+	case WM_CTLCOLORSTATIC:
+		if HWND(lParam) == hwndPickHostPlaceholder {
+			setBkMode(wParam, TRANSPARENT)
+			setTextColor(wParam, 0x00999999)
+			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		}
+		return ctlColorDialog(wParam)
 		switch loword(wParam) {
 		case idPickHostOK:
 			pickHostConfirm(HWND(hwnd))
@@ -1532,13 +1568,50 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_NOTIFY:
 		hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
 		if hdr.IdFrom == idPickHostList {
-			if hdr.Code == NM_DBLCLK {
+			switch hdr.Code {
+			case NM_DBLCLK:
 				pickHostConfirm(HWND(hwnd))
-			}
-			if hdr.Code == LVN_KEYDOWN {
+			case LVN_KEYDOWN:
 				kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam)) //nolint:govet
 				if kd.WVKey == VK_RETURN {
 					pickHostConfirm(HWND(hwnd))
+				}
+			case NM_RCLICK:
+				ip := pickHostSelectedIP()
+				if ip == "" {
+					// Hit-test at cursor position to find clicked row.
+					pt := getCursorPos()
+					cpt := POINT{X: pt.X, Y: pt.Y}
+					procScreenToClient.Call(uintptr(hwndPickList), uintptr(unsafe.Pointer(&cpt)))
+					ht := LVHITTESTINFO{Pt: cpt}
+					row := int32(sendMessage(hwndPickList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+					if row >= 0 {
+						ip = listViewGetCellText(hwndPickList, row, 0)
+					}
+				}
+				if ip != "" {
+					pt := getCursorPos()
+					menu := createPopupMenu()
+					appendMenu(menu, MF_STRING, idPickHostCtxView, "View Host")
+					appendMenu(menu, MF_STRING, idPickHostCtxCopy, "Copy Data")
+					appendMenu(menu, MF_SEPARATOR, 0, "")
+					appendMenu(menu, MF_STRING, idPickHostCtxForget, "Forget Host")
+					cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd)))
+					destroyMenu(menu)
+					switch cmd {
+					case idPickHostCtxView:
+						closeModal(HWND(hwnd))
+						showHostDetailDialog(hwndMain, ip)
+					case idPickHostCtxCopy:
+						copyToClipboard(HWND(hwnd), buildHostSummary(ip))
+					case idPickHostCtxForget:
+						confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
+						if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
+							delete(hostRegistry, ip)
+							postMessage(hwndMain, WM_SCAN_RESULT, 0, 0)
+							pickHostRepopulate(getWindowText(hwndPickEdit))
+						}
+					}
 				}
 			}
 		}
@@ -1559,7 +1632,7 @@ func showPickHostDialog(parent HWND) {
 	const dlgW, dlgH int32 = 460, 360
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetScopePickHost", "Query Host",
+		"NetScopePickHost", "Hosts",
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
