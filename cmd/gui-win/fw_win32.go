@@ -235,6 +235,7 @@ const (
 	LVIR_BOUNDS                  = 0
 	LVHT_ONITEM                  = 0x000E // LVHT_ONITEMICON | LVHT_ONITEMLABEL | LVHT_ONITEMSTATEICON
 	LVN_KEYDOWN                  = uint32(0xFFFFFF65) // LVN_FIRST - 55
+	LVN_ITEMCHANGED              = uint32(0xFFFFFF9B) // LVN_FIRST - 1
 	LVCF_FMT                     = 0x0001
 	LVCF_WIDTH                   = 0x0002
 	LVCF_TEXT                    = 0x0004
