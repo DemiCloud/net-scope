@@ -972,16 +972,9 @@ func appendCopyAsSubmenu(menu HMENU) {
 	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
 }
 
-// --------------------------------------------------------------------------- 
+// ---------------------------------------------------------------------------
 // Hosts ListView — sortable columns
 // ---------------------------------------------------------------------------
-
-// sortCol is the column currently sorted (-1 = no sort applied).
-// sortAsc is true for ascending, false for descending.
-var (
-	sortCol int32 = -1
-	sortAsc bool  = true
-)
 
 // hostsColTitles holds the canonical (indicator-free) header text per column,
 // indexed by the colXxx constants defined above.
@@ -998,16 +991,9 @@ var hostsColTitles = [10]string{
 	"Services",       // colServices 9
 }
 
-// updateSortIndicators refreshes column headers in hwndList to show ▲/▼
-// on the current sortCol and plain titles on all others.
-func updateSortIndicators() {
-	lvUpdateSortIndicators(hwndList, hostsColTitles[:], sortCol, sortAsc)
-}
-
-// applyHostsSort re-sorts hwndList rows by sortCol/sortAsc, rebuilding
-// ipRowMap and rowResultMap. When sortCol < 0 (unsorted), restores natural
-// IP-numeric order (the order results arrive from the scanner).
-func applyHostsSort() {
+// applyHostsSort re-sorts hwndList rows by col/asc, rebuilding ipRowMap and
+// rowResultMap. When col < 0 (unsorted), restores natural IP-numeric order.
+func applyHostsSort(col int32, asc bool) {
 	// Collect results recorded in rowResultMap.
 	results := make([]scan.Result, 0, len(rowResultMap))
 	for _, r := range rowResultMap {
@@ -1026,7 +1012,7 @@ func applyHostsSort() {
 		}
 	}
 
-	if sortCol < 0 {
+	if col < 0 {
 		// Unsorted: restore natural IP-numeric order.
 		sort.SliceStable(results, func(i, j int) bool {
 			return compareHostResult(results[i], results[j], colIP) < 0
@@ -1034,8 +1020,8 @@ func applyHostsSort() {
 		sort.Strings(pendingIPs)
 	} else {
 		sort.SliceStable(results, func(i, j int) bool {
-			c := compareHostResult(results[i], results[j], sortCol)
-			if sortAsc {
+			c := compareHostResult(results[i], results[j], col)
+			if asc {
 				return c < 0
 			}
 			return c > 0
@@ -1197,36 +1183,27 @@ var (
 	mdnsColTitles = []string{"IP", "Name", "Service", "Device/Model", "Capabilities", "Notes", "Last Seen"}
 	mdnsDefWidths = []int32{120, 210, 130, 180, 170, 260, 80}
 	mdnsColVis    = []bool{true, true, true, true, true, true, true}
-	mdnsSortCol   int32 = -1
-	mdnsSortAsc         = true
 
 	ssdpColTitles = []string{"IP", "Server", "Type", "Services", "Location", "Last Seen"}
 	ssdpDefWidths = []int32{120, 220, 160, 280, 260, 80}
 	ssdpColVis    = []bool{true, true, true, true, true, true}
-	ssdpSortCol   int32 = -1
-	ssdpSortAsc         = true
 
 	wsdColTitles = []string{"IP", "Types", "Transport URLs", "Scopes", "Endpoint UUID", "Last Seen"}
 	wsdDefWidths = []int32{120, 180, 300, 200, 240, 80}
 	wsdColVis    = []bool{true, true, true, true, true, true}
-	wsdSortCol   int32 = -1
-	wsdSortAsc         = true
 
 	dhcpColTitles = []string{"Time", "Type", "Client MAC", "Hostname", "Client IP", "Requested IP", "Offered IP", "Server IP"}
 	dhcpDefWidths = []int32{75, 90, 140, 160, 120, 120, 120, 120}
 	dhcpColVis    = []bool{true, true, true, true, true, true, true, true}
-	dhcpSortCol   int32 = -1
-	dhcpSortAsc         = true
 )
 
 // ---------------------------------------------------------------------------
-// Per-tab sort-apply functions
+// Per-tab sort-apply callbacks (passed to subclassListViewManaged as onSort)
 // ---------------------------------------------------------------------------
 
-// applyMDNSSort sorts the mDNS listview by the current mdnsSortCol/mdnsSortAsc,
-// then rebuilds mdnsRaw so that "copy raw data" remains accurate.
-func applyMDNSSort() {
-	if mdnsSortCol < 0 {
+// applyMDNSSort sorts the mDNS listview and rebuilds mdnsRaw.
+func applyMDNSSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
 		return
 	}
 	numCols := int32(len(mdnsColTitles))
@@ -1238,7 +1215,7 @@ func applyMDNSSort() {
 		name := listViewGetCellText(hwndListMDNS, row, 1)
 		keyedRaw[rowKey{ip, name}] = records
 	}
-	lvTextSort(hwndListMDNS, numCols, mdnsSortCol, mdnsSortAsc)
+	lvTextSort(hwndListMDNS, numCols, col, asc)
 	// Rebuild mdnsRaw with new row indices.
 	count := int32(sendMessage(hwndListMDNS, LVM_GETITEMCOUNT, 0, 0))
 	mdnsRaw = make(map[int32][]string, count)
@@ -1252,11 +1229,11 @@ func applyMDNSSort() {
 }
 
 // applySSDPSort sorts the SSDP listview and rebuilds ssdpIPRow.
-func applySSDPSort() {
-	if ssdpSortCol < 0 {
+func applySSDPSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
 		return
 	}
-	lvTextSort(hwndListSSDP, int32(len(ssdpColTitles)), ssdpSortCol, ssdpSortAsc)
+	lvTextSort(hwndListSSDP, int32(len(ssdpColTitles)), col, asc)
 	count := int32(sendMessage(hwndListSSDP, LVM_GETITEMCOUNT, 0, 0))
 	ssdpIPRow = make(map[string]int32, count)
 	for i := int32(0); i < count; i++ {
@@ -1266,11 +1243,11 @@ func applySSDPSort() {
 }
 
 // applyWSDSort sorts the WSD listview and rebuilds wsdIPRow.
-func applyWSDSort() {
-	if wsdSortCol < 0 {
+func applyWSDSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
 		return
 	}
-	lvTextSort(hwndListWSD, int32(len(wsdColTitles)), wsdSortCol, wsdSortAsc)
+	lvTextSort(hwndListWSD, int32(len(wsdColTitles)), col, asc)
 	count := int32(sendMessage(hwndListWSD, LVM_GETITEMCOUNT, 0, 0))
 	wsdIPRow = make(map[string]int32, count)
 	for i := int32(0); i < count; i++ {
@@ -1280,57 +1257,9 @@ func applyWSDSort() {
 }
 
 // applyDHCPSort sorts the DHCP listview. DHCP rows have no deduplication maps.
-func applyDHCPSort() {
-	if dhcpSortCol < 0 {
+func applyDHCPSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
 		return
 	}
-	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), dhcpSortCol, dhcpSortAsc)
+	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), col, asc)
 }
-
-// handleListColumnClick dispatches an LVN_COLUMNCLICK event to the correct
-// sort handler. Returns true if the event was consumed.
-func handleListColumnClick(idFrom uintptr, col int32) bool {
-	switch idFrom {
-	case IDC_LIST:
-		sortCol, sortAsc = lvNextSortState(sortCol, sortAsc, col)
-		updateSortIndicators()
-		applyHostsSort()
-		return true
-	case IDC_LIST_MDNS:
-		mdnsSortCol, mdnsSortAsc = lvNextSortState(mdnsSortCol, mdnsSortAsc, col)
-		lvUpdateSortIndicators(hwndListMDNS, mdnsColTitles, mdnsSortCol, mdnsSortAsc)
-		applyMDNSSort()
-		return true
-	case IDC_LIST_SSDP:
-		ssdpSortCol, ssdpSortAsc = lvNextSortState(ssdpSortCol, ssdpSortAsc, col)
-		lvUpdateSortIndicators(hwndListSSDP, ssdpColTitles, ssdpSortCol, ssdpSortAsc)
-		applySSDPSort()
-		return true
-	case IDC_LIST_WSD:
-		wsdSortCol, wsdSortAsc = lvNextSortState(wsdSortCol, wsdSortAsc, col)
-		lvUpdateSortIndicators(hwndListWSD, wsdColTitles, wsdSortCol, wsdSortAsc)
-		applyWSDSort()
-		return true
-	case IDC_LIST_DHCP:
-		dhcpSortCol, dhcpSortAsc = lvNextSortState(dhcpSortCol, dhcpSortAsc, col)
-		lvUpdateSortIndicators(hwndListDHCP, dhcpColTitles, dhcpSortCol, dhcpSortAsc)
-		applyDHCPSort()
-		return true
-	}
-	return false
-}
-
-// ---------------------------------------------------------------------------
-// lvHeaderInfo maps a listview header HWND to its Edit Columns parameters.
-// Built in createControls; consumed by WM_NOTIFY NM_RCLICK on header.
-// ---------------------------------------------------------------------------
-
-type lvHeaderInfo struct {
-	hwndLV    HWND
-	colTitles []string
-	colVis    []bool  // slice into the tab's actual visibility array
-	defWidths []int32 // 96-DPI logical widths
-}
-
-// headerInfos maps each listview's header HWND to its lvHeaderInfo.
-var headerInfos = map[HWND]*lvHeaderInfo{}

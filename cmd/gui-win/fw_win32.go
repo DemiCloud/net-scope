@@ -248,6 +248,10 @@ const (
 	LVN_FIRST       = uint32(0xFFFFFF9C) // -100
 	LVN_COLUMNCLICK = uint32(0xFFFFFF94) // LVN_FIRST - 8
 
+	// Header control notifications (sent from Header to its parent ListView via WM_NOTIFY).
+	HDN_ITEMCLICKW    = uint32(0xFFFFFEBE) // HDN_FIRST(-300) - 22 = -322
+	HDN_ITEMDBLCLICKW = uint32(0xFFFFFEBD) // HDN_FIRST(-300) - 23 = -323
+
 	// StatusBar
 	SB_SETTEXT    = 0x040B
 	SB_SETPARTS   = 0x0404
@@ -441,6 +445,14 @@ type NMLISTVIEW struct {
 	ISubItem int32
 }
 
+// NMHEADER is sent with HDN_* Header notifications (e.g. HDN_ITEMCLICKW).
+type NMHEADER struct {
+	Hdr     NMHDR
+	IItem   int32  // column index that was clicked
+	IButton int32  // 0=left, 1=right, 2=middle
+	PItem   uintptr // *HDITEM (often NULL; do not dereference unless non-zero)
+}
+
 // NMLVKEYDOWN is sent via WM_NOTIFY with code LVN_KEYDOWN when a key is
 // pressed while a ListView has focus.
 type NMLVKEYDOWN struct {
@@ -547,6 +559,7 @@ var (
 	procDestroyWindow                = modUser32.NewProc("DestroyWindow")
 	procSetForegroundWindow          = modUser32.NewProc("SetForegroundWindow")
 	procSetFocus                     = modUser32.NewProc("SetFocus")
+	procGetParent                    = modUser32.NewProc("GetParent")
 	procIsWindow                     = modUser32.NewProc("IsWindow")
 	procIsChild                      = modUser32.NewProc("IsChild")
 	procBeginPaint                   = modUser32.NewProc("BeginPaint")
@@ -1019,6 +1032,12 @@ func drawText(hdc uintptr, text string, rc *RECT, format uint32) {
 func getSysColorBrush(colorIndex int) HBRUSH {
 	r, _, _ := procGetSysColorBrush.Call(uintptr(colorIndex))
 	return HBRUSH(r)
+}
+
+// getParent returns the parent window of hwnd, or 0 if it has none.
+func getParent(hwnd HWND) HWND {
+	r, _, _ := procGetParent.Call(uintptr(hwnd))
+	return HWND(r)
 }
 
 // ---------------------------------------------------------------------------
