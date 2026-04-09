@@ -59,6 +59,7 @@ var (
 	hwndServiceBtn  HWND // "Elevate Sensor" button (disabled once service reports it is elevated)
 	hwndProxyCheck  HWND // "Proxy Mode" checkbox
 	// Scan bar (shown only when Hosts tab is active)
+	hwndTargetLabel     HWND // "Target:" static label
 	hwndTarget          HWND
 	hwndDetect          HWND // "⟲" detect local subnet button
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
@@ -1090,6 +1091,7 @@ func activateTab(hwnd HWND, tab int32) {
 	// On Hosts tab the scan bar is visible and the list sits below it;
 	// on all other tabs the list fills from just below the tab strip.
 	if tab == 0 {
+		showWindow(hwndTargetLabel, SW_SHOW)
 		showWindow(hwndTarget, SW_SHOW)
 		showWindow(hwndDetect, SW_SHOW)
 		showWindow(hwndScan, SW_SHOW)
@@ -1112,6 +1114,7 @@ func activateTab(hwnd HWND, tab int32) {
 			showWindow(hwndListPlaceholder, SW_SHOW)
 		}
 	} else {
+		showWindow(hwndTargetLabel, SW_HIDE)
 		showWindow(hwndTarget, SW_HIDE)
 		showWindow(hwndDetect, SW_HIDE)
 		showWindow(hwndScan, SW_HIDE)
@@ -1203,7 +1206,7 @@ func createControls(hwnd HWND) {
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
 	scanBarY := scale(elevBarH + tabCtrlH)
-	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
+	hwndTargetLabel, _ = createWindowEx(0, "STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
 		scale(58), scanBarY+scale(6), scale(460), scale(22), hwnd, IDC_TARGET, inst)
