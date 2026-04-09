@@ -143,11 +143,8 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		// The obs empty-state overlay should appear as gray text on white background.
-		if HWND(lParam) == hwndHostObsHint {
-			setBkMode(wParam, TRANSPARENT)
-			setTextColor(wParam, 0x00999999)
-			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		if isEmptyStateOverlay(HWND(lParam)) {
+			return applyEmptyStateColor(wParam)
 		}
 		return ctlColorDialog(wParam)
 
@@ -539,9 +536,9 @@ func createHostDetailControls(hwnd HWND) {
 	listViewAddColumn(hwndHostProbeList, 3, "Result", cW-pad*2-colTypeW-colTargetW-colSourceW-4)
 
 	// Empty-state overlay: floats on top of the listview when no rows are present.
-	hwndHostObsHint, _ = createWindowEx(0, "STATIC", "No data yet",
-		WS_CHILD|WS_VISIBLE|SS_CENTER,
-		pad, y+(obsListH-18)/2, cW-pad*2, 18, hwnd, 0, inst)
+	hwndHostObsHint = createEmptyStateOverlay(hwnd, "No data yet",
+		pad, y+(obsListH-18)/2, cW-pad*2, 18)
+	showWindow(hwndHostObsHint, SW_SHOW)
 
 	// Footer: [ Copy ▾ ]  [ Forget Host ]  ·····  [ Close ]
 	// Copy starts disabled; enabled once observations exist.
@@ -1796,9 +1793,8 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		listViewAddColumn(hwndPickList, 1, "Hostname", cW-pad*2-140-4)
 
 		// Empty-state overlay floats over the listview when it is empty.
-		hwndPickHostPlaceholder, _ = createWindowEx(0, "STATIC", "No hosts yet",
-			WS_CHILD|SS_CENTER,
-			pad, listTop+(listH-18)/2, cW-pad*2, 18, HWND(hwnd), 0, inst)
+		hwndPickHostPlaceholder = createEmptyStateOverlay(HWND(hwnd), "No hosts yet",
+			pad, listTop+(listH-18)/2, cW-pad*2, 18)
 
 		// Hint label at the very bottom (replaces OK/Cancel buttons).
 		hintY := cH - pad - hintH
@@ -1813,10 +1809,8 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		if HWND(lParam) == hwndPickHostPlaceholder {
-			setBkMode(wParam, TRANSPARENT)
-			setTextColor(wParam, 0x00999999)
-			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		if isEmptyStateOverlay(HWND(lParam)) {
+			return applyEmptyStateColor(wParam)
 		}
 		if HWND(lParam) == hwndPickHint {
 			setBkMode(wParam, TRANSPARENT)
