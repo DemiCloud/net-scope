@@ -516,6 +516,7 @@ var (
 	procGetWindowTextW               = modUser32.NewProc("GetWindowTextW")
 	procSetWindowTextW               = modUser32.NewProc("SetWindowTextW")
 	procEnableWindow                 = modUser32.NewProc("EnableWindow")
+	procIsWindowEnabled              = modUser32.NewProc("IsWindowEnabled")
 	procMessageBoxW                  = modUser32.NewProc("MessageBoxW")
 	procGetKeyState                  = modUser32.NewProc("GetKeyState")
 	procGetAsyncKeyState             = modUser32.NewProc("GetAsyncKeyState")
@@ -718,6 +719,11 @@ func enableWindow(hwnd HWND, enable bool) {
 		v = 1
 	}
 	procEnableWindow.Call(uintptr(hwnd), v)
+}
+
+func isWindowEnabled(hwnd HWND) bool {
+	r, _, _ := procIsWindowEnabled.Call(uintptr(hwnd))
+	return r != 0
 }
 
 func messageBox(hwnd HWND, text, caption string, flags uint32) int32 {

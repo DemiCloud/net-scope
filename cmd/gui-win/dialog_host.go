@@ -45,10 +45,15 @@ import (
 //  └────────────────────────────────────────────────────────────────────────┘
 
 const (
-	idHostClose      = 601
+	idHostClose  = 601
+	idHostForget = 602 // «Forget Host» — removes host from registry
+
+	// idHostCopyReport and idHostCopyFP are used as TPM_RETURNCMD items inside
+	// showCopyMenu only — they are NOT posted as WM_COMMAND messages.
 	idHostCopyReport = 604
 	idHostProbeList  = 608
 	idHostCopyFP     = 609
+	idHostCopy       = 610 // single «Copy ▾» footer button
 
 	// Connect context-menu item IDs (resolved via TPM_RETURNCMD, not WM_COMMAND).
 	idHostConnHTTPS  = 621
@@ -58,25 +63,26 @@ const (
 	idHostConnSMB    = 626
 	idHostConnFTP    = 624
 	idHostConnTelnet = 625
-	idHostConnect    = 629 // «Connect ▾» button in the action strip
+	idHostConnect    = 629 // «Connect ▾» action-strip button
 
-	// Action strip (replacing the old Investigate + Diagnostics sections).
-	idHostProbes      = 630 // opens Probes sub-dialog
-	idHostScan        = 631 // triggers a NetScope scan of current host
-	idHostDiagnostics = 632 // opens Diagnostics sub-dialog
+	// Action strip.
+	idHostProbes      = 630
+	idHostScan        = 631
+	idHostDiagnostics = 632
 
-	// Probes sub-dialog (600-block reserved; using 640-range).
-	idProbesClose  = 641
-	idProbesRun    = 642
-	idProbesRunAll = 643
-	idProbesPort   = 644
-	idProbesType   = 645
+	// Probes sub-dialog.
+	idProbesRun  = 642
+	idProbesPort = 644
+	idProbesType = 645
 
 	// Diagnostics sub-dialog.
-	idDiagClose   = 651
 	idDiagPing    = 652
 	idDiagPingCont = 653
 	idDiagTracert = 654
+
+	// Observations listview context menu (TPM_RETURNCMD; not WM_COMMAND).
+	idObsCtxCopy   = 660
+	idObsCtxDelete = 661
 )
 
 // Dialog-local handles (valid while dialog is open).
@@ -86,20 +92,19 @@ var (
 	hwndHostSummary      HWND
 	hwndHostProbeList    HWND // observations listview
 	hwndHostObsHint      HWND // empty-state hint label
-	hwndHostCopyBtn      HWND
+	hwndHostCopyBtn      HWND // «Copy ▾» footer dropdown button
 	hwndHostCloseBtn     HWND
-	hwndHostCopyFPBtn    HWND
+	hwndHostForgetBtn    HWND // «Forget Host» footer button
 	hwndHostConnect      HWND // «Connect ▾» action-strip button
 	hwndHostProbesBtn    HWND // «Probes» action-strip button
 	hwndHostScanBtn      HWND // «Scan» action-strip button
 	hwndHostDiagBtn      HWND // «Diagnostics» action-strip button
 
 	// Probes sub-dialog controls (valid while probes dialog is open).
-	hwndProbesPort        HWND
-	hwndProbesType        HWND
-	hwndProbesRun         HWND
-	hwndProbesRunAll      HWND
-	hwndProbesHostDetail  HWND // host detail HWND; restored to hwndActiveProbeDialogAtomic on close
+	hwndProbesPort       HWND
+	hwndProbesType       HWND
+	hwndProbesRun        HWND
+	hwndProbesHostDetail HWND // host detail HWND; restored to hwndActiveProbeDialogAtomic on close
 
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
@@ -112,9 +117,20 @@ var (
 	activeProbes int32
 )
 
-// probeTypeLabels is the ordered list shown in the probe Type combo.
-var probeTypeLabels = []string{
-	"TCP", "SSH", "HTTP", "HTTPS", "FTP", "SMTP", "Telnet", "RDP", "Steam",
+// probeKinds lists the probe types shown in the Probes dialog combo.
+// "Port Test" maps to ProbeSpec.Type "TCP". All others map 1:1.
+var probeKinds = []struct {
+	label   string // shown in combo
+	ptype   string // ProbeSpec.Type value
+	needsPort bool  // false = port field is greyed out
+}{
+	{"Port Test", "TCP", true},
+	{"SSH Banner", "SSH", true},
+	{"HTTP(S) Banner", "HTTPS", true},
+	{"OS Probe", "OSProbe", false},
+	{"SNMP", "SNMP", false},
+	{"SteamQuery", "Steam", true},
+	{"RDP", "RDP", true},
 }
 
 // hostDetailWndProc is the window procedure for the host detail dialog.
@@ -134,10 +150,12 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		switch loword(wParam) {
 		case idHostClose:
 			hostDetailClose(HWND(hwnd))
-		case idHostCopyReport:
-			hostDetailCopyReport(HWND(hwnd))
-		case idHostCopyFP:
-			hostDetailCopyFP(HWND(hwnd))
+		case idHostForget:
+			hostDetailForget(HWND(hwnd))
+		case idHostCopy:
+			if !shouldSuppressDropdown(HWND(lParam)) {
+				showCopyMenu(HWND(hwnd))
+			}
 		case idHostConnect:
 			// lParam is the button HWND; check for spurious re-open from a dismiss click.
 			if !shouldSuppressDropdown(HWND(lParam)) {
@@ -149,6 +167,13 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			hostDetailRunScan(HWND(hwnd))
 		case idHostDiagnostics:
 			showDiagnosticsDialog(HWND(hwnd))
+		}
+		return 0
+
+	case WM_NOTIFY:
+		nm := (*NMHDR)(unsafe.Pointer(lParam))
+		if nm.IdFrom == idHostProbeList && nm.Code == NM_RCLICK {
+			showObsContextMenu(HWND(hwnd))
 		}
 		return 0
 
@@ -297,6 +322,63 @@ func showConnectMenu(hwnd HWND) {
 	}
 }
 
+// showCopyMenu shows a dropdown from the footer Copy ▾ button.
+func showCopyMenu(hwnd HWND) {
+	menu := createPopupMenu()
+	appendMenu(menu, MF_STRING, idHostCopyReport, "Report")
+	appendMenu(menu, MF_STRING, idHostCopyFP, "OS Fingerprint")
+	cmd := popupMenuFromButton(hwnd, menu, hwndHostCopyBtn)
+	destroyMenu(menu)
+	switch int32(cmd) {
+	case idHostCopyReport:
+		hostDetailCopyReport(hwnd)
+	case idHostCopyFP:
+		hostDetailCopyFP(hwnd)
+	}
+}
+
+// showObsContextMenu shows a right-click context menu over the Observations listview.
+// Offers "Copy row" and "Delete row" actions on the currently selected row.
+func showObsContextMenu(hwnd HWND) {
+	row := int32(sendMessage(hwndHostProbeList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	if row < 0 {
+		return
+	}
+	menu := createPopupMenu()
+	appendMenu(menu, MF_STRING, idObsCtxCopy, "Copy")
+	appendMenu(menu, MF_STRING, idObsCtxDelete, "Delete")
+	pt := getCursorPos()
+	cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, hwnd))
+	destroyMenu(menu)
+	switch cmd {
+	case idObsCtxCopy:
+		t := listViewGetCellText(hwndHostProbeList, row, 0)
+		tgt := listViewGetCellText(hwndHostProbeList, row, 1)
+		src := listViewGetCellText(hwndHostProbeList, row, 2)
+		res := listViewGetCellText(hwndHostProbeList, row, 3)
+		copyToClipboard(hwnd, fmt.Sprintf("%-14s %-10s %-10s %s", t, tgt, src, res))
+	case idObsCtxDelete:
+		sendMessage(hwndHostProbeList, LVM_DELETEITEM, uintptr(row), 0)
+		// Show hint again if list is now empty.
+		if sendMessage(hwndHostProbeList, LVM_GETITEMCOUNT, 0, 0) == 0 {
+			showWindow(hwndHostObsHint, SW_SHOW)
+		}
+		hostDetailUpdateCopyButtons()
+	}
+}
+
+// hostDetailForget asks for confirmation then removes the host from the registry and closes.
+func hostDetailForget(hwnd HWND) {
+	msg := "Remove " + currentDetailIP + " from the session?\n\nAll observations, scan results, and service history for this host will be deleted. The host may reappear if observed again."
+	if messageBox(hwnd, msg, "Forget Host", MB_YESNO|MB_ICONWARNING) != IDYES {
+		return
+	}
+	delete(hostRegistry, currentDetailIP)
+	// Remove the row from the main-window host list if present.
+	postMessage(hwndMain, WM_SCAN_RESULT, 0, 0) // triggers a UI refresh
+	hostDetailClose(hwnd)
+}
+
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
 	registerDialogClass("NetScopeHostDetail", hostDetailWndProc)
@@ -433,18 +515,18 @@ func createHostDetailControls(hwnd HWND) {
 	listViewAddColumn(hwndHostProbeList, 2, "Source", colSourceW)
 	listViewAddColumn(hwndHostProbeList, 3, "Result", cW-pad*2-colTypeW-colTargetW-colSourceW-4)
 
-	// Footer button row: Copy Report | Copy Fingerprint (left), Close (right).
-	// Copy actions start disabled; enabled by hostDetailUpdateCopyButtons.
+	// Footer: [ Copy ▾ ]  [ Forget Host ]  ·····  [ Close ]
+	// Copy starts disabled; enabled once observations exist.
 	btnY := cH - pad - 28
-	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy Report",
+	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy \u25be",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad, btnY, 110, 28, hwnd, HMENU(idHostCopyReport), inst)
-	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy Fingerprint",
+		pad, btnY, 80, 28, hwnd, HMENU(idHostCopy), inst)
+	hwndHostForgetBtn, _ = createWindowEx(0, "BUTTON", "Forget Host",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+110+8, btnY, 120, 28, hwnd, HMENU(idHostCopyFP), inst)
+		pad+80+8, btnY, 100, 28, hwnd, HMENU(idHostForget), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-100, btnY, 100, 28, hwnd, HMENU(idHostClose), inst)
+		cW-pad-80, btnY, 80, 28, hwnd, HMENU(idHostClose), inst)
 }
 
 // startProbe sends a single on-demand probe to the sensor service.
@@ -481,22 +563,25 @@ func hostDetailAddObsRow(obsType, target, source, result string) {
 	setSubItem(hwndHostProbeList, row, 3, result)
 }
 
-// hostDetailAddProbeRow maps an on-demand ProbeResult to an observation row.
+// hostDetailAddProbeRow maps an on-demand ProbeResult to an observation row
+// and persists it to the host registry so it survives dialog close/reopen.
 func hostDetailAddProbeRow(_ HWND, pr scan.ProbeResult) {
 	result := pr.Result
 	if result == "" {
 		result = "no response"
 	}
-	hostDetailAddObsRow(pr.Type, strconv.Itoa(pr.Port), "Active", result)
+	hostDetailAddObsRow(pr.Type, strconv.Itoa(pr.Port), "Probe", result)
+	// Persist to registry so this observation survives dialog close/reopen.
+	if e, ok := hostRegistry[currentDetailIP]; ok {
+		e.ProbeResults = append(e.ProbeResults, pr)
+	}
 	hostDetailUpdateCopyButtons()
 }
 
-// hostDetailUpdateCopyButtons enables the footer copy actions only when there
-// is something to copy. Copy Fingerprint requires a registry entry (structured
-// data); Copy Report is useful regardless.
+// hostDetailUpdateCopyButtons enables the Copy ▾ footer button only when there
+// is something to copy.
 func hostDetailUpdateCopyButtons() {
 	_, known := hostRegistry[currentDetailIP]
-	enableWindow(hwndHostCopyFPBtn, known)
 	rows := sendMessage(hwndHostProbeList, LVM_GETITEMCOUNT, 0, 0)
 	enableWindow(hwndHostCopyBtn, known || rows > 0)
 }
@@ -584,6 +669,15 @@ func hostDetailPopulateObservations(ip string) {
 			detail += "  offered=" + evt.OfferedIP
 		}
 		hostDetailAddObsRow("DHCP", evt.OfferedIP, "DHCP", detail)
+	}
+
+	// Persisted probe results from previous interactions this session.
+	for _, pr := range e.ProbeResults {
+		res := pr.Result
+		if res == "" {
+			res = "no response"
+		}
+		hostDetailAddObsRow(pr.Type, strconv.Itoa(pr.Port), "Probe", res)
 	}
 
 	hostDetailUpdateCopyButtons()
@@ -857,14 +951,14 @@ func hostDetailRunScan(hwnd HWND) {
 // ---------------------------------------------------------------------------
 //
 // A focused modal opened from the Probes action button.
-// Contains the port/type selectors and Run Probe / Run Common Probes buttons
-// that were previously inline in the host detail dialog.
+// The combo lists semantic probe intents; the port edit is greyed out for
+// probes that do not target a specific port.
 //
 // While this dialog is open it registers itself as the WM_PROBE_RESULT
-// target so it receives probe completions in real-time and re-enables its
-// own buttons. Observation rows are written directly to hwndHostProbeList
-// (a global pointing at the host detail listview), which is visible behind
-// the disabled host detail dialog and updates live.
+// target so it receives probe completions in real-time. Observation rows
+// are written to hwndHostProbeList (the host detail listview), visible
+// behind the disabled-but-open parent dialog, and persisted to the host
+// registry so they survive dialog close/reopen.
 
 var probesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
@@ -876,16 +970,19 @@ var probesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 		return ctlColorDialog(wParam)
 
 	case WM_CTLCOLOREDIT:
+		if HWND(lParam) == hwndProbesPort && !isWindowEnabled(hwndProbesPort) {
+			return ctlColorDialog(wParam)
+		}
 		return ctlColorDlgBody(wParam)
 
 	case WM_COMMAND:
 		switch loword(wParam) {
-		case idProbesClose:
-			probesDialogClose(HWND(hwnd))
 		case idProbesRun:
 			probesRunSingle(HWND(hwnd))
-		case idProbesRunAll:
-			probesRunAll(HWND(hwnd))
+		case idProbesType:
+			if hiword(wParam) == CBN_SELCHANGE {
+				probesUpdatePortEnabled()
+			}
 		}
 		return 0
 
@@ -902,8 +999,7 @@ var probesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 		if atomic.AddInt32(&activeProbes, -1) == 0 {
 			enableWindow(hwndProbesRun, true)
 			setWindowText(hwndProbesRun, "Run Probe")
-			enableWindow(hwndProbesRunAll, true)
-			setWindowText(hwndProbesRunAll, "Run Common Probes")
+			enableWindow(hwndHostProbesBtn, true)
 		}
 		return 0
 
@@ -918,95 +1014,84 @@ func createProbesDialogControls(hwnd HWND) {
 	inst := getModuleHandle()
 	r := getClientRect(hwnd)
 	cW := r.Right
-	cH := r.Bottom
 	const pad int32 = 10
 
-	// Probe row: Port [___] Type [▾]  [Run Probe]  [Run Common Probes]
+	// Layout: [Probe combo]  [Port: edit]  [Run Probe]
+	// Probe type combo on the left; port to its right; run button far right.
 	const (
+		typeLblW   int32 = 42
+		typeComboW int32 = 155
 		portLblW   int32 = 34
-		portEditW  int32 = 52
-		typeLblW   int32 = 38
-		typeComboW int32 = 110
-		runBtnW    int32 = 90
+		portEditW  int32 = 60
+		runBtnW    int32 = 100
 		gap        int32 = 6
 	)
 	y := pad
 	x := pad
+
+	createCtrl("STATIC", "Probe:", WS_CHILD|WS_VISIBLE,
+		x, y+5, typeLblW, 16, hwnd, 0, inst)
+	x += typeLblW
+	hwndProbesType, _ = createWindowEx(0, "COMBOBOX", "",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
+		x, y, typeComboW, 220, hwnd, HMENU(idProbesType), inst)
+	x += typeComboW + gap*2
+
 	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE,
 		x, y+5, portLblW, 16, hwnd, 0, inst)
 	x += portLblW
 	hwndProbesPort, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "22",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
 		x, y, portEditW, 24, hwnd, HMENU(idProbesPort), inst)
-	x += portEditW + gap
-	createCtrl("STATIC", "Type:", WS_CHILD|WS_VISIBLE,
-		x, y+5, typeLblW, 16, hwnd, 0, inst)
-	x += typeLblW
-	hwndProbesType, _ = createWindowEx(0, "COMBOBOX", "",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
-		x, y, typeComboW, 200, hwnd, HMENU(idProbesType), inst)
-	x += typeComboW + gap*2
+	x += portEditW + gap*3
+
+	// Run button flush right.
 	hwndProbesRun, _ = createWindowEx(0, "BUTTON", "Run Probe",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		x, y, runBtnW, 24, hwnd, HMENU(idProbesRun), inst)
-	x += runBtnW + gap
-	runAllW := cW - pad - x
-	if runAllW < 130 {
-		runAllW = 130
-	}
-	hwndProbesRunAll, _ = createWindowEx(0, "BUTTON", "Run Common Probes",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		x, y, runAllW, 24, hwnd, HMENU(idProbesRunAll), inst)
+		cW-pad-runBtnW, y, runBtnW, 24, hwnd, HMENU(idProbesRun), inst)
+	_ = x // suppress unused-variable lint
+}
 
-	// Close button (bottom right).
-	createWindowEx(0, "BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-80, cH-pad-26, 80, 26, hwnd, HMENU(idProbesClose), inst)
+// probesUpdatePortEnabled greys out the port edit when the selected probe
+// type does not require a port number.
+func probesUpdatePortEnabled() {
+	idx := int(sendMessage(hwndProbesType, CB_GETCURSEL, 0, 0))
+	if idx < 0 || idx >= len(probeKinds) {
+		return
+	}
+	enableWindow(hwndProbesPort, probeKinds[idx].needsPort)
 }
 
 func probesDialogClose(hwnd HWND) {
 	// Restore WM_PROBE_RESULT target to the host detail dialog.
 	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(hwndProbesHostDetail))
-	// Also re-enable the Probes button on the host detail dialog.
 	enableWindow(hwndHostProbesBtn, true)
 	closeModal(hwnd)
 }
 
 func probesRunSingle(hwnd HWND) {
-	portStr := strings.TrimSpace(getWindowText(hwndProbesPort))
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
-		messageBox(hwnd, "Enter a valid port number (1\u201365535).", "Probes", MB_ICONWARNING)
+	idx := int(sendMessage(hwndProbesType, CB_GETCURSEL, 0, 0))
+	if idx < 0 || idx >= len(probeKinds) {
 		return
 	}
-	typeIdx := sendMessage(hwndProbesType, CB_GETCURSEL, 0, 0)
-	probeType := "TCP"
-	if int(typeIdx) < len(probeTypeLabels) {
-		probeType = probeTypeLabels[int(typeIdx)]
+	kind := probeKinds[idx]
+
+	port := 0
+	if kind.needsPort {
+		portStr := strings.TrimSpace(getWindowText(hwndProbesPort))
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p < 1 || p > 65535 {
+			messageBox(hwnd, "Enter a valid port number (1\u201365535).", "Probes", MB_ICONWARNING)
+			return
+		}
+		port = p
 	}
+
 	enableWindow(hwndProbesRun, false)
 	setWindowText(hwndProbesRun, "Running\u2026")
-	if !startProbe(hwnd, currentDetailIP, scan.ProbeSpec{Port: port, Type: probeType}) {
+	if !startProbe(hwnd, currentDetailIP, scan.ProbeSpec{Port: port, Type: kind.ptype}) {
 		enableWindow(hwndProbesRun, true)
 		setWindowText(hwndProbesRun, "Run Probe")
-	}
-}
-
-func probesRunAll(hwnd HWND) {
-	enableWindow(hwndProbesRun, false)
-	enableWindow(hwndProbesRunAll, false)
-	setWindowText(hwndProbesRunAll, "Running\u2026")
-	allOK := true
-	for _, spec := range scan.CommonProbes {
-		if !startProbe(hwnd, currentDetailIP, spec) {
-			allOK = false
-			break
-		}
-	}
-	if !allOK {
-		enableWindow(hwndProbesRun, true)
-		enableWindow(hwndProbesRunAll, true)
-		setWindowText(hwndProbesRunAll, "Run Common Probes")
 	}
 }
 
@@ -1019,7 +1104,7 @@ func showProbesDialog(parent HWND) {
 	// Disable the Probes button while the dialog is open.
 	enableWindow(hwndHostProbesBtn, false)
 
-	const dlgW, dlgH int32 = 530, 90
+	const dlgW, dlgH int32 = 520, 60
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetScopeProbes", "Probes \u2014 "+currentDetailIP,
@@ -1033,12 +1118,13 @@ func showProbesDialog(parent HWND) {
 	}
 	centerOnParent(dlg, parent, dlgW, dlgH)
 
-	// Populate the type combo.
-	for _, t := range probeTypeLabels {
-		pt, _ := syscall.UTF16PtrFromString(t)
+	// Populate the probe kind combo.
+	for _, k := range probeKinds {
+		pt, _ := syscall.UTF16PtrFromString(k.label)
 		sendMessage(hwndProbesType, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(pt)))
 	}
-	sendMessage(hwndProbesType, CB_SETCURSEL, 1, 0) // default: SSH
+	sendMessage(hwndProbesType, CB_SETCURSEL, 0, 0) // default: Port Test
+	probesUpdatePortEnabled()
 
 	setFontAllChildren(dlg, appFont)
 
@@ -1046,8 +1132,7 @@ func showProbesDialog(parent HWND) {
 	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(dlg))
 
 	runModal(dlg, parent)
-	// probesDialogClose restores hwndActiveProbeDialogAtomic and re-enables
-	// hwndHostProbesBtn before calling closeModal.
+	// probesDialogClose restores hwndActiveProbeDialogAtomic before calling closeModal.
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,8 +1154,6 @@ var diagWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 
 	case WM_COMMAND:
 		switch loword(wParam) {
-		case idDiagClose:
-			closeModal(HWND(hwnd))
 		case idDiagPing:
 			shellExecute(HWND(hwnd), "open", "cmd.exe",
 				"/c ping "+currentDetailIP+" && pause", "", SW_SHOW)
@@ -1092,9 +1175,6 @@ var diagWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 
 func createDiagnosticsControls(hwnd HWND) {
 	inst := getModuleHandle()
-	r := getClientRect(hwnd)
-	cW := r.Right
-	cH := r.Bottom
 	const pad int32 = 10
 
 	y := pad
@@ -1113,17 +1193,14 @@ func createDiagnosticsControls(hwnd HWND) {
 	createWindowEx(0, "BUTTON", "Traceroute",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		x, y, 100, btnH, hwnd, HMENU(idDiagTracert), inst)
-
-	createWindowEx(0, "BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-80, cH-pad-26, 80, 26, hwnd, HMENU(idDiagClose), inst)
+	_ = y // all buttons on one row
 }
 
 // showDiagnosticsDialog opens the Diagnostics sub-dialog for the current host.
 func showDiagnosticsDialog(parent HWND) {
 	registerDialogClass("NetScopeDiagnostics", diagWndProc)
 
-	const dlgW, dlgH int32 = 380, 90
+	const dlgW, dlgH int32 = 380, 60
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
 		"NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
