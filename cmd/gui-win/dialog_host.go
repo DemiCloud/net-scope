@@ -3,7 +3,6 @@
 package guiwin
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -89,18 +88,12 @@ var (
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
 
-	// pendingProbeResults: goroutines append, UI thread reads via WM_PROBE_RESULT.
+	// pendingProbeResults: receive loop appends, UI thread reads via WM_PROBE_RESULT.
 	pendingProbeResults   []scan.ProbeResult
 	pendingProbeResultsMu sync.Mutex
 
-	// activeProbes is the count of probe goroutines still running.
+	// activeProbes is the count of probe commands still awaiting a result.
 	activeProbes int32
-
-	// dialogProbeCancel cancels all in-flight probes when the dialog closes.
-	dialogProbeCancel func()
-
-	// dialogProbeCtx is the context passed to all probe goroutines.
-	dialogProbeCtx context.Context
 )
 
 // probeTypeLabels is the ordered list shown in the Type combo.
@@ -170,8 +163,8 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		if pr.Type != "" {
 			hostDetailAddProbeRow(HWND(hwnd), pr)
 		}
-		// Re-enable "Run all" when the last probe finishes.
-		if atomic.LoadInt32(&activeProbes) == 0 {
+		// Decrement and re-enable "Run all" when the last probe result arrives.
+		if atomic.AddInt32(&activeProbes, -1) == 0 {
 			enableWindow(hwndHostRunAllBtn, true)
 			setWindowText(hwndHostRunAllBtn, "Run all common probes")
 		}
@@ -185,10 +178,9 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 })
 
 func hostDetailClose(hwnd HWND) {
-	if dialogProbeCancel != nil {
-		dialogProbeCancel()
-		dialogProbeCancel = nil
-	}
+	// Clear the probe target so the receive loop stops posting results to
+	// this (now-closing) dialog window.
+	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, 0)
 	closeModal(hwnd)
 }
 
@@ -202,10 +194,6 @@ func showHostDetailDialog(parent HWND, ip string) {
 	pendingProbeResultsMu.Unlock()
 	atomic.StoreInt32(&activeProbes, 0)
 	currentDetailIP = ip
-	// Create a fresh context for this dialog session.
-	ctx, cancel := context.WithCancel(context.Background())
-	dialogProbeCtx = ctx
-	dialogProbeCancel = cancel
 
 	const dlgW, dlgH int32 = 740, 600
 	dlg, err := createWindowEx(
@@ -248,6 +236,11 @@ func showHostDetailDialog(parent HWND, ip string) {
 	setFontAllChildren(dlg, appFont)
 	// Override the summary pane with a monospace font so padded labels align.
 	sendMessage(hwndHostSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
+
+	// Register this dialog as the target for WM_PROBE_RESULT messages from
+	// the service receive loop. Cleared by hostDetailClose on close.
+	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(dlg))
+
 	runModal(dlg, parent)
 }
 
@@ -458,23 +451,19 @@ func hostDetailRunAll(hwnd HWND) {
 	}
 }
 
-// startProbe launches one probe goroutine. Results arrive via WM_PROBE_RESULT.
+// startProbe sends a single on-demand probe to the sensor service.
+// Probe results are delivered asynchronously via WM_PROBE_RESULT.
 func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 	atomic.AddInt32(&activeProbes, 1)
-	ctx := dialogProbeCtx
-	// Use the proxy dialer if one is configured in the current app config.
-	dial, _ := scan.MakeDialFunc(appConfig.Scan.SOCKSProxy)
-	go func() {
-		defer atomic.AddInt32(&activeProbes, -1)
-		res := scan.RunProbe(ctx, ip, spec, 3*time.Second, dial)
-		pendingProbeResultsMu.Lock()
-		idx := len(pendingProbeResults)
-		pendingProbeResults = append(pendingProbeResults, res)
-		pendingProbeResultsMu.Unlock()
-		if hwnd != 0 {
-			postMessage(hwnd, WM_PROBE_RESULT, uintptr(idx), 0)
+	if err := sendProbeViaService(ip, spec, appConfig.Scan.SOCKSProxy); err != nil {
+		atomic.AddInt32(&activeProbes, -1)
+		if atomic.LoadInt32(&activeProbes) == 0 {
+			enableWindow(hwndHostRunAllBtn, true)
+			setWindowText(hwndHostRunAllBtn, "Run all common probes")
 		}
-	}()
+		messageBox(hwnd, "Cannot run probe: the sensor service is not running.\nClick \"Elevate Sensor\" on the main window and try again.", "Probe", MB_ICONWARNING)
+		return
+	}
 }
 
 // hostDetailAddProbeRow inserts one probe result into the probe listview.

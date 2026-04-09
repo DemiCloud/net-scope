@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -24,28 +25,38 @@ import (
 
 // ServiceCmd is sent by the GUI to the service.
 type ServiceCmd struct {
-	// Cmd is one of: "scan", "stop", "dhcp-start", "dhcp-stop", "shutdown"
-	Cmd    string  `json:"cmd"`
-	Target string  `json:"target,omitempty"`
-	Config *Config `json:"config,omitempty"`
+	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop", "shutdown"
+	Cmd        string     `json:"cmd"`
+	Target     string     `json:"target,omitempty"`
+	Config     *Config    `json:"config,omitempty"`
+	// ScanID is echoed back in every Result and Done message for this scan.
+	// The GUI uses it to discard results from superseded scans.
+	ScanID     uint64     `json:"scan_id,omitempty"`
+	// Probe is set for the "probe" command.
+	Probe      *ProbeSpec `json:"probe,omitempty"`
+	// SOCKSProxy is the SOCKS5 address to use for the probe (empty = direct).
+	SOCKSProxy string     `json:"socks_proxy,omitempty"`
 }
 
 // ServiceMsg is sent by the service to the GUI.
-// Exactly one of Ready/Result/Done/DHCP/Err is meaningful per message.
 type ServiceMsg struct {
 	// Ready is sent once after connection is established.
 	// Elevated reports whether the service process is running as admin.
-	Ready    bool        `json:"ready,omitempty"`
-	Elevated bool        `json:"elevated,omitempty"`
-	// Result carries a single scanned host.
-	Result   *Result     `json:"result,omitempty"`
-	// Done marks end of a scan; Stats is populated.
-	Done     bool        `json:"done,omitempty"`
-	Stats    *ScanStats  `json:"stats,omitempty"`
+	Ready    bool         `json:"ready,omitempty"`
+	Elevated bool         `json:"elevated,omitempty"`
+	// Result carries a single scanned host; ScanID identifies the scan.
+	Result   *Result      `json:"result,omitempty"`
+	// Done marks end of a scan; Stats is populated; ScanID identifies the scan.
+	Done     bool         `json:"done,omitempty"`
+	Stats    *ScanStats   `json:"stats,omitempty"`
+	// ScanID is the value from the matching ServiceCmd.ScanID.
+	ScanID   uint64       `json:"scan_id,omitempty"`
 	// DHCP carries a single passively-observed DHCP packet.
-	DHCP     *DHCPEvent  `json:"dhcp,omitempty"`
+	DHCP     *DHCPEvent   `json:"dhcp,omitempty"`
+	// ProbeResult carries the result of a single on-demand host probe.
+	ProbeResult *ProbeResult `json:"probe_result,omitempty"`
 	// Err carries a human-readable error string.
-	Err      string      `json:"err,omitempty"`
+	Err      string       `json:"err,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +141,13 @@ func DialService(addr, fingerprint string) (net.Conn, error) {
 // ---------------------------------------------------------------------------
 
 // RunServiceConn is the main loop run by the service subprocess.
-// It handles multiple sequential scan commands over a single connection,
-// staying alive until the GUI sends "shutdown" or closes the connection.
+// It handles commands over a single connection, staying alive until the GUI
+// sends "shutdown" or closes the connection.
+//
+// Scans and probes run in separate goroutines so the command loop remains
+// responsive (e.g. a "stop" command cancels an in-progress scan immediately).
+// All concurrent writes to enc are serialised by encMu.
+//
 // The connection must already be authenticated (TLS handshake completed by
 // DialService on the subprocess side and tls.NewListener on the parent side).
 func RunServiceConn(conn net.Conn) error {
@@ -139,10 +155,18 @@ func RunServiceConn(conn net.Conn) error {
 
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
+	var encMu sync.Mutex
+
+	// safeSend serialises concurrent writes to the JSON encoder.
+	safeSend := func(msg ServiceMsg) error {
+		encMu.Lock()
+		defer encMu.Unlock()
+		return enc.Encode(msg)
+	}
 
 	// Announce readiness and elevation state. Authentication has already been
 	// established by the TLS handshake; no additional token exchange needed.
-	if err := enc.Encode(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
+	if err := safeSend(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
 		return fmt.Errorf("service ready: %w", err)
 	}
 
@@ -162,30 +186,31 @@ func RunServiceConn(conn net.Conn) error {
 				scanCancel()
 			}
 			if cmd.Config == nil || cmd.Target == "" {
-				_ = enc.Encode(ServiceMsg{Err: "scan: missing target or config"})
+				_ = safeSend(ServiceMsg{Err: "scan: missing target or config"})
 				continue
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			scanCancel = cancel
+			scanID := cmd.ScanID
 
 			sc := NewScanner(*cmd.Config)
 			ch, err := sc.Scan(ctx, cmd.Target)
 			if err != nil {
 				scanCancel()
 				scanCancel = nil
-				_ = enc.Encode(ServiceMsg{Err: "scan: " + err.Error()})
+				_ = safeSend(ServiceMsg{Err: "scan: " + err.Error(), ScanID: scanID})
 				continue
 			}
-			for r := range ch {
-				rCopy := r
-				if werr := enc.Encode(ServiceMsg{Result: &rCopy}); werr != nil {
-					return werr
+			// Stream results in a goroutine so the command loop stays responsive.
+			go func() {
+				for r := range ch {
+					rCopy := r
+					if werr := safeSend(ServiceMsg{Result: &rCopy, ScanID: scanID}); werr != nil {
+						return
+					}
 				}
-			}
-			scanCancel = nil
-			if werr := enc.Encode(ServiceMsg{Done: true, Stats: &sc.Stats}); werr != nil {
-				return werr
-			}
+				_ = safeSend(ServiceMsg{Done: true, Stats: &sc.Stats, ScanID: scanID})
+			}()
 
 		case "stop":
 			if scanCancel != nil {
@@ -193,12 +218,26 @@ func RunServiceConn(conn net.Conn) error {
 				scanCancel = nil
 			}
 
+		case "probe":
+			if cmd.Probe == nil || cmd.Target == "" {
+				_ = safeSend(ServiceMsg{Err: "probe: missing target or spec"})
+				continue
+			}
+			spec := *cmd.Probe
+			target := cmd.Target
+			proxy := cmd.SOCKSProxy
+			go func() {
+				dial, _ := MakeDialFunc(proxy)
+				result := RunProbe(context.Background(), target, spec, 3*time.Second, dial)
+				_ = safeSend(ServiceMsg{ProbeResult: &result})
+			}()
+
 		case "dhcp-start":
 			if dhcpCancel != nil {
 				break // already running
 			}
 			if !IsElevated() {
-				_ = enc.Encode(ServiceMsg{Err: "dhcp-start: requires elevation"})
+				_ = safeSend(ServiceMsg{Err: "dhcp-start: requires elevation"})
 				continue
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -207,13 +246,13 @@ func RunServiceConn(conn net.Conn) error {
 			if err := ListenDHCP(ctx, ch); err != nil {
 				dhcpCancel()
 				dhcpCancel = nil
-				_ = enc.Encode(ServiceMsg{Err: "dhcp-start: " + err.Error()})
+				_ = safeSend(ServiceMsg{Err: "dhcp-start: " + err.Error()})
 				continue
 			}
 			go func() {
 				for evt := range ch {
 					e := evt
-					if werr := enc.Encode(ServiceMsg{DHCP: &e}); werr != nil {
+					if werr := safeSend(ServiceMsg{DHCP: &e}); werr != nil {
 						return
 					}
 				}
@@ -226,13 +265,16 @@ func RunServiceConn(conn net.Conn) error {
 			}
 
 		case "shutdown":
+			if scanCancel != nil {
+				scanCancel()
+			}
 			if dhcpCancel != nil {
 				dhcpCancel()
 			}
 			return nil
 
 		default:
-			_ = enc.Encode(ServiceMsg{Err: "unknown command: " + cmd.Cmd})
+			_ = safeSend(ServiceMsg{Err: "unknown command: " + cmd.Cmd})
 		}
 	}
 }

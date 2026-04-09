@@ -395,6 +395,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if bcastCancel != nil {
 			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD)")
 		}
+		// If the service dropped while a scan was in progress, reset scan state
+		// so the UI doesn't remain stuck showing "Scanning…" with a Stop button.
+		if isScanning {
+			scanMu.Lock()
+			scanCancel = nil
+			scanMu.Unlock()
+			isScanning = false
+			setWindowText(hwndScan, "Scan")
+			setWindowText(hwndScanStatus, "Service disconnected")
+		}
 		return 0
 
 	case WM_LISTENER_STATUS:

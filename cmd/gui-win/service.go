@@ -5,9 +5,11 @@ package guiwin
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/demicloud/net-scope/internal/scan"
@@ -21,20 +23,18 @@ var (
 	serviceMu       sync.Mutex
 	serviceConn     net.Conn
 	serviceEnc      *json.Encoder
-	serviceDec      *json.Decoder
 	serviceElevated bool // true if the running service process is admin
 
-	// serviceDecMu serialises access to serviceDec. The JSON decoder is not
-	// goroutine-safe; holding this for the entire decode loop in
-	// sendScanViaService prevents a second scan goroutine from reading
-	// concurrently with an outgoing one (stop → immediate rescan race).
-	serviceDecMu sync.Mutex
-
 	// serviceEncMu serialises all writes to serviceEnc. json.Encoder has no
-	// internal lock; concurrent Encode calls (scan goroutine + stopServiceScan
+	// internal lock; concurrent Encode calls (scan + probe + stopServiceScan
 	// + startDHCPCapture) corrupt the wire stream and cause the remote
 	// decoder to panic.
 	serviceEncMu sync.Mutex
+
+	// hwndActiveProbeDialogAtomic holds the HWND of the currently-open host
+	// detail dialog, or 0 if none is open. Accessed atomically: written by
+	// the UI thread (open/close), read by the service receive goroutine.
+	hwndActiveProbeDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -65,10 +65,9 @@ func stopService() {
 		enc := serviceEnc
 		serviceConn = nil
 		serviceEnc = nil
-		serviceDec = nil
 		serviceElevated = false
 		// Best-effort graceful shutdown — hold serviceEncMu so we don't
-		// race with a scan goroutine that still holds enc.
+		// race with a concurrent Encode.
 		serviceEncMu.Lock()
 		_ = enc.Encode(scan.ServiceCmd{Cmd: "shutdown"})
 		serviceEncMu.Unlock()
@@ -140,23 +139,69 @@ func spawnService(hwnd HWND, elevated bool) {
 		conn.SetDeadline(time.Time{}) // clear deadline for subsequent reads
 		serviceConn = conn
 		serviceEnc = enc
-		serviceDec = dec
 		serviceElevated = msg.Elevated
 		serviceMu.Unlock()
 
 		postMessage(hwnd, WM_SERVICE_UP, 0, 0)
+
+		// Persistent receive loop — runs for the lifetime of this connection.
+		// Routes incoming service messages to the appropriate WndProc messages.
+		for {
+			var m scan.ServiceMsg
+			if err := dec.Decode(&m); err != nil {
+				break
+			}
+			if m.Done {
+				if m.Stats != nil {
+					pendingMu.Lock()
+					lastStats = *m.Stats
+					pendingMu.Unlock()
+				}
+				postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(m.ScanID), 0)
+			} else if m.Result != nil {
+				pendingMu.Lock()
+				idx := len(pendingResults)
+				pendingResults = append(pendingResults, *m.Result)
+				pendingMu.Unlock()
+				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(m.ScanID))
+			} else if m.DHCP != nil {
+				pendingDHCPMu.Lock()
+				idx := len(pendingDHCP)
+				pendingDHCP = append(pendingDHCP, *m.DHCP)
+				pendingDHCPMu.Unlock()
+				postMessage(hwnd, WM_DHCP_EVENT, uintptr(idx), 0)
+			} else if m.ProbeResult != nil {
+				pendingProbeResultsMu.Lock()
+				idx := len(pendingProbeResults)
+				pendingProbeResults = append(pendingProbeResults, *m.ProbeResult)
+				pendingProbeResultsMu.Unlock()
+				if h := atomic.LoadUintptr(&hwndActiveProbeDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_PROBE_RESULT, uintptr(idx), 0)
+				}
+			}
+		}
+
+		// Connection closed (normally or due to error). Clean up.
+		serviceMu.Lock()
+		if serviceConn == conn {
+			serviceConn = nil
+			serviceEnc = nil
+			serviceElevated = false
+			conn.Close()
+		}
+		serviceMu.Unlock()
+		postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
 	}()
 }
 
-// sendScanViaService sends a scan command to the running service and pumps
-// results back through the normal WM_SCAN_RESULT / WM_SCAN_COMPLETE pipeline.
-// gen is the scan generation counter; it is passed back via WM_SCAN_COMPLETE
-// so the UI thread can discard completions from superseded scans.
+// sendScanViaService sends a scan command to the running service. Results are
+// delivered asynchronously through the persistent receive loop as
+// WM_SCAN_RESULT / WM_SCAN_COMPLETE messages. gen is echoed back by the
+// service in every message so the UI thread can discard results from
+// superseded scans.
 func sendScanViaService(hwnd HWND, target string, cfg scan.Config, gen uint64) {
 	serviceMu.Lock()
 	enc := serviceEnc
-	dec := serviceDec
-	conn := serviceConn
 	serviceMu.Unlock()
 
 	if enc == nil {
@@ -164,72 +209,29 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config, gen uint64) {
 		return
 	}
 
-	go func() {
-		defer func() {
-			if p := recover(); p != nil {
-				writeCrashLog(hwnd, p)
-				postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
-			}
-		}()
-
-		// Acquire exclusive ownership of the decoder for the lifetime of this
-		// scan's response stream. A previous scan goroutine may still be
-		// draining its final messages; block until it is done.
-		serviceDecMu.Lock()
-		defer serviceDecMu.Unlock()
-
-		serviceEncMu.Lock()
-		err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg})
-		serviceEncMu.Unlock()
-		if err != nil {
-			postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
-			return
-		}
-
-		for {
-			var msg scan.ServiceMsg
-			if err := dec.Decode(&msg); err != nil {
-				// Connection lost mid-scan.
-				serviceMu.Lock()
-				if serviceConn == conn {
-					serviceConn = nil
-					serviceEnc = nil
-					serviceDec = nil
-					serviceElevated = false
-					conn.Close()
-				}
-				serviceMu.Unlock()
-				postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
-				break
-			}
-			if msg.Err != "" {
-				break
-			}
-			if msg.Done {
-				if msg.Stats != nil {
-					pendingMu.Lock()
-					lastStats = *msg.Stats
-					pendingMu.Unlock()
-				}
-				break
-			}
-			if msg.Result != nil {
-				pendingMu.Lock()
-				idx := len(pendingResults)
-				pendingResults = append(pendingResults, *msg.Result)
-				pendingMu.Unlock()
-				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(gen))
-			}
-			if msg.DHCP != nil {
-				pendingDHCPMu.Lock()
-				idx := len(pendingDHCP)
-				pendingDHCP = append(pendingDHCP, *msg.DHCP)
-				pendingDHCPMu.Unlock()
-				postMessage(hwnd, WM_DHCP_EVENT, uintptr(idx), 0)
-			}
-		}
+	serviceEncMu.Lock()
+	err := enc.Encode(scan.ServiceCmd{Cmd: "scan", Target: target, Config: &cfg, ScanID: gen})
+	serviceEncMu.Unlock()
+	if err != nil {
 		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
-	}()
+	}
+	// Results arrive through the persistent receive loop; no goroutine needed here.
+}
+
+// sendProbeViaService sends a single on-demand probe to the running service.
+// The result is delivered asynchronously as WM_PROBE_RESULT posted to the
+// active host detail dialog (hwndActiveProbeDialogAtomic).
+func sendProbeViaService(ip string, spec scan.ProbeSpec, socksProxy string) error {
+	serviceMu.Lock()
+	enc := serviceEnc
+	serviceMu.Unlock()
+	if enc == nil {
+		return errors.New("sensor service is not running")
+	}
+	serviceEncMu.Lock()
+	err := enc.Encode(scan.ServiceCmd{Cmd: "probe", Target: ip, Probe: &spec, SOCKSProxy: socksProxy})
+	serviceEncMu.Unlock()
+	return err
 }
 
 // stopServiceScan sends a stop command to the running service, if any.
