@@ -3,6 +3,7 @@ package scan
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -84,6 +85,32 @@ func RunProbe(ctx context.Context, ip string, spec ProbeSpec, timeout time.Durat
 			res.Result = v
 		} else {
 			res.Result = "no response"
+		}
+	case "SNMP":
+		// On-demand SNMP probe against the standard community string "public".
+		// Port 0 means use the default (161).
+		if info := probeSNMP(ctx, parsed, "public", timeout); info != nil {
+			res.Result = info.SysDescr
+			if res.Result == "" {
+				res.Result = info.SysName
+			}
+			if res.Result == "" {
+				res.Result = "responded (no sysDescr)"
+			}
+		} else {
+			res.Result = "no response"
+		}
+	case "OSProbe":
+		// OS probe: run a SYN probe to obtain TCP stack fingerprint, then
+		// feed it with any ICMP TTL already known about this host.
+		res.Port = 0 // no single target port
+		synPort := 80
+		syn := probeSYN(ctx, parsed, synPort, timeout)
+		os, conf := guessOS(0, BannerInfo{}, nil, nil, "", syn)
+		if string(os) != "" {
+			res.Result = fmt.Sprintf("%s  (%d%% confidence)", os, conf)
+		} else {
+			res.Result = "inconclusive"
 		}
 	default: // "TCP" or unknown
 		res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)

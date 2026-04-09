@@ -213,6 +213,9 @@ type hostEntry struct {
 	HasResult    bool              // true once a scan result has been recorded
 	DHCPEvents   []scan.DHCPEvent // all DHCP packets observed for this IP
 	ExtraServices []scan.ServiceInfo // broadcast services not yet in Result.Services
+	// ProbeResults accumulates on-demand probe results for the session.
+	// Persists across host-detail dialog close/reopen until the host is forgotten.
+	ProbeResults []scan.ProbeResult
 }
 
 type bcastEntry struct {
