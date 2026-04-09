@@ -114,20 +114,10 @@ const (
 	// Base for the detect-subnet popup (up to 16 interfaces supported).
 	IDM_DETECT_BASE = 3100
 
-	// Header right-click menu
-	IDM_HEADER_EDIT_COLS = 3200
-
 	// "Copy as…" context-menu IDs — used on every list-view tab.
 	IDM_COPY_AS_TSV  = 3210 // tab-separated with header row
 	IDM_COPY_AS_CSV  = 3211 // RFC 4180 CSV with header row
 	IDM_COPY_AS_JSON = 3212 // JSON array of objects
-
-	// Edit Columns dialog control IDs
-	IDC_EDITCOLS_OK      = 451
-	IDC_EDITCOLS_CANCEL  = 452
-	IDC_EDITCOLS_RESTORE = 453
-	// Checkbox IDs: IDC_EDITCOLS_COL_BASE + col, for col 1..9
-	IDC_EDITCOLS_COL_BASE = 460
 
 	// Status bar part indices (2 parts: Listener | Service)
 	statusPartListener = 0 // passive broadcast listener state

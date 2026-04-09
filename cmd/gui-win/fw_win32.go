@@ -318,6 +318,12 @@ const (
 	HKEY_CLASSES_ROOT  uintptr = 0x80000000
 	HKEY_CURRENT_USER  uintptr = 0x80000001
 	KEY_READ                   = 0x20019
+
+	// Edit Columns dialog control IDs (used by fw_listview.go)
+	IDC_EDITCOLS_OK       = 451
+	IDC_EDITCOLS_CANCEL   = 452
+	IDC_EDITCOLS_RESTORE  = 453
+	IDC_EDITCOLS_COL_BASE = 460 // Checkbox IDs: IDC_EDITCOLS_COL_BASE+col, col 1..N
 )
 
 // ---------------------------------------------------------------------------
