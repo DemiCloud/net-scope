@@ -1444,15 +1444,16 @@ func showAllHostsDialog(parent HWND) {
 // "Query Host…" dialog
 // ---------------------------------------------------------------------------
 //
-// Enter or select any IP address (known session hosts are pre-populated in the
-// combo as shortcuts) and click OK to open the full host-detail/probe dialog.
-// Works even when no scan has been run.
+// Type a host address or IP to open its detail dialog.  The list of known
+// session hosts filters as you type; selection is always explicit (no
+// auto-select).  Enter opens the typed input (or the explicitly selected row).
+// Esc / window-X dismisses without opening anything.
 
 const (
-	idPickHostEdit   = 710
-	idPickHostList   = 713
-	idPickHostOK     = 711
-	idPickHostCancel = 712
+	idPickHostEdit = 710
+	idPickHostList = 713
+	idPickHostHint = 714 // inline hint / validation label
+
 	// context menu (TPM_RETURNCMD; not WM_COMMAND)
 	idPickHostCtxView   = 730
 	idPickHostCtxCopy   = 731
@@ -1462,15 +1463,96 @@ const (
 var (
 	hwndPickEdit            HWND
 	hwndPickList            HWND
-	hwndPickHostPlaceholder HWND // empty-state overlay for Hosts dialog
+	hwndPickHint            HWND   // bottom hint / validation label
+	hwndPickHostPlaceholder HWND   // empty-state overlay for the listview
+	hwndPickDialog          HWND   // the Hosts dialog itself (set in WM_CREATE)
+	pickHintIsError         bool   // true → hint is shown in red
+	pickEditOrigProc        uintptr // original wndproc for the edit subclass
 )
 
-// pickHostRepopulate filters hwndPickList to rows matching filter and
-// auto-selects the first result so Enter immediately works.
+// pickEditSubclassProc intercepts VK_RETURN and VK_ESCAPE from the Hosts
+// dialog edit field so they trigger open / dismiss without needing a button.
+var pickEditSubclassProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	if uint32(msg) == WM_KEYDOWN {
+		switch wParam {
+		case VK_RETURN:
+			pickHostConfirm(hwndPickDialog)
+			return 0
+		case VK_ESCAPE:
+			closeModal(hwndPickDialog)
+			return 0
+		}
+	}
+	return callWindowProc(pickEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
+})
+
+// isValidHostInput returns true if s is a complete, valid host specification.
+// Partial IPs like "1.1.1" and empty strings are rejected.
+func isValidHostInput(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// IPv6 — contains colons; accept loosely.
+	if strings.Contains(s, ":") {
+		return true
+	}
+	// Looks like an IPv4 candidate (only digits and dots).
+	looksIPv4 := true
+	for _, c := range s {
+		if (c < '0' || c > '9') && c != '.' {
+			looksIPv4 = false
+			break
+		}
+	}
+	if looksIPv4 {
+		// Must be exactly 4 octets, each 0 – 255.
+		parts := strings.Split(s, ".")
+		if len(parts) != 4 {
+			return false
+		}
+		for _, p := range parts {
+			if p == "" {
+				return false
+			}
+			n, err := strconv.Atoi(p)
+			if err != nil || n < 0 || n > 255 {
+				return false
+			}
+		}
+		return true
+	}
+	// Hostname — anything non-empty that isn't purely digits/dots.
+	return true
+}
+
+// pickHostUpdateHint refreshes the bottom hint label with state-appropriate
+// text and sets pickHintIsError so WM_CTLCOLORSTATIC colours it correctly.
+func pickHostUpdateHint(hwnd HWND) {
+	input := strings.TrimSpace(getWindowText(hwndPickEdit))
+	sel := pickHostSelectedIP()
+
+	var text string
+	pickHintIsError = false
+	switch {
+	case sel != "":
+		text = "Enter to open selected host"
+	case input == "":
+		text = ""
+	case !isValidHostInput(input):
+		pickHintIsError = true
+		text = "Enter a full IP or hostname"
+	default:
+		text = "Enter to open \u201c" + input + "\u201d"
+	}
+	setWindowText(hwndPickHint, text)
+}
+
+// pickHostRepopulate filters the list to rows matching filter.
+// Selection is never forced — it remains explicit only.
 func pickHostRepopulate(filter string) {
 	hostsListViewRepopulate(hwndPickList, filter)
-	listViewSelectFirst(hwndPickList)
-	// Show or hide the empty-state overlay based on row count.
+	// No auto-select: selection is always explicit (mouse or arrow keys).
 	if sendMessage(hwndPickList, LVM_GETITEMCOUNT, 0, 0) == 0 {
 		showWindow(hwndPickHostPlaceholder, SW_SHOW)
 	} else {
@@ -1478,22 +1560,30 @@ func pickHostRepopulate(filter string) {
 	}
 }
 
-// pickHostSelectedIP returns the IP of the selected row, or "".
+// pickHostSelectedIP returns the IP of the explicitly selected row, or "".
 func pickHostSelectedIP() string {
 	return listViewSelectedText(hwndPickList, 0)
 }
 
-// pickHostConfirm resolves the best IP from the dialog: selected list row
-// first, then the typed text (which may be a raw IP not in the registry).
+// pickHostConfirm opens the host detail dialog.
+//
+// Priority:  explicit listview selection  →  typed input (validated).
+// Invalid typed input shows an inline hint and does nothing else.
 func pickHostConfirm(hwnd HWND) {
 	ip := pickHostSelectedIP()
 	if ip == "" {
 		ip = strings.TrimSpace(getWindowText(hwndPickEdit))
+		if !isValidHostInput(ip) {
+			// Inline error — no modal.
+			pickHintIsError = true
+			setWindowText(hwndPickHint, "Enter a full IP or hostname")
+			return
+		}
 	}
 	if ip == "" {
 		return
 	}
-	closeModal(HWND(hwnd))
+	closeModal(hwnd)
 	showHostDetailDialog(hwndMain, ip)
 }
 
@@ -1505,7 +1595,9 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		cW, cH := r.Right, r.Bottom
 		const pad int32 = 10
 		const editH int32 = 24
-		const btnH int32 = 26
+		const hintH int32 = 18
+
+		hwndPickDialog = HWND(hwnd)
 
 		// Filter / freeform edit field at the top.
 		hwndPickEdit, _ = createWindowEx(
@@ -1513,9 +1605,16 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
 			pad, pad, cW-pad*2, editH, HWND(hwnd), HMENU(idPickHostEdit), inst)
 
-		// Filtered listview fills the middle.
+		// Set cue (placeholder) text.
+		cueTxt, _ := syscall.UTF16PtrFromString("Search or enter host address")
+		sendMessage(hwndPickEdit, EM_SETCUEBANNER, 0, uintptr(unsafe.Pointer(cueTxt)))
+
+		// Subclass the edit field to intercept Enter and Esc.
+		pickEditOrigProc = setWindowLongPtr(hwndPickEdit, GWLP_WNDPROC, pickEditSubclassProc)
+
+		// Filtered listview fills the middle section.
 		listTop := pad + editH + pad/2
-		listH := cH - listTop - pad - btnH - pad
+		listH := cH - listTop - pad/2 - hintH - pad
 		hwndPickList, _ = createWindowEx(0, WC_LISTVIEW, "",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
 			pad, listTop, cW-pad*2, listH, HWND(hwnd), HMENU(idPickHostList), inst)
@@ -1524,25 +1623,20 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		listViewAddColumn(hwndPickList, 0, "IP", 140)
 		listViewAddColumn(hwndPickList, 1, "Hostname", cW-pad*2-140-4)
 
-		btnY, btnXs := dlgBottomRight(cW, cH, 2)
-		createWindowEx(0, "BUTTON", "OK",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-			btnXs[0], btnY, 100, btnH, HWND(hwnd), HMENU(idPickHostOK), inst)
-		createWindowEx(0, "BUTTON", "Cancel",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			btnXs[1], btnY, 100, btnH, HWND(hwnd), HMENU(idPickHostCancel), inst)
-
-		// Set placeholder (cue) text on the search field.
-		cueTxt, _ := syscall.UTF16PtrFromString("Search or enter host address")
-		sendMessage(hwndPickEdit, EM_SETCUEBANNER, 0, uintptr(unsafe.Pointer(cueTxt)))
-
-		// Empty-state overlay sits on top of the listview.
+		// Empty-state overlay floats over the listview when it is empty.
 		hwndPickHostPlaceholder, _ = createWindowEx(0, "STATIC", "No hosts yet",
 			WS_CHILD|SS_CENTER,
 			pad, listTop+(listH-18)/2, cW-pad*2, 18, HWND(hwnd), 0, inst)
 
-		// Populate list with all hosts on open; focus the edit field.
+		// Hint label at the very bottom (replaces OK/Cancel buttons).
+		hintY := cH - pad - hintH
+		hwndPickHint, _ = createWindowEx(0, "STATIC", "",
+			WS_CHILD|WS_VISIBLE|SS_CENTER,
+			pad, hintY, cW-pad*2, hintH, HWND(hwnd), HMENU(idPickHostHint), inst)
+
+		// Populate and update hint.
 		pickHostRepopulate("")
+		pickHostUpdateHint(HWND(hwnd))
 		setFocus(hwndPickEdit)
 		return 0
 
@@ -1552,65 +1646,76 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setTextColor(wParam, 0x00999999)
 			return uintptr(getSysColorBrush(COLOR_WINDOW))
 		}
-		return ctlColorDialog(wParam)
-		switch loword(wParam) {
-		case idPickHostOK:
-			pickHostConfirm(HWND(hwnd))
-		case idPickHostCancel:
-			closeModal(HWND(hwnd))
-		case idPickHostEdit:
-			if hiword(wParam) == EN_CHANGE {
-				pickHostRepopulate(getWindowText(hwndPickEdit))
+		if HWND(lParam) == hwndPickHint {
+			setBkMode(wParam, TRANSPARENT)
+			if pickHintIsError {
+				setTextColor(wParam, 0x000000BB) // red-ish for errors
+			} else {
+				setTextColor(wParam, 0x00666666) // gray for normal hints
 			}
+			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		}
+		return ctlColorDialog(wParam)
+
+	case WM_COMMAND:
+		if loword(wParam) == idPickHostEdit && hiword(wParam) == EN_CHANGE {
+			// Typing clears any list selection (selection is explicit only).
+			lv := LVITEM{StateMask: LVIS_SELECTED}
+			sendMessage(hwndPickList, LVM_SETITEMSTATE, ^uintptr(0), uintptr(unsafe.Pointer(&lv)))
+			pickHostRepopulate(getWindowText(hwndPickEdit))
+			pickHostUpdateHint(HWND(hwnd))
 		}
 		return 0
 
 	case WM_NOTIFY:
 		hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
-		if hdr.IdFrom == idPickHostList {
-			switch hdr.Code {
-			case NM_DBLCLK:
+		if hdr.IdFrom != idPickHostList {
+			return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+		}
+		switch hdr.Code {
+		case NM_DBLCLK:
+			pickHostConfirm(HWND(hwnd))
+		case LVN_KEYDOWN:
+			kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam)) //nolint:govet
+			if kd.WVKey == VK_RETURN {
 				pickHostConfirm(HWND(hwnd))
-			case LVN_KEYDOWN:
-				kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam)) //nolint:govet
-				if kd.WVKey == VK_RETURN {
-					pickHostConfirm(HWND(hwnd))
+			}
+		case LVN_ITEMCHANGED:
+			pickHostUpdateHint(HWND(hwnd))
+		case NM_RCLICK:
+			ip := pickHostSelectedIP()
+			if ip == "" {
+				pt := getCursorPos()
+				cpt := POINT{X: pt.X, Y: pt.Y}
+				procScreenToClient.Call(uintptr(hwndPickList), uintptr(unsafe.Pointer(&cpt)))
+				ht := LVHITTESTINFO{Pt: cpt}
+				row := int32(sendMessage(hwndPickList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+				if row >= 0 {
+					ip = listViewGetCellText(hwndPickList, row, 0)
 				}
-			case NM_RCLICK:
-				ip := pickHostSelectedIP()
-				if ip == "" {
-					// Hit-test at cursor position to find clicked row.
-					pt := getCursorPos()
-					cpt := POINT{X: pt.X, Y: pt.Y}
-					procScreenToClient.Call(uintptr(hwndPickList), uintptr(unsafe.Pointer(&cpt)))
-					ht := LVHITTESTINFO{Pt: cpt}
-					row := int32(sendMessage(hwndPickList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
-					if row >= 0 {
-						ip = listViewGetCellText(hwndPickList, row, 0)
-					}
-				}
-				if ip != "" {
-					pt := getCursorPos()
-					menu := createPopupMenu()
-					appendMenu(menu, MF_STRING, idPickHostCtxView, "View Host")
-					appendMenu(menu, MF_STRING, idPickHostCtxCopy, "Copy Data")
-					appendMenu(menu, MF_SEPARATOR, 0, "")
-					appendMenu(menu, MF_STRING, idPickHostCtxForget, "Forget Host")
-					cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd)))
-					destroyMenu(menu)
-					switch cmd {
-					case idPickHostCtxView:
-						closeModal(HWND(hwnd))
-						showHostDetailDialog(hwndMain, ip)
-					case idPickHostCtxCopy:
-						copyToClipboard(HWND(hwnd), buildHostSummary(ip))
-					case idPickHostCtxForget:
-						confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
-						if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
-							delete(hostRegistry, ip)
-							postMessage(hwndMain, WM_SCAN_RESULT, 0, 0)
-							pickHostRepopulate(getWindowText(hwndPickEdit))
-						}
+			}
+			if ip != "" {
+				pt := getCursorPos()
+				menu := createPopupMenu()
+				appendMenu(menu, MF_STRING, idPickHostCtxView, "View Host")
+				appendMenu(menu, MF_STRING, idPickHostCtxCopy, "Copy Data")
+				appendMenu(menu, MF_SEPARATOR, 0, "")
+				appendMenu(menu, MF_STRING, idPickHostCtxForget, "Forget Host")
+				cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd)))
+				destroyMenu(menu)
+				switch cmd {
+				case idPickHostCtxView:
+					closeModal(HWND(hwnd))
+					showHostDetailDialog(hwndMain, ip)
+				case idPickHostCtxCopy:
+					copyToClipboard(HWND(hwnd), buildHostSummary(ip))
+				case idPickHostCtxForget:
+					confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
+					if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
+						delete(hostRegistry, ip)
+						postMessage(hwndMain, WM_SCAN_RESULT, 0, 0)
+						pickHostRepopulate(getWindowText(hwndPickEdit))
+						pickHostUpdateHint(HWND(hwnd))
 					}
 				}
 			}
