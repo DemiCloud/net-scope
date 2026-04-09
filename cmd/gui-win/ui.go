@@ -424,6 +424,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		return 0
 
+	case WM_HOST_REFRESH:
+		// Posted by UI code after mutating hostRegistry (e.g. forget host).
+		// No payload — just rebuild the hosts listview from allScanResults.
+		applyActiveFilter()
+		return 0
+
 	case WM_DHCP_EVENT:
 		pendingDHCPMu.Lock()
 		var evt scan.DHCPEvent
@@ -1001,7 +1007,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			return 0
 		}
 		pendingMu.Lock()
-		r := pendingResults[int(wParam)]
+		idx := int(wParam)
+		if idx >= len(pendingResults) {
+			pendingMu.Unlock()
+			return 0
+		}
+		r := pendingResults[idx]
 		pendingMu.Unlock()
 
 		ipStr := r.IP.String()

@@ -27,6 +27,7 @@ const (
 	WM_PROXY_VALID   = WM_APP + 11 // proxy connectivity test succeeded
 	WM_PROXY_FAIL    = WM_APP + 12 // proxy connectivity test failed (wParam = error index)
 	WM_LISTENER_STATUS = WM_APP + 13 // broadcast listener probe result (wParam = msg index)
+	WM_HOST_REFRESH    = WM_APP + 14 // request full host-list repaint (no payload)
 )
 
 // ---------------------------------------------------------------------------
