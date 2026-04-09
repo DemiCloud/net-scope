@@ -5,6 +5,7 @@ package guiwin
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -892,6 +893,42 @@ func getMonoFont() HFONT {
 	return monoFont
 }
 
+// buildHostJSON serialises one or more registry entries as a JSON array in the
+// same format as scan.WriteJSON / "Export All Hosts as JSON". ExtraServices
+// are merged into the scan.Result's Services slice before encoding so broadcast-
+// only services are included even when no full scan was run for that host.
+func buildHostJSON(ips []string) string {
+	results := make([]scan.Result, 0, len(ips))
+	for _, ip := range ips {
+		e := hostRegistry[ip]
+		if e == nil {
+			// Host with no registry entry — emit a minimal stub.
+			r := scan.Result{}
+			r.IP = net.ParseIP(ip)
+			results = append(results, r)
+			continue
+		}
+		r := e.Result
+		if r.IP == nil {
+			r.IP = net.ParseIP(ip)
+		}
+		// Merge broadcast/passive services that aren't already in r.Services.
+		seen := make(map[string]bool, len(r.Services))
+		for _, svc := range r.Services {
+			seen[svc.Source+"|"+svc.Name] = true
+		}
+		for _, svc := range e.ExtraServices {
+			if !seen[svc.Source+"|"+svc.Name] {
+				r.Services = append(r.Services, svc)
+			}
+		}
+		results = append(results, r)
+	}
+	var buf strings.Builder
+	_ = scan.WriteJSON(&buf, results)
+	return buf.String()
+}
+
 // buildHostSummary returns a concise identity summary for ip.
 //
 // This covers derived knowledge and stable identity fields only:
@@ -1320,7 +1357,7 @@ func allHostsDoAction(dlg HWND, ip string, action int32) {
 		closeModal(dlg)
 		showHostDetailDialog(hwndMain, ip)
 	case idAllHostsCtxCopy:
-		copyToClipboard(dlg, buildHostSummary(ip))
+		copyToClipboard(dlg, buildHostJSON([]string{ip}))
 	case idAllHostsCtxExport:
 		path := getSaveFileName(dlg, "Export Host Data", "txt",
 			"Text files|*.txt|All files|*.*|")
@@ -1750,7 +1787,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					closeModal(HWND(hwnd))
 					showHostDetailDialog(hwndMain, ip)
 				case idPickHostCtxCopy:
-					copyToClipboard(HWND(hwnd), buildHostSummary(ip))
+					copyToClipboard(HWND(hwnd), buildHostJSON([]string{ip}))
 				case idPickHostCtxForget:
 					confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
 					if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
