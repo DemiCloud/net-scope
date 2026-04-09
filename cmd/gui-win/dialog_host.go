@@ -127,6 +127,7 @@ var probeKinds = []struct {
 	{"Port Test", "TCP", true},
 	{"SSH Banner", "SSH", true},
 	{"HTTP(S) Banner", "HTTPS", true},
+	{"TLS Info", "TLS", true},
 	{"OS Probe", "OSProbe", false},
 	{"SNMP", "SNMP", false},
 	{"SteamQuery", "Steam", true},
@@ -286,13 +287,11 @@ func showConnectMenu(hwnd HWND) {
 		{23, "telnet", "Telnet", idHostConnTelnet},
 	}
 
-	e, known := hostRegistry[currentDetailIP]
-
 	menu := createPopupMenu()
 	for _, c := range candidates {
 		flags := uint32(MF_STRING)
-		// Gray out if we have scan data and this port wasn't found open.
-		if known && e.HasResult && !portOpen(e.Result, c.port) {
+		// Gray unless we have confirmed evidence this port is reachable.
+		if !isPortAvailable(currentDetailIP, c.port) {
 			flags |= MF_GRAYED
 		}
 		appendMenu(menu, flags, uintptr(c.id), c.label)
@@ -321,6 +320,26 @@ func hasFPData(ip string) bool {
 	return string(r.OS) != "" || r.SYNProbe.WindowSize > 0 ||
 		r.Banner.SSH != "" || r.Banner.HTTP != "" || r.Banner.HTTPS != "" ||
 		r.Banner.TLSCert != "" || r.SNMP != nil
+}
+
+// isPortAvailable returns true if we have positive evidence that port is
+// reachable on ip — from a scan result or a successful on-demand probe.
+func isPortAvailable(ip string, port int) bool {
+	e, ok := hostRegistry[ip]
+	if !ok {
+		return false
+	}
+	if portOpen(e.Result, port) {
+		return true
+	}
+	// Any probe on this port that returned a real response counts.
+	for _, pr := range e.ProbeResults {
+		if pr.Port == port && pr.Result != "" && pr.Result != "no response" &&
+			pr.Result != "timeout" && pr.Result != "refused" {
+			return true
+		}
+	}
+	return false
 }
 
 // showCopyMenu shows a dropdown from the footer Copy ▾ button.
