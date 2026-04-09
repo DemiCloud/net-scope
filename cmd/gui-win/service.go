@@ -239,6 +239,7 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
 					hostname: rr.Hostname,
 					ips:      rr.IPs,
+					ptrNames: rr.PTRNames,
 					err:      rr.Err,
 				})
 				pendingResolveHostsMu.Unlock()
