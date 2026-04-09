@@ -440,32 +440,29 @@ const (
 	idVerCopy  = 712
 )
 
-// verHeaderBgColor is COLORREF 0x00BBGGRR: R=10 G=20 B=40 (dark navy).
-const verHeaderBgColor = uint32(0x0028140A)
-
-var (
-	hwndVerHeader  HWND
-	hwndVerBody    HWND
-	verHeaderBrush HBRUSH
-)
+var hwndVerBody HWND
 
 var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
 	case WM_CREATE:
 		inst := getModuleHandle()
-		const pad int32 = 14
-		const cW int32 = 430
-		const hdrH int32 = 44
-		const bodyH int32 = 156
+		const (
+			pad   int32 = 14
+			cW    int32 = 430
+			titleH int32 = 20
+			bodyH int32 = 168
+			sepY  int32 = pad + titleH + 6  // 40: below title
+			bodyY int32 = sepY + 10         // 50: below separator
+			btnY  int32 = bodyY + bodyH + pad // 232
+		)
 
-		// Header banner — background painted via WM_CTLCOLORSTATIC.
-		hwndVerHeader, _ = createWindowEx(0, "STATIC",
-			"NetScope  —  Version Information",
-			WS_CHILD|WS_VISIBLE|SS_CENTER,
-			0, 0, cW, hdrH, HWND(hwnd), 0, inst)
-		verHeaderBrush = createSolidBrush(verHeaderBgColor)
+		// Title and separator instead of coloured banner.
+		createWindowEx(0, "STATIC", "Version Information",
+			WS_CHILD|WS_VISIBLE|SS_LEFT,
+			pad, pad, cW-pad*2, titleH, HWND(hwnd), 0, inst)
+		createDlgSeparator(HWND(hwnd), inst, pad, sepY, cW-pad*2)
 
-		// Read-only body text — WM_CTLCOLOREDIT keeps it white.
+		// Clean read-only body — WM_CTLCOLOREDIT paints the white background.
 		body := "Version : " + version + "\r\n\r\n" +
 			"Description\r\n" +
 			"     Network inspection and reconnaissance — active probing,\r\n" +
@@ -474,12 +471,9 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 			"     https://github.com/demicloud/net-scope\r\n\r\n" +
 			"CLI equivalent\r\n" +
 			"     net-scope --version"
-		hwndVerBody, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", body,
-			WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-			pad, hdrH+pad, cW-pad*2, bodyH, HWND(hwnd), 0, inst)
+		hwndVerBody = createDlgBodyEdit(HWND(hwnd), inst, body, pad, bodyY, cW-pad*2, bodyH)
 
 		// Button row: Copy on the left, Close on the right.
-		const btnY int32 = hdrH + pad + bodyH + pad
 		createCtrl("BUTTON", "Copy to Clipboard",
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 			pad, btnY, 140, 26, HWND(hwnd), idVerCopy, inst)
@@ -492,19 +486,10 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		if HWND(lParam) == hwndVerHeader {
-			setBkMode(wParam, OPAQUE)
-			setTextColor(wParam, 0x00FFFFFF)
-			setBkColor(wParam, verHeaderBgColor)
-			return uintptr(verHeaderBrush)
-		}
 		return ctlColorDialog(wParam)
 
 	case WM_CTLCOLOREDIT:
-		setBkMode(wParam, OPAQUE)
-		setTextColor(wParam, 0x00000000)
-		setBkColor(wParam, 0x00FFFFFF)
-		return uintptr(getSysColorBrush(COLOR_WINDOW))
+		return ctlColorDlgBody(wParam)
 
 	case WM_COMMAND:
 		switch loword(wParam) {
@@ -518,13 +503,6 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
 		return 0
-
-	case WM_DESTROY:
-		if verHeaderBrush != 0 {
-			deleteObject(uintptr(verHeaderBrush))
-			verHeaderBrush = 0
-		}
-		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
@@ -535,12 +513,13 @@ func showVersionDialog(parent HWND) {
 	const (
 		pad        int32  = 14
 		cW         int32  = 430
-		hdrH       int32  = 44
-		bodyH      int32  = 156
+		bodyH      int32  = 168
+		bodyY      int32  = pad + 20 + 6 + 10 // 50
+		btnY       int32  = bodyY + bodyH + pad // 232
 		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
 	)
-	clientH := hdrH + pad + bodyH + pad + 26 + pad
+	clientH := btnY + 26 + pad // 272
 	outer := adjustWindowRectEx(RECT{0, 0, cW, clientH}, dlgStyle, dlgExStyle, false)
 
 	dlg, err := createWindowEx(
@@ -579,6 +558,8 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		return 0
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
+	case WM_CTLCOLOREDIT:
+		return ctlColorDlgBody(wParam)
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idDBDownload:
@@ -653,9 +634,7 @@ func createDatabasesControls(hwnd HWND) {
 	y += 36
 
 	// Status line — multiline so long strings wrap rather than scroll
-	hwndDBStatus, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "Checking…",
-		WS_CHILD|WS_VISIBLE|ES_READONLY|ES_MULTILINE,
-		lx, y, cw, 40, hwnd, idDBStatusText, inst)
+	hwndDBStatus = createDlgBodyEdit(hwnd, inst, "Checking…", lx, y, cw, 40)
 	y += 50
 
 	// Data directory info — allow two lines for long paths

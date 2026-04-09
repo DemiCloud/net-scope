@@ -2,7 +2,7 @@
 
 ## Naming / UX
 
-- [ ] **Nicer text-only dialogs** (Help, About, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
+- [x] **Nicer text-only dialogs** (Help, About, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
 
 ## Query Host (redesign)
 

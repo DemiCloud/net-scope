@@ -81,6 +81,7 @@ const (
 	SS_LEFT        = 0x0000
 	SS_CENTER      = 0x0001
 	SS_CENTERIMAGE = 0x0200
+	SS_ETCHEDHORZ  = 0x0010 // thin horizontal etched rule
 
 	// Button styles / messages
 	BS_DEFPUSHBUTTON = 0x0001
