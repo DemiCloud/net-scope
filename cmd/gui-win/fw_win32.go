@@ -1021,6 +1021,43 @@ func getSysColorBrush(colorIndex int) HBRUSH {
 	return HBRUSH(r)
 }
 
+// ---------------------------------------------------------------------------
+// Empty-state overlay helpers
+// ---------------------------------------------------------------------------
+
+// emptyStateOverlays tracks every STATIC "no data" overlay created via
+// createEmptyStateOverlay so WM_CTLCOLORSTATIC handlers can style them
+// uniformly without enumerating individual HWNDs.
+var emptyStateOverlays = map[HWND]bool{}
+
+// createEmptyStateOverlay creates a centered SS_CENTER STATIC child window
+// with the given text and registers it for automatic gray-on-white styling.
+// The window is hidden by default; callers that need it visible from the
+// start should call showWindow(h, SW_SHOW) immediately after.
+func createEmptyStateOverlay(parent HWND, text string, x, y, w, h int32) HWND {
+	hw, _ := createWindowEx(0, "STATIC", text,
+		WS_CHILD|SS_CENTER,
+		x, y, w, h, parent, 0, getModuleHandle())
+	if hw != 0 {
+		emptyStateOverlays[hw] = true
+	}
+	return hw
+}
+
+// isEmptyStateOverlay returns true if hwnd was created by createEmptyStateOverlay.
+func isEmptyStateOverlay(hwnd HWND) bool {
+	return emptyStateOverlays[hwnd]
+}
+
+// applyEmptyStateColor applies the standard gray-on-white styling for an
+// empty-state overlay inside a WM_CTLCOLORSTATIC handler.
+// Returns the brush value to return from the handler.
+func applyEmptyStateColor(hdc uintptr) uintptr {
+	setBkMode(hdc, TRANSPARENT)
+	setTextColor(hdc, 0x00999999)
+	return uintptr(getSysColorBrush(COLOR_WINDOW))
+}
+
 // selectObject selects an object (pen, brush, font, …) into a DC and returns
 // the previously selected object of the same type.
 func selectObject(hdc, obj uintptr) uintptr {

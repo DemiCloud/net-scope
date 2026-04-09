@@ -311,15 +311,9 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CTLCOLORSTATIC:
-		// Placeholder text gets gray color, white background matching the listview.
-		if HWND(lParam) == hwndListPlaceholder ||
-			HWND(lParam) == hwndMDNSPlaceholder ||
-			HWND(lParam) == hwndSSDPPlaceholder ||
-			HWND(lParam) == hwndWSDPlaceholder ||
-			HWND(lParam) == hwndDHCPPlaceholder {
-			setBkMode(wParam, TRANSPARENT)
-			setTextColor(wParam, 0x00999999)
-			return uintptr(getSysColorBrush(COLOR_WINDOW))
+		// Empty-state overlay labels get gray text on the white listview background.
+		if isEmptyStateOverlay(HWND(lParam)) {
+			return applyEmptyStateColor(wParam)
 		}
 		// Any other STATIC on the main window (e.g. "Target:" label) should
 		// blend with the COLOR_WINDOW background, not get the default
@@ -1209,10 +1203,9 @@ func createControls(hwnd HWND) {
 	headerInfos[headerHwnd] = &lvHeaderInfo{hwndList, hostsColTitles[:], colVisible[:], colDefaultLogicalWidths[:]}
 
 	// ---- empty-state placeholder (sits on top of hwndList when no hosts) ----
-	hwndListPlaceholder, _ = createWindowEx(0, "STATIC",
-		"Enter a target above and click Scan",
-		WS_CHILD|WS_VISIBLE|SS_CENTER,
-		0, hostsTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndListPlaceholder = createEmptyStateOverlay(hwnd, "Enter a target above and click Scan",
+		0, hostsTop+200, 1160, scale(20))
+	showWindow(hwndListPlaceholder, SW_SHOW)
 
 	// ---- mDNS listview (hidden initially) ----
 	hwndListMDNS, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1226,15 +1219,12 @@ func createControls(hwnd HWND) {
 	}
 	headerInfos[HWND(sendMessage(hwndListMDNS, LVM_GETHEADER, 0, 0))] =
 		&lvHeaderInfo{hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths}
-	hwndMDNSPlaceholder, _ = createWindowEx(0, "STATIC",
-		func() string {
-			if proxyEnabled {
-				return "Not available in proxy mode  (mDNS is link-local multicast, not routable over SOCKS5)"
-			}
-			return "Listening — no mDNS traffic detected yet"
-		}(),
-		WS_CHILD|SS_CENTER,
-		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndMDNSPlaceholder = createEmptyStateOverlay(hwnd, func() string {
+		if proxyEnabled {
+			return "Not available in proxy mode  (mDNS is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening — no mDNS traffic detected yet"
+	}(), 0, otherTop+200, 1160, scale(20))
 
 	// ---- SSDP listview (hidden initially) ----
 	hwndListSSDP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1248,15 +1238,12 @@ func createControls(hwnd HWND) {
 	}
 	headerInfos[HWND(sendMessage(hwndListSSDP, LVM_GETHEADER, 0, 0))] =
 		&lvHeaderInfo{hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths}
-	hwndSSDPPlaceholder, _ = createWindowEx(0, "STATIC",
-		func() string {
-			if proxyEnabled {
-				return "Not available in proxy mode  (SSDP is link-local multicast, not routable over SOCKS5)"
-			}
-			return "Listening — no SSDP traffic detected yet"
-		}(),
-		WS_CHILD|SS_CENTER,
-		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndSSDPPlaceholder = createEmptyStateOverlay(hwnd, func() string {
+		if proxyEnabled {
+			return "Not available in proxy mode  (SSDP is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening — no SSDP traffic detected yet"
+	}(), 0, otherTop+200, 1160, scale(20))
 
 	// ---- WS-Discovery listview (hidden initially) ----
 	hwndListWSD, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1270,15 +1257,12 @@ func createControls(hwnd HWND) {
 	}
 	headerInfos[HWND(sendMessage(hwndListWSD, LVM_GETHEADER, 0, 0))] =
 		&lvHeaderInfo{hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths}
-	hwndWSDPlaceholder, _ = createWindowEx(0, "STATIC",
-		func() string {
-			if proxyEnabled {
-				return "Not available in proxy mode  (WS-Discovery is link-local multicast, not routable over SOCKS5)"
-			}
-			return "Listening — no WS-Discovery traffic detected yet"
-		}(),
-		WS_CHILD|SS_CENTER,
-		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndWSDPlaceholder = createEmptyStateOverlay(hwnd, func() string {
+		if proxyEnabled {
+			return "Not available in proxy mode  (WS-Discovery is link-local multicast, not routable over SOCKS5)"
+		}
+		return "Listening — no WS-Discovery traffic detected yet"
+	}(), 0, otherTop+200, 1160, scale(20))
 
 	// ---- DHCP listview (hidden initially) ----
 	hwndListDHCP, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1292,15 +1276,12 @@ func createControls(hwnd HWND) {
 	}
 	headerInfos[HWND(sendMessage(hwndListDHCP, LVM_GETHEADER, 0, 0))] =
 		&lvHeaderInfo{hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths}
-	hwndDHCPPlaceholder, _ = createWindowEx(0, "STATIC",
-		func() string {
-			if proxyEnabled {
-				return "Not available in proxy mode  (DHCP capture requires local network interface access)"
-			}
-			return "Listening — no DHCP traffic detected yet (requires elevation)"
-		}(),
-		WS_CHILD|SS_CENTER,
-		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndDHCPPlaceholder = createEmptyStateOverlay(hwnd, func() string {
+		if proxyEnabled {
+			return "Not available in proxy mode  (DHCP capture requires local network interface access)"
+		}
+		return "Listening — no DHCP traffic detected yet (requires elevation)"
+	}(), 0, otherTop+200, 1160, scale(20))
 
 	// ---- network text area (hidden initially) ----
 	networkInitialText := "Waiting for broadcast traffic…"
@@ -1317,10 +1298,8 @@ func createControls(hwnd HWND) {
 		WS_EX_CLIENTEDGE, "EDIT", "",
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		0, otherTop, 1160, 600, hwnd, 0, inst)
-	hwndHealthPlaceholder, _ = createWindowEx(0, "STATIC",
-		"Run a scan to populate this report",
-		WS_CHILD|SS_CENTER,
-		0, otherTop+200, 1160, scale(20), hwnd, 0, inst)
+	hwndHealthPlaceholder = createEmptyStateOverlay(hwnd, "Run a scan to populate this report",
+		0, otherTop+200, 1160, scale(20))
 
 	// ---- status bar — 2 parts: Listener state | Service state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
