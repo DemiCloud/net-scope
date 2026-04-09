@@ -219,3 +219,53 @@ func dlgButtonRowSplit(cW, cH int32, leftN, rightN int) (y int32, leftXs, rightX
 	}
 	return
 }
+
+// ---------------------------------------------------------------------------
+// Dropdown-button popup helper
+// ---------------------------------------------------------------------------
+
+// popupMenuFromButton displays a popup menu anchored to the bottom-left of
+// anchor and handles the toggle-close race condition: when the user clicks the
+// anchor button while the menu is already visible, TrackPopupMenu dismisses
+// the menu but then the button fires WM_COMMAND again which would immediately
+// reopen it.  The fix: after TrackPopupMenu returns with cmd==0, check
+// GetAsyncKeyState(VK_LBUTTON).  If LButton is still physically held the
+// dismiss was caused by clicking the button — record the anchor HWND and let
+// shouldSuppressDropdown() absorb the spurious WM_COMMAND.
+//
+// Usage in WM_COMMAND:
+//
+//	case idMyButton:
+//	    if shouldSuppressDropdown(HWND(lParam)) { return 0 }
+//	    menu := createPopupMenu()
+//	    // … populate menu …
+//	    cmd := popupMenuFromButton(hwnd, menu, HWND(lParam))
+//	    destroyMenu(menu)
+//	    // … handle cmd …
+func popupMenuFromButton(parent HWND, menu HMENU, anchor HWND) int32 {
+	br := getWindowRect(anchor)
+	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD,
+		br.Left, br.Bottom, parent)
+	// When the menu is dismissed by a click on the anchor button, LButton is
+	// still physically held at this point (LBUTTONUP has not been processed yet).
+	// Mark anchor as suppressed so the pending BN_CLICKED is absorbed.
+	if cmd == 0 && getAsyncKeyState(VK_LBUTTON) < 0 {
+		dropdownSuppressHWND = anchor
+	}
+	return cmd
+}
+
+// dropdownSuppressHWND is set by popupMenuFromButton when a spurious
+// WM_COMMAND is expected.  Cleared by shouldSuppressDropdown.
+var dropdownSuppressHWND HWND
+
+// shouldSuppressDropdown returns true (and clears the flag) when the
+// WM_COMMAND for the given button HWND is a spurious re-open caused by the
+// dismiss click.  Pass lParam from WM_COMMAND as the HWND.
+func shouldSuppressDropdown(btn HWND) bool {
+	if dropdownSuppressHWND != 0 && dropdownSuppressHWND == btn {
+		dropdownSuppressHWND = 0
+		return true
+	}
+	return false
+}

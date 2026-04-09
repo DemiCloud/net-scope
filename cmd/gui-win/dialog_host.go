@@ -132,7 +132,10 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		case idHostCopyFP:
 			hostDetailCopyFP(HWND(hwnd))
 		case idHostConnect:
-			showConnectMenu(HWND(hwnd))
+			// lParam is the button HWND; check for spurious re-open from a dismiss click.
+			if !shouldSuppressDropdown(HWND(lParam)) {
+				showConnectMenu(HWND(hwnd))
+			}
 		case idHostPingOnce:
 			shellExecute(HWND(hwnd), "open", "cmd.exe",
 				"/c ping "+currentDetailIP+" && pause", "", SW_SHOW)
@@ -152,8 +155,10 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		if pr.Type != "" {
 			hostDetailAddProbeRow(HWND(hwnd), pr)
 		}
-		// Decrement and re-enable when the last probe result arrives.
+		// Decrement and re-enable all probe buttons when the last result arrives.
 		if atomic.AddInt32(&activeProbes, -1) == 0 {
+			enableWindow(hwndHostRunBtn, true)
+			setWindowText(hwndHostRunBtn, "Run Probe")
 			enableWindow(hwndHostRunAllBtn, true)
 			setWindowText(hwndHostRunAllBtn, "Run Common Probes")
 		}
@@ -277,8 +282,7 @@ func showConnectMenu(hwnd HWND) {
 		appendMenu(menu, MF_POPUP, uintptr(moreSub), "More options")
 	}
 
-	br := getWindowRect(hwndHostConnect)
-	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, br.Left, br.Bottom, hwnd)
+	cmd := popupMenuFromButton(hwnd, menu, hwndHostConnect)
 	destroyMenu(menu)
 
 	for _, c := range candidates {
@@ -496,11 +500,15 @@ func createHostDetailControls(hwnd HWND) {
 		cW-pad-100, btnY, 100, 26, hwnd, HMENU(idHostClose), inst)
 }
 
-// hostDetailRunSingle reads the Port and Type fields and runs one probe.
+// hostDetailRunSingle reads the Port and Type fields and fires one probe.
+// Visual feedback: the Run Probe button is disabled and its label changes to
+// «Running…» while the probe is in flight; WM_PROBE_RESULT re-enables it.
 func hostDetailRunSingle(hwnd HWND) {
 	portStr := strings.TrimSpace(getWindowText(hwndHostPortEdit))
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
+		// Flash the port field label red-ish by updating the status line briefly.
+		setWindowText(hwndHostStatus, "⚠  Enter a valid port number (1–65535)")
 		return
 	}
 	typeIdx := sendMessage(hwndHostTypeCombo, CB_GETCURSEL, 0, 0)
@@ -509,13 +517,16 @@ func hostDetailRunSingle(hwnd HWND) {
 		probeType = probeTypeLabels[int(typeIdx)]
 	}
 	spec := scan.ProbeSpec{Port: port, Type: probeType}
+	enableWindow(hwndHostRunBtn, false)
+	setWindowText(hwndHostRunBtn, "Running…")
 	startProbe(hwnd, currentDetailIP, spec)
 }
 
 // hostDetailRunAll fires probes for all CommonProbes in parallel.
 func hostDetailRunAll(hwnd HWND) {
+	enableWindow(hwndHostRunBtn, false)
 	enableWindow(hwndHostRunAllBtn, false)
-	setWindowText(hwndHostRunAllBtn, "Running…")
+	setWindowText(hwndHostRunAllBtn, "Running\u2026")
 	for _, spec := range scan.CommonProbes {
 		startProbe(hwnd, currentDetailIP, spec)
 	}
@@ -528,6 +539,8 @@ func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 	if err := sendProbeViaService(ip, spec, appConfig.Scan.SOCKSProxy); err != nil {
 		atomic.AddInt32(&activeProbes, -1)
 		if atomic.LoadInt32(&activeProbes) == 0 {
+			enableWindow(hwndHostRunBtn, true)
+			setWindowText(hwndHostRunBtn, "Run Probe")
 			enableWindow(hwndHostRunAllBtn, true)
 			setWindowText(hwndHostRunAllBtn, "Run Common Probes")
 		}
