@@ -257,6 +257,9 @@ const (
 	HDN_ITEMCLICKW    = uint32(0xFFFFFEBE) // HDN_FIRST(-300) - 22 = -322
 	HDN_ITEMDBLCLICKW = uint32(0xFFFFFEBD) // HDN_FIRST(-300) - 23 = -323
 
+	// Header control messages.
+	HDM_HITTEST = 0x1206 // HDM_FIRST(0x1200) + 6
+
 	// StatusBar
 	SB_SETTEXT    = 0x040B
 	SB_SETPARTS   = 0x0404
@@ -463,6 +466,14 @@ type NMHEADER struct {
 	IItem   int32  // column index that was clicked
 	IButton int32  // 0=left, 1=right, 2=middle
 	PItem   uintptr // *HDITEM (often NULL; do not dereference unless non-zero)
+}
+
+// HDHITTESTINFO is passed to HDM_HITTEST to determine which column header
+// item is under a given point. IItem is -1 if the point does not hit any item.
+type HDHITTESTINFO struct {
+	Pt    POINT
+	Flags uint32
+	IItem int32
 }
 
 // NMMOUSE is sent with NM_RCLICK / NM_DBLCLK notifications from controls

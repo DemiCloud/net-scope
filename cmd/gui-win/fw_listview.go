@@ -509,8 +509,9 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 
 			case NM_RCLICK:
 				if s.colVis != nil {
-					nm := (*NMMOUSE)(unsafe.Pointer(lParam)) //nolint:govet
-					showColumnHeaderMenu(getParent(hw), hw, s, int32(nm.DwItemSpec), getCursorPos())
+					hdrHwnd := HWND(sendMessage(hw, LVM_GETHEADER, 0, 0))
+					col := headerHitColumn(hdrHwnd)
+					showColumnHeaderMenu(getParent(hw), hw, s, col, getCursorPos())
 					return 0
 				}
 			}
@@ -604,9 +605,21 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 // Column header right-click context menu
 // ---------------------------------------------------------------------------
 
+// headerHitColumn returns the 0-based column index under the current cursor
+// position in the given header control, or -1 if no column was hit.
+// NM_RCLICK from a header sends plain NMHDR (no hit-test data), so this
+// helper uses HDM_HITTEST with the current cursor position instead.
+func headerHitColumn(hdrHwnd HWND) int32 {
+	pt := getCursorPos()
+	cpt := POINT{X: pt.X, Y: pt.Y}
+	procScreenToClient.Call(uintptr(hdrHwnd), uintptr(unsafe.Pointer(&cpt)))
+	ht := HDHITTESTINFO{Pt: cpt}
+	return int32(sendMessage(hdrHwnd, HDM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+}
+
 // showColumnHeaderMenu displays the per-column context menu on a header right-click.
-// col is the 0-based column index from NMMOUSE.DwItemSpec; pass -1 when no
-// column was directly hit (empty area of header — only "Edit Columns…" shows).
+// col is the 0-based column index; pass -1 when no column was directly hit
+// (empty area of header — only "Edit Columns…" shows).
 func showColumnHeaderMenu(parent, hwndLV HWND, s *lvManagedState, col int32, pt POINT) {
 	n := int32(len(s.colTitles))
 
