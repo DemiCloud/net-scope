@@ -350,6 +350,62 @@ func restoreLVColumns(hwnd HWND, defWidths []int32, colVis []bool) {
 }
 
 // ---------------------------------------------------------------------------
+// Column state persistence helpers
+// ---------------------------------------------------------------------------
+
+// listViewGetColumnWidths reads the current Win32 device-pixel width of every
+// column via LVM_GETCOLUMNWIDTH. Hidden columns have width 0. The returned
+// slice has exactly numCols elements.
+func listViewGetColumnWidths(hwnd HWND, numCols int) []int {
+	widths := make([]int, numCols)
+	for i := 0; i < numCols; i++ {
+		widths[i] = int(sendMessage(hwnd, LVM_GETCOLUMNWIDTH, uintptr(i), 0))
+	}
+	return widths
+}
+
+// listViewApplyColumnWidths sets each column to its saved device-pixel width
+// and updates colVis in-place: a column is considered visible iff its width > 0.
+// widths and colVis must have the same length; excess widths are ignored.
+func listViewApplyColumnWidths(hwnd HWND, widths []int, colVis []bool) {
+	n := len(widths)
+	if len(colVis) < n {
+		n = len(colVis)
+	}
+	for i := 0; i < n; i++ {
+		colVis[i] = widths[i] > 0
+		sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(i), uintptr(uint32(widths[i])))
+	}
+}
+
+// getLVSortState returns the current sort column (-1 = unsorted) and direction
+// for hwnd. Returns (-1, true) if hwnd is not a managed ListView.
+func getLVSortState(hwnd HWND) (col int, asc bool) {
+	if st, ok := lvManagedStates[hwnd]; ok {
+		return int(st.sortCol), st.sortAsc
+	}
+	return -1, true
+}
+
+// applyLVSortState restores the sort column and direction on a managed ListView:
+// it updates the internal managed state and redraws the column header indicators.
+// col is clamped to [-1, len(colTitles)-1]; out-of-range values are treated as
+// unsorted. Does nothing if hwnd is not a managed ListView.
+func applyLVSortState(hwnd HWND, col int, asc bool, colTitles []string) {
+	st, ok := lvManagedStates[hwnd]
+	if !ok {
+		return
+	}
+	if col < -1 || col >= len(colTitles) {
+		col = -1
+		asc = true
+	}
+	st.sortCol = int32(col)
+	st.sortAsc = asc
+	lvUpdateSortIndicators(hwnd, colTitles, st.sortCol, st.sortAsc)
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Managed ListView subclassing
 // ---------------------------------------------------------------------------
@@ -453,8 +509,8 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 
 			case NM_RCLICK:
 				if s.colVis != nil {
-					parent := getParent(hw)
-					showEditColumnsDialog(parent, hw, s.colTitles, s.colVis, s.defWidths)
+					nm := (*NMMOUSE)(unsafe.Pointer(lParam)) //nolint:govet
+					showColumnHeaderMenu(getParent(hw), hw, s, int32(nm.DwItemSpec), getCursorPos())
 					return 0
 				}
 			}
@@ -545,7 +601,52 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 }
 
 // ---------------------------------------------------------------------------
-// Edit Columns dialog (framework — opened by subclass on header right-click)
+// Column header right-click context menu
+// ---------------------------------------------------------------------------
+
+// showColumnHeaderMenu displays the per-column context menu on a header right-click.
+// col is the 0-based column index from NMMOUSE.DwItemSpec; pass -1 when no
+// column was directly hit (empty area of header — only "Edit Columns…" shows).
+func showColumnHeaderMenu(parent, hwndLV HWND, s *lvManagedState, col int32, pt POINT) {
+	n := int32(len(s.colTitles))
+
+	const cmdHide = 1
+	const cmdEdit = 2
+
+	menu := createPopupMenu()
+
+	// Show "Hide 'Column'" only when a specific column was hit.
+	if col >= 0 && col < n {
+		// Col 0 is always visible; also guard against hiding the last visible column.
+		visCount := 0
+		for _, v := range s.colVis {
+			if v {
+				visCount++
+			}
+		}
+		canHide := col > 0 && visCount > 1
+		flags := uint32(MF_STRING)
+		if !canHide {
+			flags |= MF_GRAYED
+		}
+		appendMenu(menu, flags, cmdHide, "Hide '"+s.colTitles[col]+"'")
+		appendMenu(menu, MF_SEPARATOR, 0, "")
+	}
+	appendMenu(menu, MF_STRING, cmdEdit, "Edit Columns\u2026")
+
+	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, parent)
+	destroyMenu(menu)
+
+	switch cmd {
+	case cmdHide:
+		setLVColumnVisible(hwndLV, s.defWidths, s.colVis, col, false)
+	case cmdEdit:
+		showEditColumnsDialog(parent, hwndLV, s.colTitles, s.colVis, s.defWidths)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Edit Columns dialog (framework — opened by showColumnHeaderMenu)
 // ---------------------------------------------------------------------------
 
 // editColsChecks holds the HWND of each checkbox (indexed by column number).

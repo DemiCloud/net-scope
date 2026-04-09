@@ -103,6 +103,7 @@ var (
 	scanStartTime  time.Time      // set when scan begins, used for duration metric
 	listHasHosts   bool           // true once ≥1 alive host found in current/last scan
 	isScanning     bool           // true while a scan is in progress (UI thread only)
+	activeTab      int            // current tab index; tracked for state persistence
 	scanGeneration uint64         // incremented on each new scan; guards against stale WM_SCAN_COMPLETE
 
 	// ipRowMap maps IP string → row index in hwndList.
@@ -434,6 +435,15 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// proxyEnabled is initialised before the window is created (in Run());
 		// it defaults to true when a SOCKS5 address is saved in settings.
 		createControls(HWND(hwnd))
+		// Restore persisted column state (widths, visibility, sort indicators).
+		if stateDirPath != "" && len(appState.Columns) > 0 {
+			restoreAllColumnStates(appState.Columns)
+		}
+		// Restore last active tab.
+		if stateDirPath != "" && appState.ActiveTab > 0 {
+			sendMessage(hwndTabCtrl, TCM_SETCURSEL, uintptr(appState.ActiveTab), 0)
+			activateTab(HWND(hwnd), int32(appState.ActiveTab))
+		}
 		// 30-second timer for broadcast host decay colours and "Last Seen" update.
 		setTimer(HWND(hwnd), IDT_DECAY, 30000, 0)
 		if noConfigFile {
@@ -458,93 +468,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
 		if hdr.IdFrom == IDC_TABS && hdr.Code == TCN_SELCHANGE {
 			tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-			// Hide all panes first.
-			showWindow(hwndList, SW_HIDE)
-			showWindow(hwndListPlaceholder, SW_HIDE)
-			showWindow(hwndListMDNS, SW_HIDE)
-			showWindow(hwndMDNSPlaceholder, SW_HIDE)
-			showWindow(hwndListSSDP, SW_HIDE)
-			showWindow(hwndSSDPPlaceholder, SW_HIDE)
-			showWindow(hwndListWSD, SW_HIDE)
-			showWindow(hwndWSDPlaceholder, SW_HIDE)
-			showWindow(hwndListDHCP, SW_HIDE)
-			showWindow(hwndDHCPPlaceholder, SW_HIDE)
-			showWindow(hwndListNetwork, SW_HIDE)
-			showWindow(hwndListHealth, SW_HIDE)
-			showWindow(hwndHealthPlaceholder, SW_HIDE)
-			// Show/hide scan bar and reposition Hosts listview accordingly.
-			// On Hosts tab the scan bar is visible and the list sits below it;
-			// on all other tabs the list fills from just below the tab strip.
-			if tab == 0 {
-				showWindow(hwndTarget, SW_SHOW)
-				showWindow(hwndDetect, SW_SHOW)
-				showWindow(hwndScan, SW_SHOW)
-				showWindow(hwndActiveOnly, SW_SHOW)
-				showWindow(hwndScanStatus, SW_SHOW)
-
-				// Ensure Hosts list is repositioned to account for scan bar.
-				r := getClientRect(hwndMain)
-				statusR := getClientRect(hwndStatus)
-				statusH := statusR.Bottom - statusR.Top
-				hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
-				listH := (r.Bottom - r.Top) - hostsTop - statusH
-				if listH < 0 {
-					listH = 0
-				}
-				moveWindow(hwndList, 0, hostsTop, r.Right-r.Left, listH)
-				moveWindow(hwndListPlaceholder, 0, hostsTop+(listH-scale(20))/2, r.Right-r.Left, scale(20))
-				showWindow(hwndList, SW_SHOW)
-				if !isScanning && !listHasHosts {
-					showWindow(hwndListPlaceholder, SW_SHOW)
-				}
-			} else {
-				showWindow(hwndTarget, SW_HIDE)
-				showWindow(hwndDetect, SW_HIDE)
-				showWindow(hwndScan, SW_HIDE)
-				showWindow(hwndActiveOnly, SW_HIDE)
-				showWindow(hwndScanStatus, SW_HIDE)
-				switch tab {
-				case 1:
-					showWindow(hwndListMDNS, SW_SHOW)
-					if bcastMDNS == 0 || proxyEnabled {
-						showWindow(hwndMDNSPlaceholder, SW_SHOW)
-					}
-				case 2:
-					showWindow(hwndListSSDP, SW_SHOW)
-					if bcastSSDP == 0 || proxyEnabled {
-						showWindow(hwndSSDPPlaceholder, SW_SHOW)
-					}
-				case 3:
-					showWindow(hwndListWSD, SW_SHOW)
-					if bcastWSD == 0 || proxyEnabled {
-						showWindow(hwndWSDPlaceholder, SW_SHOW)
-					}
-				case 4:
-					showWindow(hwndListDHCP, SW_SHOW)
-					if bcastDHCP == 0 || proxyEnabled {
-						showWindow(hwndDHCPPlaceholder, SW_SHOW)
-					}
-				case 5:
-					showWindow(hwndListNetwork, SW_SHOW)
-				case 6:
-					showWindow(hwndListHealth, SW_SHOW)
-					if !scanEverCompleted {
-						showWindow(hwndHealthPlaceholder, SW_SHOW)
-					}
-				}
-			}
-			// Update find bar for the new tab: reposition, reload its text,
-			// or hide it if the new tab doesn't support filtering.
-			if isWindowVisible(hwndSearchEdit) {
-				newTab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-				if newTab > 4 {
-					showWindow(hwndSearchEdit, SW_HIDE)
-					showWindow(hwndSearchClose, SW_HIDE)
-				} else {
-					positionFindBar(HWND(hwnd))
-					setWindowText(hwndSearchEdit, tabSearchFilter[newTab])
-				}
-			}
+			activeTab = int(tab)
+			activateTab(HWND(hwnd), tab)
 		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
@@ -592,6 +517,17 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 			return 0
+		}
+		// Right-click on any managed listview header → column context menu.
+		// Handles tabs where header NM_RCLICK is reflected to the main window
+		// rather than being intercepted by the listview's subclass WndProc.
+		if hdr.Code == NM_RCLICK {
+			nm := (*NMMOUSE)(unsafe.Pointer(lParam)) //nolint:govet
+			lvHwnd := getParent(HWND(hdr.HwndFrom))
+			if s, ok := lvManagedStates[lvHwnd]; ok && s.colVis != nil {
+				showColumnHeaderMenu(HWND(hwnd), lvHwnd, s, int32(nm.DwItemSpec), getCursorPos())
+				return 0
+			}
 		}
 		// Right-click on host list → context menu.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_RCLICK {
@@ -1085,6 +1021,26 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_DESTROY:
+		// Persist UI state before tearing down.
+		if stateDirPath != "" {
+			var ws config.WindowState
+			if wp, ok := getWindowPlacement(HWND(hwnd)); ok {
+				r := wp.RcNormalPosition
+				ws = config.WindowState{
+					X:         int(r.Left),
+					Y:         int(r.Top),
+					W:         int(r.Right - r.Left),
+					H:         int(r.Bottom - r.Top),
+					Maximized: wp.ShowCmd == SW_SHOWMAXIMIZED,
+					Valid:     true,
+				}
+			}
+			config.SaveState(stateDirPath, config.State{
+				Window:    ws,
+				ActiveTab: activeTab,
+				Columns:   snapshotAllColumnStates(),
+			})
+		}
 		killTimer(HWND(hwnd), IDT_DECAY)
 		stopScan()
 		stopService()
