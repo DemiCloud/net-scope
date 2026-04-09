@@ -1542,6 +1542,12 @@ var pickEditSubclassProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam ui
 
 // isValidHostInput returns true if s is a complete, valid host specification.
 // Partial IPs like "1.1.1" and empty strings are rejected.
+// isIPString returns true if s is a syntactically valid IPv4 or IPv6 address.
+// Used to determine whether forward DNS resolution is needed.
+func isIPString(s string) bool {
+	return net.ParseIP(s) != nil
+}
+
 // Hostnames are validated per RFC 952 / RFC 1123: labels of 1–63 characters
 // containing only ASCII letters, digits, and hyphens (not leading or trailing),
 // separated by dots, total length ≤ 253 characters.
@@ -1658,6 +1664,11 @@ func pickHostSelectedIP() string {
 //
 // Priority:  explicit listview selection (single only)  →  typed input (validated).
 // Multiple selections do nothing — the hint already explains what to do.
+//
+// If the typed input is a hostname (not an IP address), hostname→IP resolution
+// is performed in a background goroutine so the UI thread is not blocked.
+// All resolved IPs are added to the host registry, and the detail dialog is
+// opened for the first result.
 func pickHostConfirm(hwnd HWND) {
 	selected := pickHostSelectedIPs()
 	if len(selected) > 1 {
@@ -1677,6 +1688,32 @@ func pickHostConfirm(hwnd HWND) {
 		}
 	}
 	if ip == "" {
+		return
+	}
+	// If the user typed a hostname rather than a literal IP, resolve it in the
+	// background so we don't stall the UI thread.  WM_RESOLVE_HOST is posted
+	// when the lookup finishes (or fails).
+	if !isIPString(ip) {
+		hostname := ip
+		closeModal(hwnd)
+		go func() {
+			addrs, err := net.LookupHost(hostname)
+			pendingResolveHostsMu.Lock()
+			idx := len(pendingResolveHosts)
+			if err != nil {
+				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
+					hostname: hostname,
+					err:      err.Error(),
+				})
+			} else {
+				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
+					hostname: hostname,
+					ips:      addrs,
+				})
+			}
+			pendingResolveHostsMu.Unlock()
+			postMessage(hwndMain, WM_RESOLVE_HOST, uintptr(idx), 0)
+		}()
 		return
 	}
 	closeModal(hwnd)

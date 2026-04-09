@@ -28,6 +28,7 @@ const (
 	WM_PROXY_FAIL    = WM_APP + 12 // proxy connectivity test failed (wParam = error index)
 	WM_LISTENER_STATUS = WM_APP + 13 // broadcast listener probe result (wParam = msg index)
 	WM_HOST_REFRESH    = WM_APP + 14 // request full host-list repaint (no payload)
+	WM_RESOLVE_HOST    = WM_APP + 15 // hostname→IP resolution finished (wParam = index into pendingResolveHosts)
 	WM_OUI_FAIL        = WM_APP + 20 // OUI download failed (posted to active databases dialog)
 	WM_OUI_SUCCESS     = WM_APP + 21 // OUI download succeeded (posted to active databases dialog)
 )

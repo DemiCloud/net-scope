@@ -156,6 +156,11 @@ var (
 	pendingEnriches []enrichEvent
 	pendingEnrichMu sync.Mutex
 
+	// pendingResolveHosts carries the results of background hostname→IP
+	// resolution back to the UI thread via WM_RESOLVE_HOST.
+	pendingResolveHosts   []resolveHostResult
+	pendingResolveHostsMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -220,6 +225,14 @@ type hostEntry struct {
 type bcastEntry struct {
 	ip  string
 	svc scan.ServiceInfo
+}
+
+// resolveHostResult carries the outcome of a background hostname→IP lookup
+// back to the UI thread via WM_RESOLVE_HOST.
+type resolveHostResult struct {
+	hostname string   // original hostname the user typed
+	ips      []string // resolved addresses (empty on failure)
+	err      string   // non-empty on lookup failure
 }
 
 // startBroadcastListener delegates mDNS/SSDP/WSD listening to the service.
@@ -369,6 +382,36 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// Posted by UI code after mutating hostRegistry (e.g. forget host).
 		// No payload — just rebuild the hosts listview from allScanResults.
 		applyActiveFilter()
+		return 0
+
+	case WM_RESOLVE_HOST:
+		// Background hostname→IP resolution finished.
+		// wParam is the index into pendingResolveHosts.
+		pendingResolveHostsMu.Lock()
+		var res resolveHostResult
+		if int(wParam) < len(pendingResolveHosts) {
+			res = pendingResolveHosts[int(wParam)]
+		}
+		pendingResolveHostsMu.Unlock()
+
+		if res.err != "" {
+			messageBox(HWND(hwnd), "Could not resolve \u201c"+res.hostname+"\u201d:\n"+res.err, "Host Lookup", MB_ICONWARNING)
+			return 0
+		}
+		if len(res.ips) == 0 {
+			messageBox(HWND(hwnd), "\u201c"+res.hostname+"\u201d has no address records.", "Host Lookup", MB_ICONWARNING)
+			return 0
+		}
+		// Ensure all resolved IPs are in the registry and carry the hostname.
+		for _, ip := range res.ips {
+			en := ensureHostEntry(ip)
+			if en.Result.Hostname == "" {
+				en.Result.Hostname = res.hostname
+			}
+			en.LastSeen = time.Now()
+		}
+		// Open the detail dialog for the first (or only) resolved IP.
+		showHostDetailDialog(HWND(hwnd), res.ips[0])
 		return 0
 
 	case WM_DHCP_EVENT:
