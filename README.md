@@ -114,10 +114,10 @@ Non-private targets prompt for confirmation.
 
 Config file is loaded from (in order of precedence):
 
-1. `./config.toml` (current working directory)
-2. Platform user config directory:
+1. Platform user config directory:
    - **Windows:** `%APPDATA%\demicloud\net-scope\config.toml`
    - **Linux / BSD:** `~/.config/demicloud/net-scope/config.toml`
+2. `./config.toml` (current working directory — useful for per-project CLI overrides)
 
 If no file exists, built-in defaults are used silently. The file is **not** created
 automatically — the GUI prompts on first save.
