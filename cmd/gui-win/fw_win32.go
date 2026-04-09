@@ -64,6 +64,7 @@ const (
 	// Extended window styles
 	WS_EX_DLGMODALFRAME = 0x00000001
 	WS_EX_CLIENTEDGE    = 0x00000200
+	WS_EX_STATICEDGE    = 0x00020000
 	WS_EX_TOPMOST       = 0x00000008
 
 	// Class styles

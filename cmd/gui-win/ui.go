@@ -907,7 +907,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingProxyErrMu.Unlock()
 		enableWindow(hwndProxyCheck, true)
 		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_UNCHECKED, 0)
-		setWindowText(hwndScanStatus, "")
+		setWindowText(hwndScanStatus, "Ready to scan")
 		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
 		return 0
 
@@ -1167,22 +1167,22 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 6, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
-	// Layout (right-anchored): [Target label][Target input …][Scan status][Active only][⟲][Scan/Stop]
+	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
 	scanBarY := scale(elevBarH + tabCtrlH)
 	createCtrl("STATIC", "Target:", WS_CHILD|WS_VISIBLE, scale(8), scanBarY+scale(8), scale(48), scale(20), hwnd, 0, inst)
 	hwndTarget, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", initialTarget,
 		WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,
-		scale(58), scanBarY+scale(6), scale(500), scale(22), hwnd, IDC_TARGET, inst)
-	hwndScanStatus, _ = createWindowEx(0, "STATIC", "",
-		WS_CHILD|WS_VISIBLE|SS_LEFT,
-		scale(566), scanBarY+scale(8), scale(160), scale(20), hwnd, 0, inst)
+		scale(58), scanBarY+scale(6), scale(460), scale(22), hwnd, IDC_TARGET, inst)
+	hwndDetect, _ = createWindowEx(0, "BUTTON", "\u27f2",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(524), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
+	hwndScanStatus, _ = createWindowEx(WS_EX_STATICEDGE, "STATIC", "Ready to scan",
+		WS_CHILD|WS_VISIBLE|SS_CENTER,
+		scale(566), scanBarY+scale(6), scale(160), scale(22), hwnd, 0, inst)
 	hwndActiveOnly, _ = createWindowEx(0, "BUTTON", "Active only",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
 		scale(734), scanBarY+scale(6), scale(110), scale(22), hwnd, IDC_ACTIVE_ONLY, inst)
-	hwndDetect, _ = createWindowEx(0, "BUTTON", "\u27f2",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(852), scanBarY+scale(5), scale(34), scale(24), hwnd, IDC_DETECT, inst)
 	hwndScan, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(894), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, scale(852), scanBarY+scale(5), scale(100), scale(24), hwnd, IDC_SCAN, inst)
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -1528,20 +1528,20 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndProxyCheck, scale(180), scale(5), scale(120), scale(22))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar (right-anchored): [Target stretches][Scan status 160px][Active only][⟲][Scan]
+	// Scan bar (right-anchored): [Target stretches][⟲][Scan status 160px][Active only][Scan]
 	scanBarY := scale(elevBarH + tabCtrlH)
 	scanX := width - scale(108)
-	detectX := scanX - scale(40)
-	activeX := detectX - scale(116)
+	activeX := scanX - scale(116)
 	statusX := activeX - scale(168)
-	targetW := statusX - scale(8) - scale(58)
+	detectX := statusX - scale(42) // 34px button + 8px gap from status
+	targetW := detectX - scale(4) - scale(58)
 	if targetW < scale(80) {
 		targetW = scale(80)
 	}
 	moveWindow(hwndTarget, scale(58), scanBarY+scale(6), targetW, scale(22))
-	moveWindow(hwndScanStatus, statusX, scanBarY+scale(9), scale(160), scale(18))
+	moveWindow(hwndDetect, scale(58)+targetW+scale(4), scanBarY+scale(5), scale(34), scale(24))
+	moveWindow(hwndScanStatus, statusX, scanBarY+scale(6), scale(160), scale(22))
 	moveWindow(hwndActiveOnly, activeX, scanBarY+scale(6), scale(110), scale(22))
-	moveWindow(hwndDetect, detectX, scanBarY+scale(5), scale(34), scale(24))
 	moveWindow(hwndScan, scanX, scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts tab: list fills remaining height above the status bar.
