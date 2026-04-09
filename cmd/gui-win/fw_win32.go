@@ -262,6 +262,7 @@ const (
 	EM_SETCUEBANNER = 0x1501
 
 	// Virtual keys
+	VK_LBUTTON = 0x01
 	VK_SHIFT   = 0x10
 	VK_CONTROL = 0x11
 	VK_RETURN  = 0x0D
@@ -517,6 +518,7 @@ var (
 	procEnableWindow                 = modUser32.NewProc("EnableWindow")
 	procMessageBoxW                  = modUser32.NewProc("MessageBoxW")
 	procGetKeyState                  = modUser32.NewProc("GetKeyState")
+	procGetAsyncKeyState             = modUser32.NewProc("GetAsyncKeyState")
 	procSetWindowPos                 = modUser32.NewProc("SetWindowPos")
 	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
 	procGetDpiForWindow              = modUser32.NewProc("GetDpiForWindow")
@@ -729,6 +731,14 @@ func messageBox(hwnd HWND, text, caption string, flags uint32) int32 {
 // is set (value < 0 as int16) if the key is currently pressed.
 func getKeyState(vk int) int16 {
 	r, _, _ := procGetKeyState.Call(uintptr(vk))
+	return int16(r)
+}
+
+// getAsyncKeyState returns the real-time state of a virtual key, independent
+// of the message queue. The high bit (int16 < 0) is set when the key is
+// physically held down at the moment of the call.
+func getAsyncKeyState(vk int) int16 {
+	r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
 	return int16(r)
 }
 
