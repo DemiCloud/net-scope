@@ -94,10 +94,14 @@ const (
 	BST_CHECKED      = 1
 
 	// System
-	CW_USEDEFAULT = ^int32(0x7fffffff) // 0x80000000
-	SW_SHOWNORMAL = 1
-	SW_SHOW       = 5
-	SW_HIDE       = 0
+	CW_USEDEFAULT    = ^int32(0x7fffffff) // 0x80000000
+	SW_SHOWNORMAL    = 1
+	SW_SHOW          = 5
+	SW_HIDE          = 0
+	SW_SHOWMAXIMIZED = 3
+
+	// Monitor validation
+	MONITOR_DEFAULTTONULL = 0x00000000
 	COLOR_WINDOW  = 5
 	COLOR_BTNFACE = 15 // system dialog/button background (light gray)
 
@@ -227,6 +231,7 @@ const (
 	LVM_GETITEMCOUNT             = LVM_FIRST + 4
 	LVM_GETHEADER               = LVM_FIRST + 31
 	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
+	LVM_GETCOLUMNWIDTH          = LVM_FIRST + 29
 	LVNI_SELECTED                = 0x0002
 	LVM_GETITEMRECT              = LVM_FIRST + 14
 	LVM_SETITEMSTATE             = LVM_FIRST + 43
@@ -283,6 +288,7 @@ const (
 	TCM_FIRST       = 0x1300
 	TCM_INSERTITEM  = TCM_FIRST + 62
 	TCM_GETCURSEL   = TCM_FIRST + 11
+	TCM_SETCURSEL   = TCM_FIRST + 12
 	TCM_ADJUSTRECT  = TCM_FIRST + 40
 	TCIF_TEXT       = 0x0001
 	TCN_SELCHANGE   = 0xFFFFFDD9 // (uint32)(-551) cast below
@@ -459,6 +465,16 @@ type NMHEADER struct {
 	PItem   uintptr // *HDITEM (often NULL; do not dereference unless non-zero)
 }
 
+// NMMOUSE is sent with NM_RCLICK / NM_DBLCLK notifications from controls
+// that include hit-test information (e.g. header NM_RCLICK).
+type NMMOUSE struct {
+	Hdr        NMHDR
+	DwItemSpec uintptr // hit-tested item (column index for header NM_RCLICK, -1 for none)
+	DwItemData uintptr
+	Pt         POINT
+	DwHitInfo  uintptr
+}
+
 // NMLVKEYDOWN is sent via WM_NOTIFY with code LVN_KEYDOWN when a key is
 // pressed while a ListView has focus.
 type NMLVKEYDOWN struct {
@@ -476,6 +492,21 @@ type LVHITTESTINFO struct {
 	ISubItem int32
 	IGroup   int32
 }
+
+// WINDOWPLACEMENT stores the size, position, and state of a window.
+// Used with GetWindowPlacement to capture the normal (restore) rect even when
+// the window is currently maximized or minimized.
+type WINDOWPLACEMENT struct {
+	Length          uint32
+	Flags           uint32
+	ShowCmd         uint32
+	PtMinPosition   POINT
+	PtMaxPosition   POINT
+	RcNormalPosition RECT
+}
+
+// HMONITOR is the handle type for a display monitor.
+type HMONITOR uintptr
 
 // OPENFILENAME is the structure passed to GetSaveFileNameW.
 type OPENFILENAME struct {
@@ -586,6 +617,8 @@ var (
 	procRegisterClipboardFormatW     = modUser32.NewProc("RegisterClipboardFormatW")
 	procSetTimer                     = modUser32.NewProc("SetTimer")
 	procKillTimer                    = modUser32.NewProc("KillTimer")
+	procGetWindowPlacement           = modUser32.NewProc("GetWindowPlacement")
+	procMonitorFromRect              = modUser32.NewProc("MonitorFromRect")
 
 	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 
@@ -797,6 +830,26 @@ func getWindowRect(hwnd HWND) RECT {
 	var r RECT
 	procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&r)))
 	return r
+}
+
+// getWindowPlacement retrieves the show state and the normal (restore) rect of
+// hwnd. Returns (placement, true) on success. The RcNormalPosition field holds
+// the window rect as it would appear when in the normal (restored) state, even
+// if the window is currently maximized. Use ShowCmd == SW_SHOWMAXIMIZED to
+// detect the maximized state.
+func getWindowPlacement(hwnd HWND) (WINDOWPLACEMENT, bool) {
+	var wp WINDOWPLACEMENT
+	wp.Length = uint32(unsafe.Sizeof(wp))
+	r, _, _ := procGetWindowPlacement.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&wp)))
+	return wp, r != 0
+}
+
+// monitorFromRect returns the monitor handle for the monitor that has the
+// greatest overlap with rect. Returns 0 when MONITOR_DEFAULTTONULL is passed
+// and no monitor intersects rect — used to detect off-screen window positions.
+func monitorFromRect(rect *RECT, flags uint32) HMONITOR {
+	r, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(rect)), uintptr(flags))
+	return HMONITOR(r)
 }
 
 func destroyWindow(hwnd HWND) {
