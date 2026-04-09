@@ -1906,12 +1906,17 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			return 0
 		}
 
-		// Register all resolved IPs, pre-filling the hostname so the list
-		// and the detail dialog are immediately informative.
+		// Register all resolved IPs. Use the PTR record for each IP as
+		// its hostname — the queried A-record name and the PTR records are
+		// independent (round-robin DNS, CDN edge nodes, etc.) and must not
+		// be conflated. If no PTR was found for an IP, leave the hostname
+		// blank so it can be enriched later by a background PTR scan.
 		for _, ip := range res.ips {
 			en := ensureHostEntry(ip)
 			if en.Result.Hostname == "" {
-				en.Result.Hostname = res.hostname
+				if ptr, ok := res.ptrNames[ip]; ok && ptr != "" {
+					en.Result.Hostname = ptr
+				}
 			}
 			en.LastSeen = time.Now()
 		}

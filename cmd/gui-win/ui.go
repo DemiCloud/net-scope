@@ -230,9 +230,10 @@ type bcastEntry struct {
 // resolveHostResult carries the outcome of a background hostname→IP lookup
 // back to the UI thread via WM_RESOLVE_HOST.
 type resolveHostResult struct {
-	hostname string   // original hostname the user typed
-	ips      []string // resolved addresses (empty on failure)
-	err      string   // non-empty on lookup failure
+	hostname string            // original hostname the user typed
+	ips      []string          // resolved addresses (empty on failure)
+	ptrNames map[string]string // IP → PTR hostname; may be absent for some IPs
+	err      string            // non-empty on lookup failure
 }
 
 // startBroadcastListener delegates mDNS/SSDP/WSD listening to the service.

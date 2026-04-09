@@ -112,9 +112,10 @@ type PTRResult struct {
 
 // ResolveResult carries the result of a forward DNS lookup ("resolve" command).
 type ResolveResult struct {
-	Hostname string   `json:"hostname"`
-	IPs      []string `json:"ips,omitempty"`
-	Err      string   `json:"err,omitempty"`
+	Hostname string            `json:"hostname"`
+	IPs      []string          `json:"ips,omitempty"`
+	PTRNames map[string]string `json:"ptr_names,omitempty"` // IP → PTR hostname (may be absent for some IPs)
+	Err      string            `json:"err,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +492,32 @@ func RunServiceConn(conn net.Conn) error {
 					_ = safeSend(ServiceMsg{ResolveResult: &ResolveResult{Hostname: target, Err: err.Error()}})
 					return
 				}
-				_ = safeSend(ServiceMsg{ResolveResult: &ResolveResult{Hostname: target, IPs: addrs}})
+				// For each resolved IP, perform a PTR lookup. The A record
+				// hostname and the PTR records are independent: a round-robin A
+				// record can map to many IPs, each with a completely different
+				// PTR. We must not assume they are the same.
+				ptrNames := make(map[string]string, len(addrs))
+				var mu sync.Mutex
+				var wg sync.WaitGroup
+				for _, addr := range addrs {
+					wg.Add(1)
+					go func(ip string) {
+						defer wg.Done()
+						ptrs, ptrErr := net.DefaultResolver.LookupAddr(context.Background(), ip)
+						if ptrErr == nil && len(ptrs) > 0 {
+							name := ptrs[0]
+							// PTR records include a trailing dot; strip it.
+							if len(name) > 0 && name[len(name)-1] == '.' {
+								name = name[:len(name)-1]
+							}
+							mu.Lock()
+							ptrNames[ip] = name
+							mu.Unlock()
+						}
+					}(addr)
+				}
+				wg.Wait()
+				_ = safeSend(ServiceMsg{ResolveResult: &ResolveResult{Hostname: target, IPs: addrs, PTRNames: ptrNames}})
 			}()
 
 		case "shutdown":
