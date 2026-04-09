@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -565,26 +566,22 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		case idDBDownload:
 			setWindowText(hwndDBStatus, "Downloading… this may take up to 60 seconds.")
 			enableWindow(hwndDBDownload, false)
-			parent := HWND(hwnd)
-			go func() {
-				dataDir := config.DataDir()
-				_, err := scan.DownloadOUIDB(dataDir)
-				if err != nil {
-					postMessage(parent, WM_APP+20, 0, 0) // failure
-				} else {
-					postMessage(parent, WM_APP+21, 0, 0) // success
-				}
-			}()
+			if !downloadOUIViaService(config.DataDir()) {
+				setWindowText(hwndDBStatus, "Sensor service is not running — cannot download.")
+				enableWindow(hwndDBDownload, true)
+			}
 		case idDBClose:
 			closeModal(HWND(hwnd))
 		}
 		return 0
-	case WM_APP + 20: // download failed
+	case WM_OUI_FAIL: // download failed
 		setWindowText(hwndDBStatus, "Download failed — check your internet connection and try again.")
+		enableWindow(hwndDBDownload, true)
 		return 0
-	case WM_APP + 21: // download succeeded
+	case WM_OUI_SUCCESS: // download succeeded
 		dataDir := config.DataDir()
 		setWindowText(hwndDBStatus, scan.OUIStatus(dataDir))
+		enableWindow(hwndDBDownload, true)
 		return 0
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
@@ -608,12 +605,17 @@ func showDatabasesDialog(parent HWND) {
 	}
 	centerOnParent(dlg, parent, dlgW, dlgH)
 
+	// Register the dialog HWND so the service receive loop can deliver OUI
+	// download results (WM_OUI_SUCCESS / WM_OUI_FAIL) to the correct window.
+	atomic.StoreUintptr(&hwndActiveDBDialogAtomic, uintptr(dlg))
+
 	// Populate the OUI status now that the HWND exists.
 	dataDir := config.DataDir()
 	setWindowText(hwndDBStatus, scan.OUIStatus(dataDir))
 
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
+	atomic.StoreUintptr(&hwndActiveDBDialogAtomic, 0)
 }
 
 func createDatabasesControls(hwnd HWND) {

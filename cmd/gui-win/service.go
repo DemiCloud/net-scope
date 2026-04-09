@@ -35,6 +35,10 @@ var (
 	// detail dialog, or 0 if none is open. Accessed atomically: written by
 	// the UI thread (open/close), read by the service receive goroutine.
 	hwndActiveProbeDialogAtomic uintptr
+
+	// hwndActiveDBDialogAtomic holds the HWND of the currently-open Databases
+	// dialog, or 0 if none is open. Used to forward OUI download results.
+	hwndActiveDBDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -178,6 +182,51 @@ func spawnService(hwnd HWND, elevated bool) {
 				if h := atomic.LoadUintptr(&hwndActiveProbeDialogAtomic); h != 0 {
 					postMessage(HWND(h), WM_PROBE_RESULT, uintptr(idx), 0)
 				}
+			} else if m.BcastReady {
+				pendingListenerMsgsMu.Lock()
+				idx := len(pendingListenerMsgs)
+				pendingListenerMsgs = append(pendingListenerMsgs, m.BcastErr)
+				pendingListenerMsgsMu.Unlock()
+				postMessage(hwnd, WM_LISTENER_STATUS, uintptr(idx), 0)
+			} else if m.BcastSvc != nil {
+				pendingBcastMu.Lock()
+				idx := len(pendingBcast)
+				pendingBcast = append(pendingBcast, bcastEntry{m.BcastIP, *m.BcastSvc})
+				pendingBcastMu.Unlock()
+				postMessage(hwnd, WM_BCAST_SVC, uintptr(idx), 0)
+			} else if m.ARPEntry != nil {
+				mac, _ := net.ParseMAC(m.ARPEntry.MAC)
+				if mac != nil {
+					pendingEnrichMu.Lock()
+					idx := len(pendingEnriches)
+					pendingEnriches = append(pendingEnriches, enrichEvent{ip: m.ARPEntry.IP, mac: mac})
+					pendingEnrichMu.Unlock()
+					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+				}
+			} else if m.Netbios != nil {
+				if m.Netbios.Name != "" {
+					pendingEnrichMu.Lock()
+					idx := len(pendingEnriches)
+					pendingEnriches = append(pendingEnriches, enrichEvent{ip: m.Netbios.IP, netbios: m.Netbios.Name})
+					pendingEnrichMu.Unlock()
+					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+				}
+			} else if m.ProxyOK {
+				postMessage(hwnd, WM_PROXY_VALID, 0, 0)
+			} else if m.ProxyErr != "" {
+				pendingProxyErrMu.Lock()
+				idx := len(pendingProxyErrors)
+				pendingProxyErrors = append(pendingProxyErrors, m.ProxyErr)
+				pendingProxyErrMu.Unlock()
+				postMessage(hwnd, WM_PROXY_FAIL, uintptr(idx), 0)
+			} else if m.OUIComplete {
+				if h := atomic.LoadUintptr(&hwndActiveDBDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_OUI_SUCCESS, 0, 0)
+				}
+			} else if m.OUIErr != "" {
+				if h := atomic.LoadUintptr(&hwndActiveDBDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_OUI_FAIL, 0, 0)
+				}
 			}
 		}
 
@@ -273,4 +322,63 @@ func statusForService() string {
 		return "Service: running (Admin)"
 	}
 	return "Service: running (User)"
+}
+
+// serviceCmd is a low-level helper that encodes a single command if the
+// service is connected. Returns false if no service is running.
+func serviceCmd(cmd scan.ServiceCmd) bool {
+	serviceMu.Lock()
+	enc := serviceEnc
+	serviceMu.Unlock()
+	if enc == nil {
+		return false
+	}
+	serviceEncMu.Lock()
+	_ = enc.Encode(cmd)
+	serviceEncMu.Unlock()
+	return true
+}
+
+// startBroadcastListenerViaService tells the service to start the mDNS/SSDP/WSD
+// listener. The service streams results back as BcastSvc events and sends a
+// BcastReady message once the listener starts or fails to bind.
+// Returns false if the service is not running.
+func startBroadcastListenerViaService(bcastListen string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "bcast-start", BcastListen: bcastListen})
+}
+
+// stopBroadcastListenerViaService cancels the service-side broadcast listener.
+func stopBroadcastListenerViaService() {
+	serviceCmd(scan.ServiceCmd{Cmd: "bcast-stop"}) //nolint:errcheck
+}
+
+// startARPPollViaService tells the service to begin periodic ARP table reads.
+// Each entry streams back as a WM_HOST_ENRICH enrichment event.
+func startARPPollViaService() {
+	serviceCmd(scan.ServiceCmd{Cmd: "arp-start"}) //nolint:errcheck
+}
+
+// stopARPPollViaService cancels the service-side ARP polling loop.
+func stopARPPollViaService() {
+	serviceCmd(scan.ServiceCmd{Cmd: "arp-stop"}) //nolint:errcheck
+}
+
+// sendNetBIOSViaService asks the service to query the NetBIOS name for ip.
+// If found, it streams back a Netbios enrichment event.
+func sendNetBIOSViaService(ip string) {
+	serviceCmd(scan.ServiceCmd{Cmd: "netbios", Target: ip}) //nolint:errcheck
+}
+
+// testProxyViaService asks the service to test TCP connectivity to proxyAddr.
+// The result arrives as WM_PROXY_VALID or WM_PROXY_FAIL. Returns false if the
+// service is not running.
+func testProxyViaService(proxyAddr string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "proxy-test", SOCKSProxy: proxyAddr})
+}
+
+// downloadOUIViaService asks the service to download and install the OUI
+// database into dataDir. The result arrives as WM_OUI_SUCCESS or WM_OUI_FAIL
+// posted to hwndActiveDBDialogAtomic. Returns false if the service is not running.
+func downloadOUIViaService(dataDir string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "oui-update", DataDir: dataDir})
 }

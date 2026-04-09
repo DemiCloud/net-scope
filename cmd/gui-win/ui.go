@@ -131,9 +131,11 @@ var (
 // ---------------------------------------------------------------------------
 
 var (
-	bcastCancel    context.CancelFunc
-	bcastMu        sync.Mutex
-	bcastCount     int // total services received since app start
+	// bcastServiceActive is true after we have sent "bcast-start" to the
+	// current service connection and before it disconnects or we stop it.
+	// Read/written only on the UI thread.
+	bcastServiceActive bool
+	bcastCount         int // total services received since app start
 	bcastMDNS      int // mDNS entries
 	bcastSSDP      int // SSDP entries
 	bcastWSD       int // WSD entries
@@ -153,9 +155,6 @@ var (
 	// for existing Hosts rows; UI thread processes via WM_HOST_ENRICH.
 	pendingEnriches []enrichEvent
 	pendingEnrichMu sync.Mutex
-
-	// arpPollCancel cancels the periodic ARP table polling goroutine.
-	arpPollCancel context.CancelFunc
 
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
@@ -223,104 +222,40 @@ type bcastEntry struct {
 	svc scan.ServiceInfo
 }
 
+// startBroadcastListener delegates mDNS/SSDP/WSD listening to the service.
+// The service probes multicast support, streams back events, and reports
+// listener status via BcastReady messages routed to WM_LISTENER_STATUS.
 func startBroadcastListener(hwnd HWND) {
-	bcastMu.Lock()
-	defer bcastMu.Unlock()
-	if bcastCancel != nil {
+	if bcastServiceActive {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	bcastCancel = cancel
-	go func() {
-		// Probe multicast bind before the long-running listener goroutine starts.
-		// This gives the UI immediate feedback about whether passive discovery works.
-		probeErr := scan.ProbeListenerSupport()
-		msg := ""
-		if probeErr != nil {
-			msg = probeErr.Error()
-		}
-		pendingListenerMsgsMu.Lock()
-		idx := len(pendingListenerMsgs)
-		pendingListenerMsgs = append(pendingListenerMsgs, msg)
-		pendingListenerMsgsMu.Unlock()
-		postMessage(hwnd, WM_LISTENER_STATUS, uintptr(idx), 0)
-
-		bl, err := time.ParseDuration(appConfig.Scan.BroadcastListen)
-		if err != nil || bl <= 0 {
-			bl = 3 * time.Second
-		}
-		scan.ListenBroadcast(ctx, bl, func(ip string, svc scan.ServiceInfo) {
-			pendingBcastMu.Lock()
-			idx := len(pendingBcast)
-			pendingBcast = append(pendingBcast, bcastEntry{ip, svc})
-			pendingBcastMu.Unlock()
-			postMessage(hwndMain, WM_BCAST_SVC, uintptr(idx), 0)
-		})
-	}()
+	if startBroadcastListenerViaService(appConfig.Scan.BroadcastListen) {
+		bcastServiceActive = true
+	}
 }
 
 func stopBroadcastListener() {
-	bcastMu.Lock()
-	defer bcastMu.Unlock()
-	if bcastCancel != nil {
-		bcastCancel()
-		bcastCancel = nil
+	if !bcastServiceActive {
+		return
 	}
+	stopBroadcastListenerViaService()
+	bcastServiceActive = false
 }
 
-// kickNetBIOSProbe sends a unicast NetBIOS NAME_STATUS query to ip in the
-// background. On success, WM_HOST_ENRICH is posted to update the Hosts row.
-func kickNetBIOSProbe(hwnd HWND, ip string) {
-	go func() {
-		parsed := net.ParseIP(ip)
-		if parsed == nil {
-			return
-		}
-		name := scan.ProbeNetBIOS(parsed, 2*time.Second)
-		if name == "" {
-			return
-		}
-		pendingEnrichMu.Lock()
-		idx := len(pendingEnriches)
-		pendingEnriches = append(pendingEnriches, enrichEvent{ip: ip, netbios: name})
-		pendingEnrichMu.Unlock()
-		postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
-	}()
+// kickNetBIOSProbe asks the service to query the NetBIOS name for ip.
+// The result arrives as a WM_HOST_ENRICH enrichment event.
+func kickNetBIOSProbe(ip string) {
+	sendNetBIOSViaService(ip)
 }
 
-// startARPPoll begins a background goroutine that reads the Windows ARP table
-// every 5 s and posts WM_HOST_ENRICH for each entry. The UI thread skips
-// entries for unknown IPs and rows that already have a MAC.
-func startARPPoll(hwnd HWND) {
-	stopARPPoll()
-	ctx, cancel := context.WithCancel(context.Background())
-	arpPollCancel = cancel
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				for ip, mac := range scan.ReadARPTable() {
-					macCopy := mac
-					pendingEnrichMu.Lock()
-					idx := len(pendingEnriches)
-					pendingEnriches = append(pendingEnriches, enrichEvent{ip: ip, mac: macCopy})
-					pendingEnrichMu.Unlock()
-					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
-				}
-			}
-		}
-	}()
+// startARPPoll asks the service to begin periodic ARP-table reads.
+// Results stream back as WM_HOST_ENRICH enrichment events.
+func startARPPoll(_ HWND) {
+	startARPPollViaService()
 }
 
 func stopARPPoll() {
-	if arpPollCancel != nil {
-		arpPollCancel()
-		arpPollCancel = nil
-	}
+	stopARPPollViaService()
 }
 
 // ---------------------------------------------------------------------------
@@ -388,15 +323,21 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// Listener now includes DHCP via the elevated service.
 			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD · DHCP)")
 		}
+		// Start broadcast listener via the newly connected service (if not proxy mode).
+		if !proxyEnabled {
+			startBroadcastListener(HWND(hwnd))
+		}
 		updateNetworkTab()
 		return 0
 
 	case WM_SERVICE_DOWN:
 		// Update the service-state part of the status bar.
 		setStatusPart(statusPartService, statusForService())
-		// If service dropped while elevated, DHCP is no longer piped through it.
-		if bcastCancel != nil {
-			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD)")
+		// Broadcast listener ran inside the service — reset state so it will
+		// restart automatically when a new service connection is established.
+		bcastServiceActive = false
+		if !proxyEnabled {
+			setStatusPart(statusPartListener, "")
 		}
 		// If the service dropped while a scan was in progress, reset scan state
 		// so the UI doesn't remain stuck showing "Scanning…" with a Stop button.
@@ -475,7 +416,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					postMessage(HWND(hwnd), WM_HOST_ENRICH, uintptr(idx), 0)
 				}
 				if evt.Hostname == "" {
-					kickNetBIOSProbe(HWND(hwnd), enrichIP)
+					kickNetBIOSProbe(enrichIP)
 				}
 			}
 		}
@@ -490,12 +431,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if noConfigFile {
 			postMessage(HWND(hwnd), WM_FIRST_RUN, 0, 0)
 		}
-		// Broadcast listener is not useful in proxy mode.
-		if !proxyEnabled {
-			startBroadcastListener(HWND(hwnd))
-		} else {
+		if proxyEnabled {
 			setStatusPart(statusPartListener, "Not listening (proxy mode)")
 		}
+		// Broadcast listener is started in WM_SERVICE_UP once the service connects.
 		// Start the sensor service immediately (user-level, no UAC).
 		go startService(HWND(hwnd))
 		return 0
@@ -855,19 +794,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				setWindowText(hwndScanStatus, "Testing proxy connection…")
 				enableWindow(hwndProxyCheck, false)
 				proxyAddr := appConfig.Scan.SOCKSProxy
-				go func() {
-					conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
-					if err != nil {
-						pendingProxyErrMu.Lock()
-						idx := len(pendingProxyErrors)
-						pendingProxyErrors = append(pendingProxyErrors, err.Error())
-						pendingProxyErrMu.Unlock()
-						postMessage(HWND(hwnd), WM_PROXY_FAIL, uintptr(idx), 0)
-						return
-					}
-					conn.Close()
-					postMessage(HWND(hwnd), WM_PROXY_VALID, 0, 0)
-				}()
+				if !testProxyViaService(proxyAddr) {
+					// Service not running — fail immediately.
+					pendingProxyErrMu.Lock()
+					idx := len(pendingProxyErrors)
+					pendingProxyErrors = append(pendingProxyErrors, "sensor service is not running")
+					pendingProxyErrMu.Unlock()
+					postMessage(HWND(hwnd), WM_PROXY_FAIL, uintptr(idx), 0)
+				}
 			} else {
 				applyProxyMode(HWND(hwnd), false)
 			}
@@ -1053,7 +987,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
 			// Broadcast-only hosts skip per-host probing; request enrichment.
 			if r.Hostname == "" && r.NetBIOS == "" {
-				kickNetBIOSProbe(HWND(hwnd), ipStr)
+				kickNetBIOSProbe(ipStr)
 			}
 		}
 

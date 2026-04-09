@@ -25,7 +25,9 @@ import (
 
 // ServiceCmd is sent by the GUI to the service.
 type ServiceCmd struct {
-	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop", "shutdown"
+	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop",
+	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
+	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
 	Config     *Config    `json:"config,omitempty"`
@@ -35,7 +37,12 @@ type ServiceCmd struct {
 	// Probe is set for the "probe" command.
 	Probe      *ProbeSpec `json:"probe,omitempty"`
 	// SOCKSProxy is the SOCKS5 address to use for the probe (empty = direct).
+	// Also used for "proxy-test".
 	SOCKSProxy string     `json:"socks_proxy,omitempty"`
+	// BcastListen is the Go duration string for the broadcast window ("bcast-start").
+	BcastListen string    `json:"bcast_listen,omitempty"`
+	// DataDir is the filesystem path for outputs that need it ("oui-update").
+	DataDir     string    `json:"data_dir,omitempty"`
 }
 
 // ServiceMsg is sent by the service to the GUI.
@@ -57,6 +64,39 @@ type ServiceMsg struct {
 	ProbeResult *ProbeResult `json:"probe_result,omitempty"`
 	// Err carries a human-readable error string.
 	Err      string       `json:"err,omitempty"`
+
+	// BcastReady is sent once when the broadcast listener starts (BcastErr
+	// is empty on success, non-empty if multicast binding failed).
+	BcastReady bool         `json:"bcast_ready,omitempty"`
+	BcastErr   string       `json:"bcast_err,omitempty"`
+	// BcastSvc carries a single passive-discovery event (mDNS / SSDP / WSD).
+	BcastSvc   *ServiceInfo `json:"bcast_svc,omitempty"`
+	BcastIP    string       `json:"bcast_ip,omitempty"`
+
+	// ARPEntry carries a single ARP table entry (from "arp-start" polling).
+	ARPEntry   *ARPResult   `json:"arp_entry,omitempty"`
+	// Netbios carries the result of a NetBIOS name query.
+	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
+
+	// ProxyOK / ProxyErr carry the result of a "proxy-test" command.
+	ProxyOK    bool         `json:"proxy_ok,omitempty"`
+	ProxyErr   string       `json:"proxy_err,omitempty"`
+
+	// OUIComplete / OUIErr carry the result of an "oui-update" command.
+	OUIComplete bool         `json:"oui_complete,omitempty"`
+	OUIErr      string       `json:"oui_err,omitempty"`
+}
+
+// ARPResult carries a single ARP table entry streamed from service to GUI.
+type ARPResult struct {
+	IP  string `json:"ip"`
+	MAC string `json:"mac"`
+}
+
+// NetBIOSMsg carries the result of a NetBIOS name query.
+type NetBIOSMsg struct {
+	IP   string `json:"ip"`
+	Name string `json:"name"`
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +212,8 @@ func RunServiceConn(conn net.Conn) error {
 
 	var scanCancel context.CancelFunc
 	var dhcpCancel context.CancelFunc
+	var bcastCancel context.CancelFunc
+	var arpCancel context.CancelFunc
 
 	for {
 		var cmd ServiceCmd
@@ -264,12 +306,125 @@ func RunServiceConn(conn net.Conn) error {
 				dhcpCancel = nil
 			}
 
+		case "bcast-start":
+			if bcastCancel != nil {
+				break // already running
+			}
+			bl := 3 * time.Second
+			if cmd.BcastListen != "" {
+				if d, err := time.ParseDuration(cmd.BcastListen); err == nil && d > 0 {
+					bl = d
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			bcastCancel = cancel
+			go func() {
+				probeErr := ProbeListenerSupport()
+				errStr := ""
+				if probeErr != nil {
+					errStr = probeErr.Error()
+				}
+				_ = safeSend(ServiceMsg{BcastReady: true, BcastErr: errStr})
+				if probeErr != nil {
+					return
+				}
+				ListenBroadcast(ctx, bl, func(ip string, svc ServiceInfo) {
+					svcCopy := svc
+					_ = safeSend(ServiceMsg{BcastSvc: &svcCopy, BcastIP: ip})
+				})
+			}()
+
+		case "bcast-stop":
+			if bcastCancel != nil {
+				bcastCancel()
+				bcastCancel = nil
+			}
+
+		case "arp-start":
+			if arpCancel != nil {
+				break // already running
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			arpCancel = cancel
+			go func() {
+				t := time.NewTicker(5 * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						for ip, mac := range ReadARPTable() {
+							entry := &ARPResult{IP: ip, MAC: mac.String()}
+							if werr := safeSend(ServiceMsg{ARPEntry: entry}); werr != nil {
+								return
+							}
+						}
+					}
+				}
+			}()
+
+		case "arp-stop":
+			if arpCancel != nil {
+				arpCancel()
+				arpCancel = nil
+			}
+
+		case "netbios":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				parsed := net.ParseIP(target)
+				if parsed == nil {
+					return
+				}
+				name := ProbeNetBIOS(parsed, 2*time.Second)
+				if name == "" {
+					return
+				}
+				_ = safeSend(ServiceMsg{Netbios: &NetBIOSMsg{IP: target, Name: name}})
+			}()
+
+		case "proxy-test":
+			if cmd.SOCKSProxy == "" {
+				continue
+			}
+			proxy := cmd.SOCKSProxy
+			go func() {
+				conn, err := net.DialTimeout("tcp", proxy, 5*time.Second)
+				if err != nil {
+					_ = safeSend(ServiceMsg{ProxyErr: err.Error()})
+					return
+				}
+				conn.Close()
+				_ = safeSend(ServiceMsg{ProxyOK: true})
+			}()
+
+		case "oui-update":
+			dir := cmd.DataDir
+			go func() {
+				_, err := DownloadOUIDB(dir)
+				if err != nil {
+					_ = safeSend(ServiceMsg{OUIErr: err.Error()})
+					return
+				}
+				_ = safeSend(ServiceMsg{OUIComplete: true})
+			}()
+
 		case "shutdown":
 			if scanCancel != nil {
 				scanCancel()
 			}
 			if dhcpCancel != nil {
 				dhcpCancel()
+			}
+			if bcastCancel != nil {
+				bcastCancel()
+			}
+			if arpCancel != nil {
+				arpCancel()
 			}
 			return nil
 
