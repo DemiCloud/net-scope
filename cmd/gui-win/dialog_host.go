@@ -1700,36 +1700,29 @@ func pickHostConfirm(hwnd HWND) {
 	}
 	// Literal IP — open the detail dialog immediately.
 	if isIPString(ip) {
+		atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
 		closeModal(hwnd)
 		showHostDetailDialog(hwndMain, ip)
 		return
 	}
-	// Hostname — resolve in the background.  Keep the modal open and show
-	// "Resolving…" feedback while the lookup is in flight.
+	// Hostname — resolve in the background via the sensor service.
+	// Keep the modal open and show "Resolving…" feedback while the lookup
+	// is in flight.  WM_RESOLVE_HOST will be posted back to this dialog
+	// by the service receive goroutine when the result arrives.
 	pickResolving = true
 	pickHintIsError = false
 	setWindowText(hwndPickHint, "Resolving\u2026")
 	enableWindow(hwndPickEdit, false)
 	enableWindow(hwndPickList, false)
-	hostname := ip
-	go func() {
-		addrs, err := net.LookupHost(hostname)
-		pendingResolveHostsMu.Lock()
-		idx := len(pendingResolveHosts)
-		if err != nil {
-			pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
-				hostname: hostname,
-				err:      err.Error(),
-			})
-		} else {
-			pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
-				hostname: hostname,
-				ips:      addrs,
-			})
-		}
-		pendingResolveHostsMu.Unlock()
-		postMessage(hwndPickDialog, WM_RESOLVE_HOST, uintptr(idx), 0)
-	}()
+	if err := sendResolveViaService(ip); err != nil {
+		// Service not running — surface inline error immediately.
+		pickResolving = false
+		enableWindow(hwndPickEdit, true)
+		enableWindow(hwndPickList, true)
+		pickHintIsError = true
+		setWindowText(hwndPickHint, "Sensor service not running")
+		invalidateRect(hwnd, nil, true)
+	}
 }
 
 var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -1744,6 +1737,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 		hwndPickDialog = HWND(hwnd)
 		pickResolving = false
+		atomic.StoreUintptr(&hwndPickDialogAtomic, uintptr(hwnd))
 
 		// Filter / freeform edit field at the top.
 		hwndPickEdit, _ = createWindowEx(
@@ -1924,6 +1918,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 		if len(res.ips) == 1 {
 			// Single result: close and open the detail dialog.
+			atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
 			closeModal(HWND(hwnd))
 			showHostDetailDialog(hwndMain, res.ips[0])
 			return 0
@@ -1941,6 +1936,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CLOSE:
+		atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
 		closeModal(HWND(hwnd))
 		return 0
 	}
