@@ -488,21 +488,10 @@ func createHostDetailControls(hwnd HWND) {
 	const actionBtnH int32 = 28
 	const actionGap  int32 = 6
 
-	hwndHostScanBtn, _ = createWindowEx(0, "BUTTON", "Scan",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad, y, 70, actionBtnH, hwnd, HMENU(idHostScan), inst)
-
-	hwndHostConnect, _ = createWindowEx(0, "BUTTON", "Connect \u25be",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+70+actionGap, y, 100, actionBtnH, hwnd, HMENU(idHostConnect), inst)
-
-	hwndHostProbesBtn, _ = createWindowEx(0, "BUTTON", "Probes",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+70+actionGap+100+actionGap, y, 80, actionBtnH, hwnd, HMENU(idHostProbes), inst)
-
-	hwndHostDiagBtn, _ = createWindowEx(0, "BUTTON", "Diagnostics",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+70+actionGap+100+actionGap+80+actionGap, y, 110, actionBtnH, hwnd, HMENU(idHostDiagnostics), inst)
+	hwndHostScanBtn = makePushButton(hwnd, "Scan", idHostScan, pad, y, 70, actionBtnH)
+	hwndHostConnect = makePushButton(hwnd, "Connect \u25be", idHostConnect, pad+70+actionGap, y, 100, actionBtnH)
+	hwndHostProbesBtn = makePushButton(hwnd, "Probes", idHostProbes, pad+70+actionGap+100+actionGap, y, 80, actionBtnH)
+	hwndHostDiagBtn = makePushButton(hwnd, "Diagnostics", idHostDiagnostics, pad+70+actionGap+100+actionGap+80+actionGap, y, 110, actionBtnH)
 
 	y += actionBtnH + 8
 
@@ -544,15 +533,9 @@ func createHostDetailControls(hwnd HWND) {
 	// Footer: [ Copy ▾ ]  [ Forget Host ]  ·····  [ Close ]
 	// Copy starts disabled; enabled once observations exist.
 	btnY := cH - pad - 28
-	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy \u25be",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad, btnY, 80, 28, hwnd, HMENU(idHostCopy), inst)
-	hwndHostForgetBtn, _ = createWindowEx(0, "BUTTON", "Forget Host",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		pad+80+8, btnY, 100, 28, hwnd, HMENU(idHostForget), inst)
-	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-80, btnY, 80, 28, hwnd, HMENU(idHostClose), inst)
+	hwndHostCopyBtn = makePushButton(hwnd, "Copy \u25be", idHostCopy, pad, btnY, 80, 28)
+	hwndHostForgetBtn = makePushButton(hwnd, "Forget Host", idHostForget, pad+80+8, btnY, 100, 28)
+	hwndHostCloseBtn = makePushButton(hwnd, "Close", idHostClose, cW-pad-80, btnY, 80, 28)
 }
 
 // startProbe sends a single on-demand probe to the sensor service.
@@ -1108,9 +1091,7 @@ func createProbesDialogControls(hwnd HWND) {
 	x += portEditW + gap*3
 
 	// Run button flush right.
-	hwndProbesRun, _ = createWindowEx(0, "BUTTON", "Run Probe",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-runBtnW, y, runBtnW, 24, hwnd, HMENU(idProbesRun), inst)
+	hwndProbesRun = makePushButton(hwnd, "Run Probe", idProbesRun, cW-pad-runBtnW, y, runBtnW, 24)
 	_ = x // suppress unused-variable lint
 }
 
@@ -1236,7 +1217,6 @@ var diagWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 })
 
 func createDiagnosticsControls(hwnd HWND) {
-	inst := getModuleHandle()
 	const pad int32 = 10
 
 	y := pad
@@ -1244,17 +1224,11 @@ func createDiagnosticsControls(hwnd HWND) {
 	const btnH int32 = 26
 	const btnGap int32 = 6
 
-	createWindowEx(0, "BUTTON", "Ping once",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		x, y, 90, btnH, hwnd, HMENU(idDiagPing), inst)
+	makePushButton(hwnd, "Ping once", idDiagPing, x, y, 90, btnH)
 	x += 90 + btnGap
-	createWindowEx(0, "BUTTON", "Ping continuous",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		x, y, 120, btnH, hwnd, HMENU(idDiagPingCont), inst)
+	makePushButton(hwnd, "Ping continuous", idDiagPingCont, x, y, 120, btnH)
 	x += 120 + btnGap
-	createWindowEx(0, "BUTTON", "Traceroute",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		x, y, 100, btnH, hwnd, HMENU(idDiagTracert), inst)
+	makePushButton(hwnd, "Traceroute", idDiagTracert, x, y, 100, btnH)
 	_ = y // all buttons on one row
 }
 
@@ -1396,9 +1370,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			WS_CHILD|WS_VISIBLE,
 			pad, hintY, cW-pad*2-110, hintH, HWND(hwnd), 0, inst)
 
-		createWindowEx(0, "BUTTON", "Close",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			cW-pad-100, cH-pad-btnH, 100, btnH, HWND(hwnd), HMENU(idAllHostsClose), inst)
+		makePushButton(HWND(hwnd), "Close", idAllHostsClose, cW-pad-100, cH-pad-btnH, 100, btnH)
 
 		// Populate rows from registry.
 		hostsListViewRepopulate(hwndAllHostsList, "")
