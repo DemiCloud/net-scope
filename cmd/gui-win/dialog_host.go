@@ -25,65 +25,75 @@ import (
 // "View details…". Shows a consolidated summary of everything known about the
 // selected host, plus an on-demand probe panel.
 //
-// Layout (fixed 700 × 540):
+// Layout (740 × 640) — four vertical sections:
 //
-//  ┌─ Host detail: [192.168.1.42 ▾────────────────────────────────────]  ─┐
-//  │ Summary (readonly multiline EDIT, ~150px)                             │
-//  ├───────────────────────────────────────────────────────────────────────│
-//  │ Port: [____] Type: [SSH ▾] [Run]  [Run all common probes]            │
-//  │ ┌────────┬────────┬─────────────────────────────────────────────┐    │
-//  │ │ Port   │ Type   │ Result                                       │    │
-//  │ └────────┴────────┴─────────────────────────────────────────────┘    │
-//  ├───────────────────────────────────────────────────────────────────────│
-//  │                                         [Copy report]   [Close]      │
-//  └───────────────────────────────────────────────────────────────────────┘
+//  ┌─ Host — 192.168.1.42 ─────────────────────────────────────────────────┐
+//  │ [status: passive / sources / freshness]                                │
+//  │  Summary body (hostname, MAC, vendor, OS, ports, banners, services)    │
+//  ├────────────────────────────────────────────────────────────────────────│
+//  │ Connect   [HTTP] [HTTPS] [SSH] [RDP] [FTP] [SMB] [More ▾]             │
+//  ├────────────────────────────────────────────────────────────────────────│
+//  │ Investigate  Port:[___] Type:[▾] [Run Probe]   [Run Common Probes]     │
+//  │              [Ping]  [Ping continuous]                                  │
+//  ├────────────────────────────────────────────────────────────────────────│
+//  │ Evidence & Observations                                                 │
+//  │ ┌────────┬────────┬───────────────────────────────────────────────┐   │
+//  │ │  Port  │  Type  │  Result                                        │   │
+//  │ └────────┴────────┴───────────────────────────────────────────────┘   │
+//  │              [Copy Fingerprint]  [Copy Report]            [Close]      │
+//  └────────────────────────────────────────────────────────────────────────┘
 
 const (
 	idHostClose      = 601
 	idHostRunProbe   = 602
 	idHostRunAll     = 603
 	idHostCopyReport = 604
-	idHostIPCombo    = 605
 	idHostPortEdit   = 606
 	idHostTypeCombo  = 607
 	idHostProbeList  = 608
 	idHostCopyFP     = 609
 
-	// Connect / Ping quick-action buttons.
-	idHostConnHTTP   = 620
-	idHostConnHTTPS  = 621
-	idHostConnSSH    = 622
-	idHostConnRDP    = 623
-	idHostConnFTP    = 624
-	idHostConnTelnet = 625
-	idHostConnSMB    = 626
-	idHostPingOnce   = 627
-	idHostPingCont   = 628
+	// Connect quick-action buttons (primary protocols).
+	idHostConnHTTP  = 620
+	idHostConnHTTPS = 621
+	idHostConnSSH   = 622
+	idHostConnRDP   = 623
+	idHostConnFTP   = 624
+	idHostConnTelnet = 625 // used in «More…» popup menu, not a direct button
+	idHostConnSMB   = 626
+	idHostConnMore  = 629 // «More…» dropdown for legacy / less-common protocols
+
+	// Investigate section.
+	idHostPingOnce = 627
+	idHostPingCont = 628
 )
 
 // Dialog-local handles (valid while dialog is open).
 var (
-	hwndHostIPCombo   HWND
+	hwndHostStatus    HWND // one-line status: sources + freshness + completeness
 	hwndHostSummary   HWND
 	hwndHostPortEdit  HWND
 	hwndHostTypeCombo HWND
 	hwndHostRunBtn    HWND
 	hwndHostRunAllBtn HWND
 	hwndHostProbeList HWND
+	hwndHostEvidHint  HWND // «No probes run yet» hint inside evidence section
 	hwndHostCopyBtn   HWND
 	hwndHostCloseBtn  HWND
 	hwndHostCopyFPBtn HWND
 
-	// Connect / Ping quick-action buttons.
-	hwndHostConnHTTP   HWND
-	hwndHostConnHTTPS  HWND
-	hwndHostConnSSH    HWND
-	hwndHostConnRDP    HWND
-	hwndHostConnFTP    HWND
-	hwndHostConnTelnet HWND
-	hwndHostConnSMB    HWND
-	hwndHostPingOnce   HWND
-	hwndHostPingCont   HWND
+	// Connect quick-action buttons (primary protocols only).
+	hwndHostConnHTTP  HWND
+	hwndHostConnHTTPS HWND
+	hwndHostConnSSH   HWND
+	hwndHostConnRDP   HWND
+	hwndHostConnFTP   HWND
+	hwndHostConnSMB   HWND
+	hwndHostConnMore  HWND // «More…» opens popup with legacy protocols
+
+	// Investigate section.
+	hwndHostPingOnce HWND
+	hwndHostPingCont HWND
 
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
@@ -126,10 +136,6 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			hostDetailCopyReport(HWND(hwnd))
 		case idHostCopyFP:
 			hostDetailCopyFP(HWND(hwnd))
-		case idHostIPCombo:
-			if hiword(wParam) == CBN_SELCHANGE {
-				hostDetailSelectIP(HWND(hwnd))
-			}
 		case idHostConnHTTP:
 			openProtocol(HWND(hwnd), currentDetailIP, "http")
 		case idHostConnHTTPS:
@@ -140,10 +146,10 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			openProtocol(HWND(hwnd), currentDetailIP, "rdp")
 		case idHostConnFTP:
 			openProtocol(HWND(hwnd), currentDetailIP, "ftp")
-		case idHostConnTelnet:
-			openProtocol(HWND(hwnd), currentDetailIP, "telnet")
 		case idHostConnSMB:
 			openProtocol(HWND(hwnd), currentDetailIP, "smb")
+		case idHostConnMore:
+			showConnectMoreMenu(HWND(hwnd))
 		case idHostPingOnce:
 			shellExecute(HWND(hwnd), "open", "cmd.exe",
 				"/c ping "+currentDetailIP+" && pause", "", SW_SHOW)
@@ -163,10 +169,10 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		if pr.Type != "" {
 			hostDetailAddProbeRow(HWND(hwnd), pr)
 		}
-		// Decrement and re-enable "Run all" when the last probe result arrives.
+		// Decrement and re-enable when the last probe result arrives.
 		if atomic.AddInt32(&activeProbes, -1) == 0 {
 			enableWindow(hwndHostRunAllBtn, true)
-			setWindowText(hwndHostRunAllBtn, "Run all common probes")
+			setWindowText(hwndHostRunAllBtn, "Run Common Probes")
 		}
 		return 0
 
@@ -184,6 +190,72 @@ func hostDetailClose(hwnd HWND) {
 	closeModal(hwnd)
 }
 
+// buildStatusLine returns a compact one-liner for the status STATIC control
+// at the top of the host detail dialog. It shows:
+//
+//	data completeness  ·  observation sources  ·  freshness
+func buildStatusLine(ip string) string {
+	e, ok := hostRegistry[ip]
+	if !ok {
+		return "No prior data  \u2014  manually entered address"
+	}
+
+	var parts []string
+
+	// Data completeness.
+	if e.HasResult {
+		parts = append(parts, "Port-scanned")
+	} else {
+		parts = append(parts, "Passive only")
+	}
+
+	// Observation sources (mDNS, SSDP, DHCP, etc.).
+	seen := map[string]bool{}
+	var sources []string
+	allSvcs := append(append([]scan.ServiceInfo{}, e.Result.Services...), e.ExtraServices...)
+	for _, svc := range allSvcs {
+		s := svc.Source
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		sources = append(sources, strings.ToUpper(s[:1])+s[1:])
+	}
+	if len(e.DHCPEvents) > 0 && !seen["dhcp"] {
+		sources = append(sources, "DHCP")
+	}
+	if len(sources) > 0 {
+		parts = append(parts, "Sources: "+strings.Join(sources, " \u00b7 "))
+	}
+
+	// Freshness.
+	age := time.Since(e.LastSeen)
+	switch {
+	case age < time.Minute:
+		parts = append(parts, fmt.Sprintf("last seen %ds ago", int(age.Seconds())))
+	case age < time.Hour:
+		parts = append(parts, fmt.Sprintf("last seen %dm ago", int(age.Minutes())))
+	default:
+		parts = append(parts, "last seen "+e.LastSeen.Format("15:04"))
+	}
+
+	return strings.Join(parts, "   \u00b7   ")
+}
+
+// showConnectMoreMenu displays a popup menu of less-common / legacy connection
+// options, anchored to the bottom-left of the "More ▾" button.
+func showConnectMoreMenu(hwnd HWND) {
+	menu := createPopupMenu()
+	appendMenu(menu, MF_STRING, idHostConnTelnet, "Telnet (port 23)")
+	br := getWindowRect(hwndHostConnMore)
+	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, br.Left, br.Bottom, hwnd)
+	destroyMenu(menu)
+	switch cmd {
+	case idHostConnTelnet:
+		openProtocol(hwnd, currentDetailIP, "telnet")
+	}
+}
+
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
 	registerDialogClass("NetScopeHostDetail", hostDetailWndProc)
@@ -195,10 +267,10 @@ func showHostDetailDialog(parent HWND, ip string) {
 	atomic.StoreInt32(&activeProbes, 0)
 	currentDetailIP = ip
 
-	const dlgW, dlgH int32 = 740, 600
+	const dlgW, dlgH int32 = 740, 640
 	dlg, err := createWindowEx(
 		WS_EX_DLGMODALFRAME,
-		"NetScopeHostDetail", "Host detail — "+ip,
+		"NetScopeHostDetail", "Host — "+ip,
 		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
 		0, 0, dlgW, dlgH,
 		parent, 0, getModuleHandle(),
@@ -208,18 +280,6 @@ func showHostDetailDialog(parent HWND, ip string) {
 	}
 	centerOnParent(dlg, parent, dlgW, dlgH)
 
-	// Populate the IP combo with all known IPs.
-	for _, knownIP := range allHostIPs() {
-		p, _ := syscall.UTF16PtrFromString(knownIP)
-		sendMessage(hwndHostIPCombo, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(p)))
-	}
-	// Select the requested IP.
-	p, _ := syscall.UTF16PtrFromString(ip)
-	idx := sendMessage(hwndHostIPCombo, CB_FINDSTRINGEXACT, ^uintptr(0), uintptr(unsafe.Pointer(p)))
-	if idx != ^uintptr(0) {
-		sendMessage(hwndHostIPCombo, CB_SETCURSEL, idx, 0)
-	}
-
 	// Populate probe type combo.
 	for _, t := range probeTypeLabels {
 		pt, _ := syscall.UTF16PtrFromString(t)
@@ -227,7 +287,8 @@ func showHostDetailDialog(parent HWND, ip string) {
 	}
 	sendMessage(hwndHostTypeCombo, CB_SETCURSEL, 1, 0) // default: SSH
 
-	// Fill summary.
+	// Fill identity section: status line + summary body.
+	setWindowText(hwndHostStatus, buildStatusLine(ip))
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
 	hostDetailUpdateConnectButtons(ip)
 	_, known := hostRegistry[ip]
@@ -247,6 +308,13 @@ func showHostDetailDialog(parent HWND, ip string) {
 // createHostDetailControls builds all child controls for the dialog.
 // All positions are derived from the actual client rect so they are
 // correct regardless of caption-bar height, border size, or DPI.
+//
+// The dialog is organised into four vertically-stacked sections:
+//
+//  1. Host Identity & State  — status line + scrollable summary body
+//  2. Connect                — primary protocol buttons + More… menu
+//  3. Investigate            — on-demand probe row + ping row
+//  4. Evidence & Observations — probe results listview + bottom buttons
 func createHostDetailControls(hwnd HWND) {
 	inst := getModuleHandle()
 	r := getClientRect(hwnd)
@@ -254,71 +322,72 @@ func createHostDetailControls(hwnd HWND) {
 	cH := r.Bottom // actual client height
 	const pad int32 = 10
 
-	// Row 1: Host label + IP combo (full width minus label)
+	// ── Section 1: Host Identity & State ─────────────────────────────────
 	y := pad
-	createCtrl("STATIC", "Host:", WS_CHILD|WS_VISIBLE,
-		pad, y+4, 36, 16, hwnd, 0, inst)
-	hwndHostIPCombo, _ = createWindowEx(0, "COMBOBOX", "",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_SORT,
-		pad+40, y, cW-pad*2-40, 240, hwnd, HMENU(idHostIPCombo), inst)
 
-	// Summary readonly edit (1/3 of client height) — WS_VSCROLL for long reports.
-	y += 28
-	summaryH := cH / 3
+	// One-line status: data completeness · observation sources · freshness.
+	hwndHostStatus, _ = createWindowEx(0, "STATIC", "",
+		WS_CHILD|WS_VISIBLE,
+		pad, y, cW-pad*2, 18, hwnd, 0, inst)
+	y += 22
+
+	// Summary body: identity details (hostname, MAC, vendor, OS, ports, etc.)
+	const summaryH int32 = 110
 	hwndHostSummary, _ = createWindowEx(0, "EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		pad, y, cW-pad*2, summaryH, hwnd, 0, inst)
+	y += summaryH + 6
 
-	// Connect / Ping quick-action bar (between summary and probe section)
-	y += summaryH + 8
+	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
+	y += 10
+
+	// ── Section 2: Connect ────────────────────────────────────────────────
+	createCtrl("STATIC", "Connect", WS_CHILD|WS_VISIBLE,
+		pad, y+3, 56, 14, hwnd, 0, inst)
+	y += 18
+
 	const (
-		connGap  int32 = 4
+		connGap  int32 = 5
 		connBtnH int32 = 24
 	)
 	cx := pad
-	createCtrl("STATIC", "Connect:", WS_CHILD|WS_VISIBLE,
-		cx, y+5, 58, 16, hwnd, 0, inst)
-	cx += 62
 	for _, btn := range []struct {
 		label string
 		dst   *HWND
 		id    int32
 		w     int32
 	}{
-		{"HTTP", &hwndHostConnHTTP, idHostConnHTTP, 46},
+		{"HTTP", &hwndHostConnHTTP, idHostConnHTTP, 48},
 		{"HTTPS", &hwndHostConnHTTPS, idHostConnHTTPS, 54},
-		{"SSH", &hwndHostConnSSH, idHostConnSSH, 44},
-		{"RDP", &hwndHostConnRDP, idHostConnRDP, 44},
+		{"SSH", &hwndHostConnSSH, idHostConnSSH, 46},
+		{"RDP", &hwndHostConnRDP, idHostConnRDP, 46},
 		{"FTP", &hwndHostConnFTP, idHostConnFTP, 44},
-		{"Telnet", &hwndHostConnTelnet, idHostConnTelnet, 54},
-		{"SMB", &hwndHostConnSMB, idHostConnSMB, 44},
+		{"SMB", &hwndHostConnSMB, idHostConnSMB, 46},
+		{"More \u25be", &hwndHostConnMore, idHostConnMore, 58},
 	} {
 		*btn.dst, _ = createWindowEx(0, "BUTTON", btn.label,
 			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 			cx, y, btn.w, connBtnH, hwnd, HMENU(btn.id), inst)
 		cx += btn.w + connGap
 	}
-	cx += 10 // small separator gap
-	hwndHostPingOnce, _ = createWindowEx(0, "BUTTON", "Ping",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cx, y, 50, connBtnH, hwnd, HMENU(idHostPingOnce), inst)
-	cx += 50 + connGap
-	hwndHostPingCont, _ = createWindowEx(0, "BUTTON", "Ping -t",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cx, y, 60, connBtnH, hwnd, HMENU(idHostPingCont), inst)
-
-	// Section label
 	y += connBtnH + 8
-	createCtrl("STATIC", "On-demand probes:", WS_CHILD|WS_VISIBLE,
-		pad, y+2, 140, 16, hwnd, 0, inst)
-	y += 22
+
+	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
+	y += 10
+
+	// ── Section 3: Investigate ────────────────────────────────────────────
+	createCtrl("STATIC", "Investigate", WS_CHILD|WS_VISIBLE,
+		pad, y+3, 78, 14, hwnd, 0, inst)
+	y += 18
+
+	// Probe row: Port [___] Type [▾] [Run Probe]      [Run Common Probes]
 	const (
-		portLblW  int32 = 32
-		portEditW int32 = 52
-		typeLblW  int32 = 36
+		portLblW   int32 = 32
+		portEditW  int32 = 52
+		typeLblW   int32 = 36
 		typeComboW int32 = 110
-		runBtnW   int32 = 60
-		gap       int32 = 8
+		runBtnW    int32 = 80
+		invGap     int32 = 6
 	)
 	x := pad
 	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE,
@@ -327,29 +396,55 @@ func createHostDetailControls(hwnd HWND) {
 	hwndHostPortEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "22",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
 		x, y, portEditW, 22, hwnd, HMENU(idHostPortEdit), inst)
-	x += portEditW + gap
+	x += portEditW + invGap
 	createCtrl("STATIC", "Type:", WS_CHILD|WS_VISIBLE,
 		x, y+4, typeLblW, 16, hwnd, 0, inst)
 	x += typeLblW
 	hwndHostTypeCombo, _ = createWindowEx(0, "COMBOBOX", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
 		x, y, typeComboW, 200, hwnd, HMENU(idHostTypeCombo), inst)
-	x += typeComboW + gap
-	hwndHostRunBtn, _ = createWindowEx(0, "BUTTON", "Run",
+	x += typeComboW + invGap
+	hwndHostRunBtn, _ = createWindowEx(0, "BUTTON", "Run Probe",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		x, y, runBtnW, 24, hwnd, HMENU(idHostRunProbe), inst)
-	x += runBtnW + gap*2
+	x += runBtnW + invGap*2
 	runAllW := cW - pad - x
-	if runAllW < 130 {
-		runAllW = 130
+	if runAllW < 140 {
+		runAllW = 140
 	}
-	hwndHostRunAllBtn, _ = createWindowEx(0, "BUTTON", "Run all common probes",
+	hwndHostRunAllBtn, _ = createWindowEx(0, "BUTTON", "Run Common Probes",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		x, y, runAllW, 24, hwnd, HMENU(idHostRunAll), inst)
-
-	// Probe results listview: fill all space above the button row
 	y += 30
-	const btnRowH int32 = 28 + pad*2
+
+	// Ping sub-row (investigative, not connects).
+	cx = pad
+	hwndHostPingOnce, _ = createWindowEx(0, "BUTTON", "Ping",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cx, y, 60, 24, hwnd, HMENU(idHostPingOnce), inst)
+	cx += 60 + connGap
+	hwndHostPingCont, _ = createWindowEx(0, "BUTTON", "Ping continuous",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		cx, y, 116, 24, hwnd, HMENU(idHostPingCont), inst)
+	y += 24 + 8
+
+	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
+	y += 10
+
+	// ── Section 4: Evidence & Observations ───────────────────────────────
+	createCtrl("STATIC", "Evidence & Observations", WS_CHILD|WS_VISIBLE,
+		pad, y+3, 170, 14, hwnd, 0, inst)
+	y += 20
+
+	// Empty-state hint shown until the first probe result arrives.
+	hwndHostEvidHint, _ = createWindowEx(0, "STATIC",
+		"No probes run yet  \u2014  use Investigate above to gather evidence.",
+		WS_CHILD|WS_VISIBLE,
+		pad+2, y, cW-pad*2-4, 18, hwnd, 0, inst)
+	y += 22
+
+	// Probe results listview: fills remaining space above the button row.
+	const btnRowH int32 = pad + 26 + pad
 	probeListH := cH - y - btnRowH
 	if probeListH < 60 {
 		probeListH = 60
@@ -359,47 +454,21 @@ func createHostDetailControls(hwnd HWND) {
 		pad, y, cW-pad*2, probeListH, hwnd, HMENU(idHostProbeList), inst)
 	sendMessage(hwndHostProbeList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndHostProbeList, 0, "Port", 60)
-	listViewAddColumn(hwndHostProbeList, 1, "Type", 80)
-	listViewAddColumn(hwndHostProbeList, 2, "Result", cW-pad*2-60-80-4)
+	listViewAddColumn(hwndHostProbeList, 0, "Port", 55)
+	listViewAddColumn(hwndHostProbeList, 1, "Type", 75)
+	listViewAddColumn(hwndHostProbeList, 2, "Result", cW-pad*2-55-75-4)
 
-	// Bottom button row pinned to client bottom
+	// Bottom button row pinned to client bottom.
 	btnY := cH - pad - 26
-	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy report",
+	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy Report",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-320, btnY, 100, 26, hwnd, HMENU(idHostCopyReport), inst)
+		cW-pad-330, btnY, 110, 26, hwnd, HMENU(idHostCopyReport), inst)
 	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy Fingerprint",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-210, btnY, 110, 26, hwnd, HMENU(idHostCopyFP), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-100, btnY, 100, 26, hwnd, HMENU(idHostClose), inst)
-}
-
-// hostDetailSelectIP updates the summary when the user picks a different IP.
-func hostDetailSelectIP(hwnd HWND) {
-	idx := sendMessage(hwndHostIPCombo, CB_GETCURSEL, 0, 0)
-	if idx == ^uintptr(0) {
-		return
-	}
-	tlen := sendMessage(hwndHostIPCombo, CB_GETLBTEXTLEN, idx, 0)
-	if int32(tlen) <= 0 {
-		return
-	}
-	buf := make([]uint16, tlen+1)
-	sendMessage(hwndHostIPCombo, CB_GETLBTEXT, idx, uintptr(unsafe.Pointer(&buf[0])))
-	ip := syscall.UTF16ToString(buf)
-	if ip == "" || ip == currentDetailIP {
-		return
-	}
-	currentDetailIP = ip
-	setWindowText(hwnd, "Host detail — "+ip) // update title bar
-	setWindowText(hwndHostSummary, buildHostSummary(ip))
-	hostDetailUpdateConnectButtons(ip)
-	_, known := hostRegistry[ip]
-	enableWindow(hwndHostCopyFPBtn, known)
-	// Clear the probe list for the new host.
-	sendMessage(hwndHostProbeList, LVM_DELETEALLITEMS, 0, 0)
 }
 
 // hostDetailUpdateConnectButtons enables/disables Connect buttons based on
@@ -416,7 +485,6 @@ func hostDetailUpdateConnectButtons(ip string) {
 		{22, &hwndHostConnSSH},
 		{3389, &hwndHostConnRDP},
 		{21, &hwndHostConnFTP},
-		{23, &hwndHostConnTelnet},
 		{445, &hwndHostConnSMB},
 	}
 	e, known := hostRegistry[ip]
@@ -459,7 +527,7 @@ func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 		atomic.AddInt32(&activeProbes, -1)
 		if atomic.LoadInt32(&activeProbes) == 0 {
 			enableWindow(hwndHostRunAllBtn, true)
-			setWindowText(hwndHostRunAllBtn, "Run all common probes")
+			setWindowText(hwndHostRunAllBtn, "Run Common Probes")
 		}
 		messageBox(hwnd, "Cannot run probe: the sensor service is not running.\nClick \"Elevate Sensor\" on the main window and try again.", "Probe", MB_ICONWARNING)
 		return
@@ -469,6 +537,8 @@ func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 // hostDetailAddProbeRow inserts one probe result into the probe listview.
 func hostDetailAddProbeRow(hwnd HWND, pr scan.ProbeResult) {
 	_ = hwnd
+	// Hide the empty-state hint once the first evidence row arrives.
+	showWindow(hwndHostEvidHint, SW_HIDE)
 	portStr := strconv.Itoa(pr.Port)
 	p := utf16(portStr)
 	item := LVITEM{
