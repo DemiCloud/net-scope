@@ -1963,12 +1963,17 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// each IP are independent and may share no text with it (e.g. querying
 		// "google.com" returns IPs whose PTRs are "pd-in-f*.1e100.net").
 		// The allowlist is cleared as soon as the user edits the search field.
+		//
+		// IMPORTANT: setWindowText fires EN_CHANGE on the edit control, which
+		// would clear pickResolvedIPSet before we use it. Set the edit text
+		// first (EN_CHANGE runs, clears nil → nil, no harm), then build the
+		// allowlist so it is in place when pickHostRepopulate is called.
+		pickHintIsError = false
+		setWindowText(hwndPickEdit, res.hostname) // EN_CHANGE fires here; pickResolvedIPSet is still nil
 		pickResolvedIPSet = make(map[string]bool, len(res.ips))
 		for _, ip := range res.ips {
 			pickResolvedIPSet[ip] = true
 		}
-		pickHintIsError = false
-		setWindowText(hwndPickEdit, res.hostname)
 		pickHostRepopulate(res.hostname) // filter arg ignored while pickResolvedIPSet is set
 		setWindowText(hwndPickHint,
 			fmt.Sprintf("%d addresses found \u2014 select one to open", len(res.ips)))
