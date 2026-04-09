@@ -118,6 +118,9 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
 
+	case WM_CTLCOLOREDIT:
+		return ctlColorDlgBody(wParam)
+
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idHostClose:
@@ -266,10 +269,10 @@ func createHostDetailControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_SORT,
 		pad+40, y, cW-pad*2-40, 240, hwnd, HMENU(idHostIPCombo), inst)
 
-	// Summary readonly edit (1/3 of client height)
+	// Summary readonly edit (1/3 of client height) — WS_VSCROLL for long reports.
 	y += 28
 	summaryH := cH / 3
-	hwndHostSummary, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+	hwndHostSummary, _ = createWindowEx(0, "EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		pad, y, cW-pad*2, summaryH, hwnd, 0, inst)
 

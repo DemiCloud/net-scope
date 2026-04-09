@@ -149,6 +149,50 @@ func dlgBottomRight(cW, cH int32, n int) (y int32, xs []int32) {
 	return
 }
 
+// ---------------------------------------------------------------------------
+// Read-only body text helpers
+// ---------------------------------------------------------------------------
+
+// createDlgSeparator creates a thin horizontal etched rule (SS_ETCHEDHORZ).
+// Use it to visually divide a title area from body content.
+//
+//	createDlgSeparator(hwnd, inst, pad, titleY+titleH+gap, cW-pad*2)
+func createDlgSeparator(parent HWND, inst HINSTANCE, x, y, w int32) {
+	createWindowEx(0, "STATIC", "",
+		WS_CHILD|WS_VISIBLE|SS_ETCHEDHORZ,
+		x, y, w, 2, parent, 0, inst)
+}
+
+// createDlgBodyEdit creates a borderless, read-only, multiline EDIT control
+// for displaying info text. No WS_EX_CLIENTEDGE — pair with ctlColorDlgBody
+// in WM_CTLCOLOREDIT to render it with a clean white background.
+//
+//	hwndBody = createDlgBodyEdit(hwnd, inst, text, pad, bodyY, cW-pad*2, bodyH)
+func createDlgBodyEdit(parent HWND, inst HINSTANCE, text string, x, y, w, h int32) HWND {
+	hw, _ := createWindowEx(0, "EDIT", text,
+		WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+		x, y, w, h, parent, 0, inst)
+	return hw
+}
+
+// ctlColorDlgBody handles WM_CTLCOLOREDIT for borderless read-only body-text
+// EDIT controls: white background, black text, opaque mode.
+//
+// Usage inside a WndProc switch:
+//
+//	case WM_CTLCOLOREDIT:
+//	    return ctlColorDlgBody(wParam)
+func ctlColorDlgBody(hdc uintptr) uintptr {
+	setBkMode(hdc, OPAQUE)
+	setTextColor(hdc, 0x00000000)
+	setBkColor(hdc, 0x00FFFFFF)
+	return uintptr(getSysColorBrush(COLOR_WINDOW))
+}
+
+// ---------------------------------------------------------------------------
+// Button layout helpers
+// ---------------------------------------------------------------------------
+
 // dlgButtonRowSplit calculates footer button positions for dialogs that have
 // buttons on both sides: leftN equal-width buttons flush-left (e.g. "Restore
 // Defaults") and rightN equal-width buttons flush-right (e.g. OK + Cancel).
