@@ -1523,6 +1523,10 @@ var (
 	pickHintIsError         bool    // true → hint is shown in red
 	pickResolving           bool    // true while a DNS lookup is in progress
 	pickEditOrigProc        uintptr // original wndproc for the edit subclass
+	// pickResolvedIPSet, when non-nil, restricts the listview to only the IPs
+	// returned by the most recent hostname resolution. Cleared as soon as the
+	// user edits the search field, restoring normal text-filter behaviour.
+	pickResolvedIPSet map[string]bool
 )
 
 // pickEditSubclassProc intercepts VK_RETURN and VK_ESCAPE from the Hosts
@@ -1639,9 +1643,35 @@ func pickHostUpdateHint(hwnd HWND) {
 }
 
 // pickHostRepopulate filters the list to rows matching filter.
+// If pickResolvedIPSet is non-nil it takes precedence: only those IPs are
+// shown regardless of the filter text, so that a just-resolved hostname whose
+// PTR results share no text with the typed query still appears in the list.
 // Selection is never forced — it remains explicit only.
 func pickHostRepopulate(filter string) {
-	hostsListViewRepopulate(hwndPickList, filter)
+	if pickResolvedIPSet != nil {
+		// Show only the IPs from the most recent resolution result.
+		sendMessage(hwndPickList, LVM_DELETEALLITEMS, 0, 0)
+		for _, ip := range allHostIPs() {
+			if !pickResolvedIPSet[ip] {
+				continue
+			}
+			name := ""
+			if e, ok := hostRegistry[ip]; ok {
+				name = e.Result.Hostname
+				if name == "" {
+					name = e.Result.NetBIOS
+				}
+			}
+			p := utf16(ip)
+			item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+			row := int32(sendMessage(hwndPickList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+			if row >= 0 {
+				setSubItem(hwndPickList, row, 1, name)
+			}
+		}
+	} else {
+		hostsListViewRepopulate(hwndPickList, filter)
+	}
 	// No auto-select: selection is always explicit (mouse or arrow keys).
 	if sendMessage(hwndPickList, LVM_GETITEMCOUNT, 0, 0) == 0 {
 		showWindow(hwndPickHostPlaceholder, SW_SHOW)
@@ -1737,6 +1767,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 		hwndPickDialog = HWND(hwnd)
 		pickResolving = false
+		pickResolvedIPSet = nil
 		atomic.StoreUintptr(&hwndPickDialogAtomic, uintptr(hwnd))
 
 		// Filter / freeform edit field at the top.
@@ -1802,6 +1833,9 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// Typing clears any list selection (selection is explicit only).
 			lv := LVITEM{StateMask: LVIS_SELECTED}
 			sendMessage(hwndPickList, LVM_SETITEMSTATE, ^uintptr(0), uintptr(unsafe.Pointer(&lv)))
+			// Clear the post-resolution IP allowlist so normal text filtering
+			// resumes as soon as the user starts typing a new query.
+			pickResolvedIPSet = nil
 			pickHostRepopulate(getWindowText(hwndPickEdit))
 			pickHostUpdateHint(HWND(hwnd))
 		}
@@ -1929,12 +1963,18 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			return 0
 		}
 
-		// Multiple results: repopulate the list filtered to show only the
-		// resolved addresses (they share the hostname in the registry now),
-		// and update the hint so the user knows to select one.
+		// Multiple results: pin the listview to show exactly the resolved IPs.
+		// We cannot filter by the queried hostname because the PTR records for
+		// each IP are independent and may share no text with it (e.g. querying
+		// "google.com" returns IPs whose PTRs are "pd-in-f*.1e100.net").
+		// The allowlist is cleared as soon as the user edits the search field.
+		pickResolvedIPSet = make(map[string]bool, len(res.ips))
+		for _, ip := range res.ips {
+			pickResolvedIPSet[ip] = true
+		}
 		pickHintIsError = false
 		setWindowText(hwndPickEdit, res.hostname)
-		pickHostRepopulate(res.hostname)
+		pickHostRepopulate(res.hostname) // filter arg ignored while pickResolvedIPSet is set
 		setWindowText(hwndPickHint,
 			fmt.Sprintf("%d addresses found \u2014 select one to open", len(res.ips)))
 		invalidateRect(HWND(hwnd), nil, true)
