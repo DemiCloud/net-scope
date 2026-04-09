@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/demicloud/net-scope/internal/config"
 	"github.com/demicloud/net-scope/internal/scan"
 )
 
@@ -1262,4 +1263,61 @@ func applyDHCPSort(_ HWND, col int32, asc bool) {
 		return
 	}
 	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), col, asc)
+}
+
+// ---------------------------------------------------------------------------
+// Column-state persistence (snapshot → State / State → restore)
+// ---------------------------------------------------------------------------
+
+// snapshotAllColumnStates collects the current column visibility, pixel widths,
+// and sort state for every tab that has configurable columns.
+// Tab keys: "hosts", "mdns", "ssdp", "wsd", "dhcp".
+func snapshotAllColumnStates() map[string]config.TabColumnState {
+	snapshot := func(hwnd HWND, vis []bool, colTitles []string) config.TabColumnState {
+		n := len(vis)
+		v := make([]bool, n)
+		copy(v, vis)
+		w := listViewGetColumnWidths(hwnd, n)
+		col, asc := getLVSortState(hwnd)
+		_ = colTitles // kept for future per-tab title changes
+		return config.TabColumnState{Visible: v, Widths: w, SortCol: col, SortAsc: asc}
+	}
+	return map[string]config.TabColumnState{
+		"hosts": snapshot(hwndList, colVisible[:], hostsColTitles[:]),
+		"mdns":  snapshot(hwndListMDNS, mdnsColVis, mdnsColTitles),
+		"ssdp":  snapshot(hwndListSSDP, ssdpColVis, ssdpColTitles),
+		"wsd":   snapshot(hwndListWSD, wsdColVis, wsdColTitles),
+		"dhcp":  snapshot(hwndListDHCP, dhcpColVis, dhcpColTitles),
+	}
+}
+
+// restoreAllColumnStates applies persisted column state for every tab.
+// Entries with mismatched column counts are silently skipped so a schema
+// change never crashes or corrupts the UI.
+func restoreAllColumnStates(m map[string]config.TabColumnState) {
+	apply := func(hwnd HWND, vis []bool, colTitles []string, st config.TabColumnState) {
+		n := len(vis)
+		if len(st.Widths) == n {
+			listViewApplyColumnWidths(hwnd, st.Widths, vis)
+		} else if len(st.Visible) == n {
+			// Older state without widths: honour visibility only.
+			copy(vis, st.Visible)
+		}
+		applyLVSortState(hwnd, st.SortCol, st.SortAsc, colTitles)
+	}
+	if st, ok := m["hosts"]; ok {
+		apply(hwndList, colVisible[:], hostsColTitles[:], st)
+	}
+	if st, ok := m["mdns"]; ok {
+		apply(hwndListMDNS, mdnsColVis, mdnsColTitles, st)
+	}
+	if st, ok := m["ssdp"]; ok {
+		apply(hwndListSSDP, ssdpColVis, ssdpColTitles, st)
+	}
+	if st, ok := m["wsd"]; ok {
+		apply(hwndListWSD, wsdColVis, wsdColTitles, st)
+	}
+	if st, ok := m["dhcp"]; ok {
+		apply(hwndListDHCP, dhcpColVis, dhcpColTitles, st)
+	}
 }

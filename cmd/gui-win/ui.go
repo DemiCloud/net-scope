@@ -1056,6 +1056,101 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // Control creation
 // ---------------------------------------------------------------------------
 
+// activateTab switches the content area to tab index tab. It shows the correct
+// pane (and placeholder), hides all others, and toggles the scan bar visibility.
+// It also updates the Ctrl+F find bar state for the new tab.
+//
+// Call this whenever the active tab changes — both from the TCN_SELCHANGE
+// notification and when restoring a saved tab on startup.
+func activateTab(hwnd HWND, tab int32) {
+	// Hide all panes first.
+	showWindow(hwndList, SW_HIDE)
+	showWindow(hwndListPlaceholder, SW_HIDE)
+	showWindow(hwndListMDNS, SW_HIDE)
+	showWindow(hwndMDNSPlaceholder, SW_HIDE)
+	showWindow(hwndListSSDP, SW_HIDE)
+	showWindow(hwndSSDPPlaceholder, SW_HIDE)
+	showWindow(hwndListWSD, SW_HIDE)
+	showWindow(hwndWSDPlaceholder, SW_HIDE)
+	showWindow(hwndListDHCP, SW_HIDE)
+	showWindow(hwndDHCPPlaceholder, SW_HIDE)
+	showWindow(hwndListNetwork, SW_HIDE)
+	showWindow(hwndListHealth, SW_HIDE)
+	showWindow(hwndHealthPlaceholder, SW_HIDE)
+	// Show/hide scan bar and reposition Hosts listview accordingly.
+	// On Hosts tab the scan bar is visible and the list sits below it;
+	// on all other tabs the list fills from just below the tab strip.
+	if tab == 0 {
+		showWindow(hwndTarget, SW_SHOW)
+		showWindow(hwndDetect, SW_SHOW)
+		showWindow(hwndScan, SW_SHOW)
+		showWindow(hwndActiveOnly, SW_SHOW)
+		showWindow(hwndScanStatus, SW_SHOW)
+
+		// Ensure Hosts list is repositioned to account for scan bar.
+		r := getClientRect(hwndMain)
+		statusR := getClientRect(hwndStatus)
+		statusH := statusR.Bottom - statusR.Top
+		hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
+		listH := (r.Bottom - r.Top) - hostsTop - statusH
+		if listH < 0 {
+			listH = 0
+		}
+		moveWindow(hwndList, 0, hostsTop, r.Right-r.Left, listH)
+		moveWindow(hwndListPlaceholder, 0, hostsTop+(listH-scale(20))/2, r.Right-r.Left, scale(20))
+		showWindow(hwndList, SW_SHOW)
+		if !isScanning && !listHasHosts {
+			showWindow(hwndListPlaceholder, SW_SHOW)
+		}
+	} else {
+		showWindow(hwndTarget, SW_HIDE)
+		showWindow(hwndDetect, SW_HIDE)
+		showWindow(hwndScan, SW_HIDE)
+		showWindow(hwndActiveOnly, SW_HIDE)
+		showWindow(hwndScanStatus, SW_HIDE)
+		switch tab {
+		case 1:
+			showWindow(hwndListMDNS, SW_SHOW)
+			if bcastMDNS == 0 || proxyEnabled {
+				showWindow(hwndMDNSPlaceholder, SW_SHOW)
+			}
+		case 2:
+			showWindow(hwndListSSDP, SW_SHOW)
+			if bcastSSDP == 0 || proxyEnabled {
+				showWindow(hwndSSDPPlaceholder, SW_SHOW)
+			}
+		case 3:
+			showWindow(hwndListWSD, SW_SHOW)
+			if bcastWSD == 0 || proxyEnabled {
+				showWindow(hwndWSDPlaceholder, SW_SHOW)
+			}
+		case 4:
+			showWindow(hwndListDHCP, SW_SHOW)
+			if bcastDHCP == 0 || proxyEnabled {
+				showWindow(hwndDHCPPlaceholder, SW_SHOW)
+			}
+		case 5:
+			showWindow(hwndListNetwork, SW_SHOW)
+		case 6:
+			showWindow(hwndListHealth, SW_SHOW)
+			if !scanEverCompleted {
+				showWindow(hwndHealthPlaceholder, SW_SHOW)
+			}
+		}
+	}
+	// Update find bar for the new tab: reposition, reload its text,
+	// or hide it if the new tab doesn't support filtering.
+	if isWindowVisible(hwndSearchEdit) {
+		if tab > 4 {
+			showWindow(hwndSearchEdit, SW_HIDE)
+			showWindow(hwndSearchClose, SW_HIDE)
+		} else {
+			positionFindBar(hwnd)
+			setWindowText(hwndSearchEdit, tabSearchFilter[tab])
+		}
+	}
+}
+
 func createControls(hwnd HWND) {
 	inst := getModuleHandle()
 	elevated := isElevated()
