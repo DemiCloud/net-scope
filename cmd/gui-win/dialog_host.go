@@ -399,7 +399,7 @@ func hostDetailForget(hwnd HWND) {
 	}
 	delete(hostRegistry, currentDetailIP)
 	// Remove the row from the main-window host list if present.
-	postMessage(hwndMain, WM_SCAN_RESULT, 0, 0) // triggers a UI refresh
+	postMessage(hwndMain, WM_HOST_REFRESH, 0, 0)
 	hostDetailClose(hwnd)
 }
 
@@ -1730,7 +1730,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
 					if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
 						delete(hostRegistry, ip)
-						postMessage(hwndMain, WM_SCAN_RESULT, 0, 0)
+						postMessage(hwndMain, WM_HOST_REFRESH, 0, 0)
 						pickHostRepopulate(getWindowText(hwndPickEdit))
 						pickHostUpdateHint(HWND(hwnd))
 					}
