@@ -28,19 +28,20 @@ import (
 // Layout (740 × 640) — four vertical sections:
 //
 //  ┌─ Host — 192.168.1.42 ─────────────────────────────────────────────────┐
-//  │ [status: passive / sources / freshness]                                │
-//  │  Summary body (hostname, MAC, vendor, OS, ports, banners, services)    │
+//  │ Passive only   ·   Sources: mDNS · SSDP   ·   last seen 2m ago        │
+//  │ IP: 192.168.1.42   Hostname: myhost   Vendor: Acme                     │
+//  │ OS: Linux (72% confidence)                                              │
 //  ├────────────────────────────────────────────────────────────────────────│
-//  │ Connect   [HTTP] [HTTPS] [SSH] [RDP] [FTP] [SMB] [More ▾]             │
+//  │ Connect  [ Connect ▾ ]                                                  │
 //  ├────────────────────────────────────────────────────────────────────────│
 //  │ Investigate  Port:[___] Type:[▾] [Run Probe]   [Run Common Probes]     │
-//  │              [Ping]  [Ping continuous]                                  │
+//  │ Diagnostics: [Ping]  [Ping continuous]                                  │
 //  ├────────────────────────────────────────────────────────────────────────│
-//  │ Evidence & Observations                                                 │
-//  │ ┌────────┬────────┬───────────────────────────────────────────────┐   │
-//  │ │  Port  │  Type  │  Result                                        │   │
-//  │ └────────┴────────┴───────────────────────────────────────────────┘   │
-//  │              [Copy Fingerprint]  [Copy Report]            [Close]      │
+//  │ Observations                                                            │
+//  │ ┌──────────────┬──────────┬──────────┬──────────────────────────────┐  │
+//  │ │ Type         │ Target   │ Source   │ Result                        │  │
+//  │ └──────────────┴──────────┴──────────┴──────────────────────────────┘  │
+//  │ [Copy Fingerprint]  [Copy Report]                         [Close]      │
 //  └────────────────────────────────────────────────────────────────────────┘
 
 const (
@@ -53,15 +54,15 @@ const (
 	idHostProbeList  = 608
 	idHostCopyFP     = 609
 
-	// Connect quick-action buttons (primary protocols).
-	idHostConnHTTP  = 620
-	idHostConnHTTPS = 621
-	idHostConnSSH   = 622
-	idHostConnRDP   = 623
-	idHostConnFTP   = 624
-	idHostConnTelnet = 625 // used in «More…» popup menu, not a direct button
-	idHostConnSMB   = 626
-	idHostConnMore  = 629 // «More…» dropdown for legacy / less-common protocols
+	// Connect context-menu item IDs (resolved via TPM_RETURNCMD, not WM_COMMAND).
+	idHostConnHTTPS  = 621
+	idHostConnHTTP   = 620
+	idHostConnSSH    = 622
+	idHostConnRDP    = 623
+	idHostConnSMB    = 626
+	idHostConnFTP    = 624
+	idHostConnTelnet = 625
+	idHostConnect    = 629 // single «Connect ▾» button; opens dynamic protocol menu
 
 	// Investigate section.
 	idHostPingOnce = 627
@@ -77,19 +78,13 @@ var (
 	hwndHostRunBtn    HWND
 	hwndHostRunAllBtn HWND
 	hwndHostProbeList HWND
-	hwndHostEvidHint  HWND // «No probes run yet» hint inside evidence section
+	hwndHostObsHint   HWND // «No observations yet» hint label inside observations section
 	hwndHostCopyBtn   HWND
 	hwndHostCloseBtn  HWND
 	hwndHostCopyFPBtn HWND
 
-	// Connect quick-action buttons (primary protocols only).
-	hwndHostConnHTTP  HWND
-	hwndHostConnHTTPS HWND
-	hwndHostConnSSH   HWND
-	hwndHostConnRDP   HWND
-	hwndHostConnFTP   HWND
-	hwndHostConnSMB   HWND
-	hwndHostConnMore  HWND // «More…» opens popup with legacy protocols
+	// Single «Connect ▾» button; protocol chosen via dynamic popup menu.
+	hwndHostConnect HWND
 
 	// Investigate section.
 	hwndHostPingOnce HWND
@@ -136,20 +131,8 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			hostDetailCopyReport(HWND(hwnd))
 		case idHostCopyFP:
 			hostDetailCopyFP(HWND(hwnd))
-		case idHostConnHTTP:
-			openProtocol(HWND(hwnd), currentDetailIP, "http")
-		case idHostConnHTTPS:
-			openProtocol(HWND(hwnd), currentDetailIP, "https")
-		case idHostConnSSH:
-			openProtocol(HWND(hwnd), currentDetailIP, "ssh")
-		case idHostConnRDP:
-			openProtocol(HWND(hwnd), currentDetailIP, "rdp")
-		case idHostConnFTP:
-			openProtocol(HWND(hwnd), currentDetailIP, "ftp")
-		case idHostConnSMB:
-			openProtocol(HWND(hwnd), currentDetailIP, "smb")
-		case idHostConnMore:
-			showConnectMoreMenu(HWND(hwnd))
+		case idHostConnect:
+			showConnectMenu(HWND(hwnd))
 		case idHostPingOnce:
 			shellExecute(HWND(hwnd), "open", "cmd.exe",
 				"/c ping "+currentDetailIP+" && pause", "", SW_SHOW)
@@ -242,17 +225,67 @@ func buildStatusLine(ip string) string {
 	return strings.Join(parts, "   \u00b7   ")
 }
 
-// showConnectMoreMenu displays a popup menu of less-common / legacy connection
-// options, anchored to the bottom-left of the "More ▾" button.
-func showConnectMoreMenu(hwnd HWND) {
+// showConnectMenu builds a dynamic protocol menu anchored below the Connect
+// button. Items are sorted by evidence: ports confirmed open appear first;
+// plausible-but-unconfirmed ports appear in a "More options" sub-menu.
+// Telnet is always relegated to More options regardless of evidence.
+func showConnectMenu(hwnd HWND) {
+	type entry struct {
+		port    int
+		proto   string
+		label   string
+		id      int32
+		legacy  bool // always demoted to More
+	}
+	candidates := []entry{
+		{443, "https", "HTTPS  (port 443)", idHostConnHTTPS, false},
+		{80, "http", "HTTP  (port 80)", idHostConnHTTP, false},
+		{22, "ssh", "SSH  (port 22)", idHostConnSSH, false},
+		{3389, "rdp", "RDP  (port 3389)", idHostConnRDP, false},
+		{445, "smb", "SMB  (port 445)", idHostConnSMB, false},
+		{21, "ftp", "FTP  (port 21)", idHostConnFTP, false},
+		{23, "telnet", "Telnet  (port 23)", idHostConnTelnet, true},
+	}
+
+	e, known := hostRegistry[currentDetailIP]
+
+	var confirmed, other []entry
+	for _, c := range candidates {
+		if c.legacy {
+			other = append(other, c)
+			continue
+		}
+		if !known || portOpen(e.Result, c.port) {
+			confirmed = append(confirmed, c)
+		} else {
+			other = append(other, c)
+		}
+	}
+
 	menu := createPopupMenu()
-	appendMenu(menu, MF_STRING, idHostConnTelnet, "Telnet (port 23)")
-	br := getWindowRect(hwndHostConnMore)
+	for _, c := range confirmed {
+		appendMenu(menu, MF_STRING, uintptr(c.id), c.label)
+	}
+	if len(other) > 0 {
+		if len(confirmed) > 0 {
+			appendMenu(menu, MF_SEPARATOR, 0, "")
+		}
+		moreSub := createPopupMenu()
+		for _, c := range other {
+			appendMenu(moreSub, MF_STRING, uintptr(c.id), c.label)
+		}
+		appendMenu(menu, MF_POPUP, uintptr(moreSub), "More options")
+	}
+
+	br := getWindowRect(hwndHostConnect)
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, br.Left, br.Bottom, hwnd)
 	destroyMenu(menu)
-	switch cmd {
-	case idHostConnTelnet:
-		openProtocol(hwnd, currentDetailIP, "telnet")
+
+	for _, c := range candidates {
+		if int32(cmd) == c.id {
+			openProtocol(hwnd, currentDetailIP, c.proto)
+			break
+		}
 	}
 }
 
@@ -290,9 +323,9 @@ func showHostDetailDialog(parent HWND, ip string) {
 	// Fill identity section: status line + summary body.
 	setWindowText(hwndHostStatus, buildStatusLine(ip))
 	setWindowText(hwndHostSummary, buildHostSummary(ip))
-	hostDetailUpdateConnectButtons(ip)
-	_, known := hostRegistry[ip]
-	enableWindow(hwndHostCopyFPBtn, known)
+
+	// Pre-populate observations from passive and prior scan data.
+	hostDetailPopulateObservations(ip)
 
 	setFontAllChildren(dlg, appFont)
 	// Override the summary pane with a monospace font so padded labels align.
@@ -346,31 +379,11 @@ func createHostDetailControls(hwnd HWND) {
 		pad, y+3, 56, 14, hwnd, 0, inst)
 	y += 18
 
-	const (
-		connGap  int32 = 5
-		connBtnH int32 = 24
-	)
-	cx := pad
-	for _, btn := range []struct {
-		label string
-		dst   *HWND
-		id    int32
-		w     int32
-	}{
-		{"HTTP", &hwndHostConnHTTP, idHostConnHTTP, 48},
-		{"HTTPS", &hwndHostConnHTTPS, idHostConnHTTPS, 54},
-		{"SSH", &hwndHostConnSSH, idHostConnSSH, 46},
-		{"RDP", &hwndHostConnRDP, idHostConnRDP, 46},
-		{"FTP", &hwndHostConnFTP, idHostConnFTP, 44},
-		{"SMB", &hwndHostConnSMB, idHostConnSMB, 46},
-		{"More \u25be", &hwndHostConnMore, idHostConnMore, 58},
-	} {
-		*btn.dst, _ = createWindowEx(0, "BUTTON", btn.label,
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-			cx, y, btn.w, connBtnH, hwnd, HMENU(btn.id), inst)
-		cx += btn.w + connGap
-	}
-	y += connBtnH + 8
+	// Single smart button — protocol chosen via evidence-ordered popup menu.
+	hwndHostConnect, _ = createWindowEx(0, "BUTTON", "Connect \u25be",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		pad, y, 100, 26, hwnd, HMENU(idHostConnect), inst)
+	y += 26 + 8
 
 	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
 	y += 10
@@ -417,81 +430,70 @@ func createHostDetailControls(hwnd HWND) {
 		x, y, runAllW, 24, hwnd, HMENU(idHostRunAll), inst)
 	y += 30
 
-	// Ping sub-row (investigative, not connects).
-	cx = pad
+	// Ping sub-row: diagnostic tools, visually subordinate to the probe row.
+	cx := pad
+	createCtrl("STATIC", "Diagnostics:", WS_CHILD|WS_VISIBLE,
+		cx, y+4, 76, 16, hwnd, 0, inst)
+	cx += 80
 	hwndHostPingOnce, _ = createWindowEx(0, "BUTTON", "Ping",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cx, y, 60, 24, hwnd, HMENU(idHostPingOnce), inst)
-	cx += 60 + connGap
+		cx, y, 58, 22, hwnd, HMENU(idHostPingOnce), inst)
+	cx += 58 + 5
 	hwndHostPingCont, _ = createWindowEx(0, "BUTTON", "Ping continuous",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cx, y, 116, 24, hwnd, HMENU(idHostPingCont), inst)
-	y += 24 + 8
+		cx, y, 112, 22, hwnd, HMENU(idHostPingCont), inst)
+	y += 22 + 8
 
 	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
 	y += 10
 
-	// ── Section 4: Evidence & Observations ───────────────────────────────
-	createCtrl("STATIC", "Evidence & Observations", WS_CHILD|WS_VISIBLE,
-		pad, y+3, 170, 14, hwnd, 0, inst)
+	// ── Section 4: Observations ───────────────────────────────────────────
+	createCtrl("STATIC", "Observations", WS_CHILD|WS_VISIBLE,
+		pad, y+3, 100, 14, hwnd, 0, inst)
 	y += 20
 
-	// Empty-state hint shown until the first probe result arrives.
-	hwndHostEvidHint, _ = createWindowEx(0, "STATIC",
-		"No probes run yet  \u2014  use Investigate above to gather evidence.",
+	// Empty-state hint: shown until the first observation row is inserted.
+	hwndHostObsHint, _ = createWindowEx(0, "STATIC",
+		"No observations yet  \u2014  use Investigate above to gather evidence.",
 		WS_CHILD|WS_VISIBLE,
 		pad+2, y, cW-pad*2-4, 18, hwnd, 0, inst)
 	y += 22
 
-	// Probe results listview: fills remaining space above the button row.
+	// Observations listview: heterogeneous rows (ports, banners, services, OS…)
 	const btnRowH int32 = pad + 26 + pad
-	probeListH := cH - y - btnRowH
-	if probeListH < 60 {
-		probeListH = 60
+	obsListH := cH - y - btnRowH
+	if obsListH < 60 {
+		obsListH = 60
 	}
+	// Columns: Type | Target | Source | Result
+	const (
+		colTypeW   int32 = 72
+		colTargetW int32 = 68
+		colSourceW int32 = 72
+	)
 	hwndHostProbeList, _ = createWindowEx(0, WC_LISTVIEW, "",
 		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
-		pad, y, cW-pad*2, probeListH, hwnd, HMENU(idHostProbeList), inst)
+		pad, y, cW-pad*2, obsListH, hwnd, HMENU(idHostProbeList), inst)
 	sendMessage(hwndHostProbeList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
-	listViewAddColumn(hwndHostProbeList, 0, "Port", 55)
-	listViewAddColumn(hwndHostProbeList, 1, "Type", 75)
-	listViewAddColumn(hwndHostProbeList, 2, "Result", cW-pad*2-55-75-4)
+	listViewAddColumn(hwndHostProbeList, 0, "Type", colTypeW)
+	listViewAddColumn(hwndHostProbeList, 1, "Target", colTargetW)
+	listViewAddColumn(hwndHostProbeList, 2, "Source", colSourceW)
+	listViewAddColumn(hwndHostProbeList, 3, "Result", cW-pad*2-colTypeW-colTargetW-colSourceW-4)
 
-	// Bottom button row pinned to client bottom.
+	// Bottom button row: copy actions left, Close right.
+	// Copy actions start disabled; enabled by hostDetailUpdateCopyButtons after
+	// observations are populated.
 	btnY := cH - pad - 26
-	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy Report",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-330, btnY, 110, 26, hwnd, HMENU(idHostCopyReport), inst)
 	hwndHostCopyFPBtn, _ = createWindowEx(0, "BUTTON", "Copy Fingerprint",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
-		cW-pad-210, btnY, 110, 26, hwnd, HMENU(idHostCopyFP), inst)
+		pad, btnY, 120, 26, hwnd, HMENU(idHostCopyFP), inst)
+	hwndHostCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy Report",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+		pad+120+8, btnY, 110, 26, hwnd, HMENU(idHostCopyReport), inst)
 	hwndHostCloseBtn, _ = createWindowEx(0, "BUTTON", "Close",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP,
 		cW-pad-100, btnY, 100, 26, hwnd, HMENU(idHostClose), inst)
-}
-
-// hostDetailUpdateConnectButtons enables/disables Connect buttons based on
-// which ports are known to be open for ip. If ip is not in the registry
-// (manually entered), all buttons are left enabled.
-func hostDetailUpdateConnectButtons(ip string) {
-	type portBtn struct {
-		port int
-		hwnd *HWND
-	}
-	portBtns := []portBtn{
-		{80, &hwndHostConnHTTP},
-		{443, &hwndHostConnHTTPS},
-		{22, &hwndHostConnSSH},
-		{3389, &hwndHostConnRDP},
-		{21, &hwndHostConnFTP},
-		{445, &hwndHostConnSMB},
-	}
-	e, known := hostRegistry[ip]
-	for _, pb := range portBtns {
-		en := !known || portOpen(e.Result, pb.port)
-		enableWindow(*pb.hwnd, en)
-	}
 }
 
 // hostDetailRunSingle reads the Port and Type fields and runs one probe.
@@ -534,13 +536,12 @@ func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) {
 	}
 }
 
-// hostDetailAddProbeRow inserts one probe result into the probe listview.
-func hostDetailAddProbeRow(hwnd HWND, pr scan.ProbeResult) {
-	_ = hwnd
-	// Hide the empty-state hint once the first evidence row arrives.
-	showWindow(hwndHostEvidHint, SW_HIDE)
-	portStr := strconv.Itoa(pr.Port)
-	p := utf16(portStr)
+// hostDetailAddObsRow appends one observation row to hwndHostProbeList.
+// Columns: Type | Target | Source | Result.
+// Hides the empty-state hint on the first insertion.
+func hostDetailAddObsRow(obsType, target, source, result string) {
+	showWindow(hwndHostObsHint, SW_HIDE)
+	p := utf16(obsType)
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
 		IItem:   0x7fffffff, // append
@@ -550,23 +551,137 @@ func hostDetailAddProbeRow(hwnd HWND, pr scan.ProbeResult) {
 	if row < 0 {
 		return
 	}
-	setSubItem(hwndHostProbeList, row, 1, pr.Type)
-	setSubItem(hwndHostProbeList, row, 2, pr.Result)
+	setSubItem(hwndHostProbeList, row, 1, target)
+	setSubItem(hwndHostProbeList, row, 2, source)
+	setSubItem(hwndHostProbeList, row, 3, result)
 }
 
-// hostDetailCopyReport builds a text report and puts it on the clipboard.
+// hostDetailAddProbeRow maps an on-demand ProbeResult to an observation row.
+func hostDetailAddProbeRow(_ HWND, pr scan.ProbeResult) {
+	result := pr.Result
+	if result == "" {
+		result = "no response"
+	}
+	hostDetailAddObsRow(pr.Type, strconv.Itoa(pr.Port), "Active", result)
+	hostDetailUpdateCopyButtons()
+}
+
+// hostDetailUpdateCopyButtons enables the footer copy actions only when there
+// is something to copy. Copy Fingerprint requires a registry entry (structured
+// data); Copy Report is useful regardless.
+func hostDetailUpdateCopyButtons() {
+	_, known := hostRegistry[currentDetailIP]
+	enableWindow(hwndHostCopyFPBtn, known)
+	rows := sendMessage(hwndHostProbeList, LVM_GETITEMCOUNT, 0, 0)
+	enableWindow(hwndHostCopyBtn, known || rows > 0)
+}
+
+// hostDetailPopulateObservations pre-fills the observations table with all
+// data already known about ip from passive discovery and prior scans.
+// It is called once when the dialog opens, after the controls are ready.
+func hostDetailPopulateObservations(ip string) {
+	sendMessage(hwndHostProbeList, LVM_DELETEALLITEMS, 0, 0)
+	showWindow(hwndHostObsHint, SW_SHOW) // reset to visible; rows will hide it
+
+	e, ok := hostRegistry[ip]
+	if !ok {
+		return
+	}
+	r := e.Result
+
+	// Open ports from previous scan.
+	for _, p := range r.OpenPorts {
+		hostDetailAddObsRow("Port", strconv.Itoa(p), "Scan", "Open")
+	}
+
+	// Service banners from scan.
+	for _, b := range []struct{ svc, val string }{
+		{"SSH", r.Banner.SSH}, {"HTTP", r.Banner.HTTP}, {"HTTPS", r.Banner.HTTPS},
+		{"FTP", r.Banner.FTP}, {"SMTP", r.Banner.SMTP}, {"Telnet", r.Banner.Telnet},
+	} {
+		if b.val != "" {
+			hostDetailAddObsRow("Banner", b.svc, "Scan", b.val)
+		}
+	}
+
+	// TLS certificate fingerprint.
+	if r.Banner.TLSCert != "" {
+		hostDetailAddObsRow("TLS Cert", "443", "Scan", r.Banner.TLSCert)
+	}
+
+	// OS guess (derived, surfaced in observations for traceability).
+	if string(r.OS) != "" {
+		osLabel := string(r.OS)
+		if r.OSConfidence > 0 {
+			osLabel = fmt.Sprintf("%s  (%d%% confidence)", r.OS, r.OSConfidence)
+		}
+		hostDetailAddObsRow("OS Guess", "\u2014", "Inference", osLabel)
+	}
+
+	// TCP SYN fingerprint.
+	if r.SYNProbe.WindowSize > 0 {
+		hostDetailAddObsRow("TCP Fingerprint", "\u2014", "Scan",
+			fmt.Sprintf("window=%d  opts=%s", r.SYNProbe.WindowSize, r.SYNProbe.Options))
+	}
+
+	// SNMP device identity.
+	if r.SNMP != nil && r.SNMP.SysDescr != "" {
+		hostDetailAddObsRow("SNMP", "\u2014", "SNMP", r.SNMP.SysDescr)
+	}
+
+	// Passive services (mDNS / SSDP / WSD / NetBIOS).
+	allSvcs := append(append([]scan.ServiceInfo{}, r.Services...), e.ExtraServices...)
+	seen := map[string]bool{}
+	for _, svc := range allSvcs {
+		key := svc.Source + ":" + svc.Name + ":" + svc.Type
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		name := unescapeDNSLabel(svc.Name)
+		if name == "" {
+			name = svc.Type
+		}
+		src := svc.Source
+		if src == "" {
+			src = "Passive"
+		}
+		hostDetailAddObsRow("Service", svc.Type, strings.ToUpper(src[:1])+src[1:], name)
+	}
+
+	// DHCP events.
+	for _, evt := range e.DHCPEvents {
+		detail := evt.Type.String()
+		if evt.Hostname != "" {
+			detail += "  host=" + evt.Hostname
+		}
+		if evt.OfferedIP != "" && evt.OfferedIP != "0.0.0.0" {
+			detail += "  offered=" + evt.OfferedIP
+		}
+		hostDetailAddObsRow("DHCP", evt.OfferedIP, "DHCP", detail)
+	}
+
+	hostDetailUpdateCopyButtons()
+}
+
+// hostDetailCopyReport builds a plain-text report from the summary and all
+// observation rows currently visible in the listview, then puts it on the
+// clipboard. Uses the listview directly so the report always matches what
+// the user sees — regardless of whether rows came from passive data or probes.
 func hostDetailCopyReport(hwnd HWND) {
 	var sb strings.Builder
 	sb.WriteString(buildHostSummary(currentDetailIP))
 
-	// Append probe results.
-	pendingProbeResultsMu.Lock()
-	probes := append([]scan.ProbeResult{}, pendingProbeResults...)
-	pendingProbeResultsMu.Unlock()
-	if len(probes) > 0 {
-		sb.WriteString("\n── On-demand probes ───────────────────────────────────\n")
-		for _, pr := range probes {
-			sb.WriteString(fmt.Sprintf("  %-6d %-8s %s\n", pr.Port, pr.Type, pr.Result))
+	// Observations table.
+	n := int(sendMessage(hwndHostProbeList, LVM_GETITEMCOUNT, 0, 0))
+	if n > 0 {
+		sb.WriteString("\r\n\u2500\u2500 Observations \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n")
+		for i := 0; i < n; i++ {
+			obsType := listViewGetCellText(hwndHostProbeList, int32(i), 0)
+			target  := listViewGetCellText(hwndHostProbeList, int32(i), 1)
+			source  := listViewGetCellText(hwndHostProbeList, int32(i), 2)
+			result  := listViewGetCellText(hwndHostProbeList, int32(i), 3)
+			sb.WriteString(fmt.Sprintf("  %-14s %-10s %-10s %s\r\n", obsType, target, source, result))
 		}
 	}
 	copyToClipboard(hwnd, sb.String())
@@ -731,24 +846,28 @@ func getMonoFont() HFONT {
 	return monoFont
 }
 
-// buildHostSummary returns a multi-line text summary for ip.
+// buildHostSummary returns a concise identity summary for ip.
+//
+// This covers derived knowledge and stable identity fields only:
+// hostname, MAC, vendor, OS belief, timing, SNMP device name.
+// Raw observations (ports, banners, services, DHCP) are presented in
+// the Observations table and are intentionally excluded here.
 func buildHostSummary(ip string) string {
 	var sb strings.Builder
 
-	e := hostRegistry[ip] // may be nil for IPs typed manually
+	e := hostRegistry[ip]
 	if e == nil {
-		sb.WriteString("IP:       " + ip + "\r\n")
-		sb.WriteString("(No scan data available for this host)\r\n")
+		sb.WriteString("IP:         " + ip + "\r\n")
+		sb.WriteString("State:      Manually entered  \u2014  no observations yet\r\n")
+		sb.WriteString("OS:         Unknown\r\n")
 		return sb.String()
 	}
 
 	r := e.Result
 
-	// ── Basic ───────────────────────────────────────────────────────────────
 	sb.WriteString("IP:         " + ip + "\n")
-	sb.WriteString(fmt.Sprintf("First seen: %s\n", e.FirstSeen.Format("2006-01-02 15:04:05")))
-	sb.WriteString(fmt.Sprintf("Last seen:  %s\n", e.LastSeen.Format("2006-01-02 15:04:05")))
 
+	// Identity names.
 	if r.Hostname != "" {
 		sb.WriteString("Hostname:   " + r.Hostname + "\n")
 	}
@@ -761,9 +880,23 @@ func buildHostSummary(ip string) string {
 	if r.Vendor != "" {
 		sb.WriteString("Vendor:     " + r.Vendor + "\n")
 	}
-	if string(r.OS) != "" {
-		sb.WriteString("OS hint:    " + string(r.OS) + "\n")
+
+	// SNMP device name — concise identifier used in SNMP-capable devices.
+	if r.SNMP != nil && r.SNMP.SysName != "" {
+		sb.WriteString("SNMP name:  " + r.SNMP.SysName + "\n")
 	}
+
+	// OS belief — always shown; "Unknown" is a valid and informative state.
+	switch {
+	case string(r.OS) != "" && r.OSConfidence > 0:
+		sb.WriteString(fmt.Sprintf("OS:         %s  (%d%% confidence)\n", r.OS, r.OSConfidence))
+	case string(r.OS) != "":
+		sb.WriteString("OS:         " + string(r.OS) + "\n")
+	default:
+		sb.WriteString("OS:         Unknown\n")
+	}
+
+	// Network timing (useful for fingerprinting and troubleshooting).
 	if r.Latency > 0 {
 		line := fmt.Sprintf("Latency:    %s", r.Latency.Round(time.Millisecond))
 		if r.TTL > 0 {
@@ -771,82 +904,10 @@ func buildHostSummary(ip string) string {
 		}
 		sb.WriteString(line + "\n")
 	}
-	if len(r.OpenPorts) > 0 {
-		ports := make([]string, len(r.OpenPorts))
-		for i, p := range r.OpenPorts {
-			ports[i] = strconv.Itoa(p)
-		}
-		sb.WriteString("Open ports: " + strings.Join(ports, ", ") + "\n")
-	}
 
-	// ── Banners ─────────────────────────────────────────────────────────────
-	var banners []string
-	for _, b := range []struct{ label, val string }{
-		{"SSH", r.Banner.SSH}, {"HTTP", r.Banner.HTTP}, {"HTTPS", r.Banner.HTTPS},
-		{"FTP", r.Banner.FTP}, {"SMTP", r.Banner.SMTP}, {"Telnet", r.Banner.Telnet},
-	} {
-		if b.val != "" {
-			banners = append(banners, fmt.Sprintf("  %-8s %s", b.label+":", b.val))
-		}
-	}
-	if len(banners) > 0 {
-		sb.WriteString("\n── Banners ─────────────────────────────────────────────\n")
-		for _, b := range banners {
-			sb.WriteString(b + "\n")
-		}
-	}
-
-	// ── SNMP ────────────────────────────────────────────────────────────────
-	if r.SNMP != nil {
-		sb.WriteString("\n── SNMP ────────────────────────────────────────────────\n")
-		if r.SNMP.SysName != "" {
-			sb.WriteString("  SysName:    " + r.SNMP.SysName + "\n")
-		}
-		if r.SNMP.SysDescr != "" {
-			sb.WriteString("  SysDescr:   " + r.SNMP.SysDescr + "\n")
-		}
-		if r.SNMP.SysLocation != "" {
-			sb.WriteString("  Location:   " + r.SNMP.SysLocation + "\n")
-		}
-	}
-
-	// ── DHCP ────────────────────────────────────────────────────────────────
-	if len(e.DHCPEvents) > 0 {
-		sb.WriteString("\n── DHCP ────────────────────────────────────────────────\n")
-		for _, evt := range e.DHCPEvents {
-			line := fmt.Sprintf("  %s  %-12s", evt.Time.Format("15:04:05"), evt.Type.String())
-			if evt.Hostname != "" {
-				line += "  hostname=" + evt.Hostname
-			}
-			if evt.OfferedIP != "" && evt.OfferedIP != "0.0.0.0" {
-				line += "  offered=" + evt.OfferedIP
-			}
-			if evt.ServerIP != "" {
-				line += "  server=" + evt.ServerIP
-			}
-			sb.WriteString(line + "\n")
-		}
-	}
-
-	// ── Services (mDNS / SSDP / WSD) ────────────────────────────────────────
-	allSvcs := append([]scan.ServiceInfo{}, r.Services...)
-	allSvcs = append(allSvcs, e.ExtraServices...)
-	if len(allSvcs) > 0 {
-		sb.WriteString("\n── Services ────────────────────────────────────────────\n")
-		seen := make(map[string]bool)
-		for _, svc := range allSvcs {
-			key := svc.Source + ":" + svc.Name + ":" + svc.Type
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			name := unescapeDNSLabel(svc.Name)
-			if name == "" {
-				name = svc.Type
-			}
-			sb.WriteString(fmt.Sprintf("  [%-5s] %s\n", svc.Source, name))
-		}
-	}
+	// Timestamps.
+	sb.WriteString(fmt.Sprintf("First seen: %s\n", e.FirstSeen.Format("2006-01-02 15:04:05")))
+	sb.WriteString(fmt.Sprintf("Last seen:  %s\n", e.LastSeen.Format("2006-01-02 15:04:05")))
 
 	return strings.ReplaceAll(sb.String(), "\n", "\r\n")
 }
