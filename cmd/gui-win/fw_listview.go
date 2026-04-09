@@ -701,8 +701,17 @@ func showEditColumnsDialog(parent, hwndLV HWND, colTitles []string, colVis []boo
 }
 
 func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
+	// Actual widths for buttons in the left group of the footer row.
+	// Used both by dlgEnsureClientWidth (called first in WM_CREATE) and
+	// dlgButtonRowSplit so the layout engine places them without collision.
+	const restoreW int32 = 130
+	editColsLeftWidths := []int32{restoreW}
+
 	switch uint32(msg) {
 	case WM_CREATE:
+		// Widen the window if the button row would otherwise overlap.
+		dlgEnsureClientWidth(HWND(hwnd), dlgButtonRowClientWidth(editColsLeftWidths, 2))
+
 		n := int32(len(editColsDlgState.colTitles))
 
 		// One checkbox per column 1..n-1 (col 0 is always visible).
@@ -725,11 +734,10 @@ func editColsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 
 		// Button row: Restore Defaults left, Cancel + OK right.
 		cr := getClientRect(HWND(hwnd))
-		btnY, leftXs, rightXs := dlgButtonRowSplit(cr.Right-cr.Left, cr.Bottom-cr.Top, 1, 2)
+		btnY, leftXs, rightXs := dlgButtonRowSplit(cr.Right-cr.Left, cr.Bottom-cr.Top, editColsLeftWidths, 2)
 		makeDefPushButton(HWND(hwnd), "OK", IDC_EDITCOLS_OK, rightXs[0], btnY, 100, 26)
 		makePushButton(HWND(hwnd), "Cancel", IDC_EDITCOLS_CANCEL, rightXs[1], btnY, 100, 26)
-		// "Restore Defaults" is wider than the standard 100 px to give the label room to breathe.
-		makePushButton(HWND(hwnd), "Restore Defaults", IDC_EDITCOLS_RESTORE, leftXs[0], btnY, 130, 26)
+		makePushButton(HWND(hwnd), "Restore Defaults", IDC_EDITCOLS_RESTORE, leftXs[0], btnY, restoreW, 26)
 		return 0
 
 	case WM_COMMAND:

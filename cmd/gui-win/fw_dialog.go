@@ -236,15 +236,60 @@ func makeCheckBox(parent HWND, text string, id HMENU, x, y, w, h int32) HWND {
 // Button layout helpers
 // ---------------------------------------------------------------------------
 
+// dlgButtonRowClientWidth returns the minimum client-area width needed so that
+// a dlgButtonRowSplit layout with the given left button widths and rightN
+// standard (100 px) right buttons can render without the two groups
+// overlapping.  The formula accounts for left/right padding and the gap that
+// separates the groups.
+//
+// Usage — determine window width before calling createWindowEx, or call
+// dlgEnsureClientWidth inside WM_CREATE:
+//
+//	minCW := dlgButtonRowClientWidth([]int32{130}, 2)   // "Restore Defaults" + OK + Cancel
+func dlgButtonRowClientWidth(leftWidths []int32, rightN int) int32 {
+	const (
+		btnW int32 = 100
+		gap  int32 = 8
+		pad  int32 = 10
+	)
+	cW := pad * 2
+	for _, w := range leftWidths {
+		cW += w + gap // gap doubles as the gutter between the two groups
+	}
+	cW += int32(rightN)*btnW + int32(rightN-1)*gap
+	return cW
+}
+
+// dlgEnsureClientWidth widens the dialog window so its client area is at
+// least minClientW pixels wide.  Call this at the very top of WM_CREATE,
+// before creating any layout-dependent child controls, passing the value
+// returned by dlgButtonRowClientWidth.  The window position and height are
+// left unchanged; centerWindowOver can then be called after createWindowEx as
+// usual because the resize happens while the window is still hidden.
+func dlgEnsureClientWidth(hwnd HWND, minClientW int32) {
+	cr := getClientRect(hwnd)
+	clientW := cr.Right - cr.Left
+	if clientW >= minClientW {
+		return
+	}
+	wr := getWindowRect(hwnd)
+	newW := (wr.Right - wr.Left) + (minClientW - clientW)
+	setWindowPos(hwnd, 0, 0, 0, newW, wr.Bottom-wr.Top, SWP_NOMOVE|SWP_NOZORDER)
+}
+
 // dlgButtonRowSplit calculates footer button positions for dialogs that have
-// buttons on both sides: leftN equal-width buttons flush-left (e.g. "Restore
-// Defaults") and rightN equal-width buttons flush-right (e.g. OK + Cancel).
+// buttons on both sides: left buttons flush-left (e.g. "Restore Defaults")
+// and rightN equal-width (100 px) buttons flush-right (e.g. OK + Cancel).
+//
+// leftWidths contains the actual pixel width of each left button.  Passing
+// the real widths lets the layout engine keep the two groups from colliding
+// even when a label is wider than the 100 px standard.  Pair with
+// dlgButtonRowClientWidth + dlgEnsureClientWidth so the dialog is always wide
+// enough before children are created.
 //
 // Returns the shared y position, leftXs (index 0 = leftmost), rightXs (index
 // 0 = leftmost of the right group, which is the primary action button).
-//
-// Standard button size: 100 × 26 logical pixels (pass those to createWindowEx).
-func dlgButtonRowSplit(cW, cH int32, leftN, rightN int) (y int32, leftXs, rightXs []int32) {
+func dlgButtonRowSplit(cW, cH int32, leftWidths []int32, rightN int) (y int32, leftXs, rightXs []int32) {
 	const (
 		btnW int32 = 100
 		btnH int32 = 26
@@ -252,9 +297,11 @@ func dlgButtonRowSplit(cW, cH int32, leftN, rightN int) (y int32, leftXs, rightX
 		pad  int32 = 10
 	)
 	y = cH - pad - btnH
-	leftXs = make([]int32, leftN)
-	for i := 0; i < leftN; i++ {
-		leftXs[i] = pad + int32(i)*(btnW+gap)
+	leftXs = make([]int32, len(leftWidths))
+	x := pad
+	for i, w := range leftWidths {
+		leftXs[i] = x
+		x += w + gap
 	}
 	rightXs = make([]int32, rightN)
 	for i := 0; i < rightN; i++ {
