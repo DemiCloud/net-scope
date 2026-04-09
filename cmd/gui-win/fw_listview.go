@@ -350,46 +350,116 @@ func restoreLVColumns(hwnd HWND, defWidths []int32, colVis []bool) {
 }
 
 // ---------------------------------------------------------------------------
-// Marquee (rubber-band) selection subclassing
 // ---------------------------------------------------------------------------
+// Managed ListView subclassing
+// ---------------------------------------------------------------------------
+//
+// subclassListViewManaged installs a window subclass on a ListView that
+// provides all standard framework behaviours in one call:
+//
+//   - Marquee (rubber-band) multi-selection starting on any row or empty space
+//   - Ctrl+A  — select all rows
+//   - Shift+click / Ctrl+click — forwarded to the native ListView for native
+//     range-extension and toggle-selection
+//   - Column-header click — sort by that column (asc → desc → unsorted cycle);
+//     indicators (▲/▼) are updated automatically; onSort is called after
+//   - Column-header right-click — "Edit Columns…" popup (only when colVis is
+//     non-nil)
+//
+// Parameters:
+//   colTitles  canonical column header strings (without sort indicators)
+//   colVis     per-column visibility slice (nil = column hiding not offered)
+//   defWidths  96-DPI logical widths matching colTitles (nil when colVis nil)
+//   onSort     called after sort state is updated; receives (hwnd, col, asc).
+//              Pass nil to use the generic text sort (lvTextSort).
+//
+// Must be called after the ListView has been created and all columns added.
 
-// lvMarqueeState tracks per-ListView drag-selection state for windows that have
-// been subclassed via subclassListViewMarquee.
-type lvMarqueeState struct {
+// lvManagedState holds all per-ListView state for a managed listview.
+type lvManagedState struct {
+	// Marquee drag-selection.
 	dragging bool
 	startPt  POINT
 	origProc uintptr
+
+	// Sort.
+	sortCol   int32
+	sortAsc   bool
+	colTitles []string
+	onSort    func(hw HWND, col int32, asc bool) // nil → lvTextSort
+
+	// Column visibility (nil → Edit Columns not offered).
+	colVis    []bool
+	defWidths []int32
 }
 
-// lvMarqueeStates maps a ListView HWND to its drag-state.  Accessed on the
-// Windows message-loop goroutine only; no synchronisation is needed.
-var lvMarqueeStates = map[HWND]*lvMarqueeState{}
+// lvManagedStates maps a ListView HWND to its managed state.
+// Accessed on the Windows message-loop goroutine only.
+var lvManagedStates = map[HWND]*lvManagedState{}
 
 // lvSubclassRefs holds strong references to subclass callback values to
 // prevent the Go GC from collecting them while the subclass is active.
 var lvSubclassRefs []uintptr
 
-// subclassListViewMarquee installs a window-subclass on hwnd so that
-// rubber-band multi-selection can start from any point — including over an
-// existing item — not only from empty space as the native LVS_EX_MARQUEESELECT
-// requires.
-//
-// Shift-click and Ctrl-click are forwarded unmodified to the original procedure
-// so that the built-in range-extension and toggle-selection still work.
-//
-// Must be called after the ListView has been fully created and configured.
-func subclassListViewMarquee(hwnd HWND) {
-	state := &lvMarqueeState{}
-	lvMarqueeStates[hwnd] = state
+func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWidths []int32, onSort func(HWND, int32, bool)) {
+	state := &lvManagedState{
+		sortCol:   -1,
+		sortAsc:   true,
+		colTitles: colTitles,
+		colVis:    colVis,
+		defWidths:  defWidths,
+		onSort:    onSort,
+	}
+	lvManagedStates[hwnd] = state
 
 	cb := syscall.NewCallback(func(h, msg, wParam, lParam uintptr) uintptr {
 		hw := HWND(h)
-		s, ok := lvMarqueeStates[hw]
+		s, ok := lvManagedStates[hw]
 		if !ok {
 			return defWindowProc(hw, uint32(msg), wParam, lParam)
 		}
 
 		switch uint32(msg) {
+
+		// ── Ctrl+A ────────────────────────────────────────────────────────
+		case WM_KEYDOWN:
+			if wParam == VK_KEY_A && getKeyState(VK_CONTROL) < 0 {
+				listViewSelectAll(hw)
+				return 0
+			}
+
+		// ── Header notifications (sort + Edit Columns) ────────────────────
+		// The header control is a direct child of the ListView. It posts
+		// WM_NOTIFY to the ListView (its parent). We intercept here so that
+		// the behaviours are self-contained in the subclass — the parent
+		// window's WM_NOTIFY handler needs no knowledge of these listviews.
+		case WM_NOTIFY:
+			hdr := (*NMHDR)(unsafe.Pointer(lParam)) //nolint:govet
+			headerHwnd := HWND(sendMessage(hw, LVM_GETHEADER, 0, 0))
+			if HWND(hdr.HwndFrom) != headerHwnd {
+				break
+			}
+			switch hdr.Code {
+			case HDN_ITEMCLICKW:
+				nm := (*NMHEADER)(unsafe.Pointer(lParam)) //nolint:govet
+				s.sortCol, s.sortAsc = lvNextSortState(s.sortCol, s.sortAsc, nm.IItem)
+				lvUpdateSortIndicators(hw, s.colTitles, s.sortCol, s.sortAsc)
+				if s.onSort != nil {
+					s.onSort(hw, s.sortCol, s.sortAsc)
+				} else {
+					lvTextSort(hw, int32(len(s.colTitles)), s.sortCol, s.sortAsc)
+				}
+				return 0
+
+			case NM_RCLICK:
+				if s.colVis != nil {
+					parent := getParent(hw)
+					showEditColumnsDialog(parent, hw, s.colTitles, s.colVis, s.defWidths)
+					return 0
+				}
+			}
+
+		// ── Marquee drag-selection ────────────────────────────────────────
 		case WM_LBUTTONDOWN:
 			// Shift/Ctrl → delegate to the ListView for native range/toggle select.
 			if getKeyState(VK_SHIFT) < 0 || getKeyState(VK_CONTROL) < 0 {

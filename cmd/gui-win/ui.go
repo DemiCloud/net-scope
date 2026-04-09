@@ -546,27 +546,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				}
 			}
 		}
-		// Column header click → sort (all tabs).
-		if hdr.Code == LVN_COLUMNCLICK {
-			nm := (*NMLISTVIEW)(unsafe.Pointer(lParam)) //nolint:govet
-			if handleListColumnClick(hdr.IdFrom, nm.ISubItem) {
-				return 0
-			}
-		}
-		// Right-click on any listview header → Edit Columns menu.
-		if hdr.Code == NM_RCLICK {
-			if info, ok := headerInfos[HWND(hdr.HwndFrom)]; ok {
-				pt := getCursorPos()
-				hmenu := createPopupMenu()
-				appendMenu(hmenu, MF_STRING, IDM_HEADER_EDIT_COLS, "Edit Columns…")
-				cmd := trackPopupMenu(hmenu, TPM_RIGHTBUTTON|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
-				destroyMenu(hmenu)
-				if int32(cmd) == IDM_HEADER_EDIT_COLS {
-					showEditColumnsDialog(HWND(hwnd), info.hwndLV, info.colTitles, info.colVis, info.defWidths)
-				}
-				return 0
-			}
-		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
 			row := int32(sendMessage(hwndList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
@@ -1190,7 +1169,8 @@ func createControls(hwnd HWND) {
 		0, hostsTop, 1160, 600, hwnd, IDC_LIST, inst)
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewMarquee(hwndList)
+	subclassListViewManaged(hwndList, hostsColTitles[:], colVisible[:], colDefaultLogicalWidths[:],
+		func(_ HWND, col int32, asc bool) { applyHostsSort(col, asc) })
 	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
 	// Columns come from hostsColTitles + colDefaultLogicalWidths (single source of truth).
 	for i, title := range hostsColTitles {
@@ -1200,7 +1180,6 @@ func createControls(hwnd HWND) {
 			listViewAddColumn(hwndList, int32(i), title, scale(colDefaultLogicalWidths[i]))
 		}
 	}
-	headerInfos[headerHwnd] = &lvHeaderInfo{hwndList, hostsColTitles[:], colVisible[:], colDefaultLogicalWidths[:]}
 
 	// ---- empty-state placeholder (sits on top of hwndList when no hosts) ----
 	hwndListPlaceholder = createEmptyStateOverlay(hwnd, "Enter a target above and click Scan",
@@ -1213,12 +1192,10 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewMarquee(hwndListMDNS)
+	subclassListViewManaged(hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths, applyMDNSSort)
 	for i, title := range mdnsColTitles {
 		listViewAddColumn(hwndListMDNS, int32(i), title, scale(mdnsDefWidths[i]))
 	}
-	headerInfos[HWND(sendMessage(hwndListMDNS, LVM_GETHEADER, 0, 0))] =
-		&lvHeaderInfo{hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths}
 	hwndMDNSPlaceholder = createEmptyStateOverlay(hwnd, func() string {
 		if proxyEnabled {
 			return "Not available in proxy mode  (mDNS is link-local multicast, not routable over SOCKS5)"
@@ -1232,12 +1209,10 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewMarquee(hwndListSSDP)
+	subclassListViewManaged(hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths, applySSDPSort)
 	for i, title := range ssdpColTitles {
 		listViewAddColumn(hwndListSSDP, int32(i), title, scale(ssdpDefWidths[i]))
 	}
-	headerInfos[HWND(sendMessage(hwndListSSDP, LVM_GETHEADER, 0, 0))] =
-		&lvHeaderInfo{hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths}
 	hwndSSDPPlaceholder = createEmptyStateOverlay(hwnd, func() string {
 		if proxyEnabled {
 			return "Not available in proxy mode  (SSDP is link-local multicast, not routable over SOCKS5)"
@@ -1251,12 +1226,10 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewMarquee(hwndListWSD)
+	subclassListViewManaged(hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths, applyWSDSort)
 	for i, title := range wsdColTitles {
 		listViewAddColumn(hwndListWSD, int32(i), title, scale(wsdDefWidths[i]))
 	}
-	headerInfos[HWND(sendMessage(hwndListWSD, LVM_GETHEADER, 0, 0))] =
-		&lvHeaderInfo{hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths}
 	hwndWSDPlaceholder = createEmptyStateOverlay(hwnd, func() string {
 		if proxyEnabled {
 			return "Not available in proxy mode  (WS-Discovery is link-local multicast, not routable over SOCKS5)"
@@ -1270,12 +1243,10 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewMarquee(hwndListDHCP)
+	subclassListViewManaged(hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths, applyDHCPSort)
 	for i, title := range dhcpColTitles {
 		listViewAddColumn(hwndListDHCP, int32(i), title, scale(dhcpDefWidths[i]))
 	}
-	headerInfos[HWND(sendMessage(hwndListDHCP, LVM_GETHEADER, 0, 0))] =
-		&lvHeaderInfo{hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths}
 	hwndDHCPPlaceholder = createEmptyStateOverlay(hwnd, func() string {
 		if proxyEnabled {
 			return "Not available in proxy mode  (DHCP capture requires local network interface access)"
@@ -1702,9 +1673,12 @@ func startScan(hwnd HWND) {
 
 	// Reset display state.
 	liveCount = 0
-	sortCol = -1
-	sortAsc = true
-	updateSortIndicators()
+	// Reset the hosts listview sort to unsorted (state lives in the managed subclass).
+	if s, ok := lvManagedStates[hwndList]; ok {
+		s.sortCol = -1
+		s.sortAsc = true
+		lvUpdateSortIndicators(hwndList, hostsColTitles[:], -1, true)
+	}
 	pendingMu.Lock()
 	pendingResults = pendingResults[:0]
 	pendingMu.Unlock()
