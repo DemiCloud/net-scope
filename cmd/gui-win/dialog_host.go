@@ -1791,6 +1791,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			pad, listTop, cW-pad*2, listH, HWND(hwnd), HMENU(idPickHostList), inst)
 		sendMessage(hwndPickList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
+		subclassListViewMarquee(hwndPickList)
 		listViewAddColumn(hwndPickList, 0, "IP", 140)
 		listViewAddColumn(hwndPickList, 1, "Hostname", cW-pad*2-140-4)
 
