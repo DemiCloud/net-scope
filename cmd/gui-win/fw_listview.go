@@ -119,6 +119,17 @@ func listViewSelectedText(hwnd HWND, col int32) string {
 	return listViewGetCellText(hwnd, row, col)
 }
 
+// listViewAllSelectedTexts returns column col text for every selected row.
+func listViewAllSelectedTexts(hwnd HWND, col int32) []string {
+	var out []string
+	row := int32(sendMessage(hwnd, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+	for row >= 0 {
+		out = append(out, listViewGetCellText(hwnd, row, col))
+		row = int32(sendMessage(hwnd, LVM_GETNEXTITEM, uintptr(row), LVNI_SELECTED))
+	}
+	return out
+}
+
 // listViewSelectFirst selects and focuses the first row of hwnd, if any rows
 // exist. Useful after repopulating a list to prime keyboard navigation.
 func listViewSelectFirst(hwnd HWND) {

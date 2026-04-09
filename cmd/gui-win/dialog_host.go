@@ -1605,16 +1605,20 @@ func isValidHostInput(s string) bool {
 	return true
 }
 
-// pickHostUpdateHint refreshes the bottom hint label with state-appropriate
-// text and sets pickHintIsError so WM_CTLCOLORSTATIC colours it correctly.
+// pickHostUpdateHint refreshes the bottom hint label.
+// With a single selection it shows the normal "Enter to open" prompt.
+// With multiple selections it turns red and says to select only one.
 func pickHostUpdateHint(hwnd HWND) {
 	input := strings.TrimSpace(getWindowText(hwndPickEdit))
-	sel := pickHostSelectedIP()
+	selected := pickHostSelectedIPs()
 
 	var text string
 	pickHintIsError = false
 	switch {
-	case sel != "":
+	case len(selected) > 1:
+		pickHintIsError = true
+		text = fmt.Sprintf("%d hosts selected — select only one to open", len(selected))
+	case len(selected) == 1:
 		text = "Enter to open selected host"
 	case input == "":
 		text = ""
@@ -1639,18 +1643,31 @@ func pickHostRepopulate(filter string) {
 	}
 }
 
-// pickHostSelectedIP returns the IP of the explicitly selected row, or "".
+// pickHostSelectedIPs returns the IPs of all selected rows (column 0).
+func pickHostSelectedIPs() []string {
+	return listViewAllSelectedTexts(hwndPickList, 0)
+}
+
+// pickHostSelectedIP returns the IP of the first selected row, or "".
+// Use this only when single-selection semantics are needed (e.g. View Host).
 func pickHostSelectedIP() string {
 	return listViewSelectedText(hwndPickList, 0)
 }
 
 // pickHostConfirm opens the host detail dialog.
 //
-// Priority:  explicit listview selection  →  typed input (validated).
-// Invalid typed input shows an inline hint and does nothing else.
+// Priority:  explicit listview selection (single only)  →  typed input (validated).
+// Multiple selections do nothing — the hint already explains what to do.
 func pickHostConfirm(hwnd HWND) {
-	ip := pickHostSelectedIP()
-	if ip == "" {
+	selected := pickHostSelectedIPs()
+	if len(selected) > 1 {
+		// Multi-selection: confirm is disabled; hint already shows the error.
+		return
+	}
+	ip := ""
+	if len(selected) == 1 {
+		ip = selected[0]
+	} else {
 		ip = strings.TrimSpace(getWindowText(hwndPickEdit))
 		if !isValidHostInput(ip) {
 			// Inline error — no modal.
@@ -1695,7 +1712,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		listTop := pad + editH + pad/2
 		listH := cH - listTop - pad/2 - hintH - pad
 		hwndPickList, _ = createWindowEx(0, WC_LISTVIEW, "",
-			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
+			WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
 			pad, listTop, cW-pad*2, listH, HWND(hwnd), HMENU(idPickHostList), inst)
 		sendMessage(hwndPickList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER)
@@ -1753,7 +1770,11 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		switch hdr.Code {
 		case NM_DBLCLK:
-			pickHostConfirm(HWND(hwnd))
+			// Double-click only opens detail for a single selection.
+			if sel := pickHostSelectedIPs(); len(sel) == 1 {
+				closeModal(HWND(hwnd))
+				showHostDetailDialog(hwndMain, sel[0])
+			}
 		case LVN_KEYDOWN:
 			kd := (*NMLVKEYDOWN)(unsafe.Pointer(lParam)) //nolint:govet
 			if kd.WVKey == VK_RETURN {
@@ -1762,40 +1783,53 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case LVN_ITEMCHANGED:
 			pickHostUpdateHint(HWND(hwnd))
 		case NM_RCLICK:
-			ip := pickHostSelectedIP()
-			if ip == "" {
+			// Collect all selected IPs; if none, add the hit-tested row.
+			selected := pickHostSelectedIPs()
+			if len(selected) == 0 {
 				pt := getCursorPos()
 				cpt := POINT{X: pt.X, Y: pt.Y}
 				procScreenToClient.Call(uintptr(hwndPickList), uintptr(unsafe.Pointer(&cpt)))
 				ht := LVHITTESTINFO{Pt: cpt}
 				row := int32(sendMessage(hwndPickList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
 				if row >= 0 {
-					ip = listViewGetCellText(hwndPickList, row, 0)
+					selected = []string{listViewGetCellText(hwndPickList, row, 0)}
 				}
 			}
-			if ip != "" {
-				pt := getCursorPos()
-				menu := createPopupMenu()
+			if len(selected) == 0 {
+				return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+			}
+			pt := getCursorPos()
+			menu := createPopupMenu()
+			if len(selected) == 1 {
 				appendMenu(menu, MF_STRING, idPickHostCtxView, "View Host")
-				appendMenu(menu, MF_STRING, idPickHostCtxCopy, "Copy Data")
-				appendMenu(menu, MF_SEPARATOR, 0, "")
-				appendMenu(menu, MF_STRING, idPickHostCtxForget, "Forget Host")
-				cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd)))
-				destroyMenu(menu)
-				switch cmd {
-				case idPickHostCtxView:
+			}
+			appendMenu(menu, MF_STRING, idPickHostCtxCopy, "Copy Data")
+			appendMenu(menu, MF_SEPARATOR, 0, "")
+			appendMenu(menu, MF_STRING, idPickHostCtxForget, "Forget Host")
+			cmd := int32(trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd)))
+			destroyMenu(menu)
+			switch cmd {
+			case idPickHostCtxView:
+				if len(selected) == 1 {
 					closeModal(HWND(hwnd))
-					showHostDetailDialog(hwndMain, ip)
-				case idPickHostCtxCopy:
-					copyToClipboard(HWND(hwnd), buildHostJSON([]string{ip}))
-				case idPickHostCtxForget:
-					confirmMsg := "Remove " + ip + " from the session?\n\nAll observations for this host will be deleted."
-					if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
+					showHostDetailDialog(hwndMain, selected[0])
+				}
+			case idPickHostCtxCopy:
+				copyToClipboard(HWND(hwnd), buildHostJSON(selected))
+			case idPickHostCtxForget:
+				var confirmMsg string
+				if len(selected) == 1 {
+					confirmMsg = "Remove " + selected[0] + " from the session?\n\nAll observations for this host will be deleted."
+				} else {
+					confirmMsg = fmt.Sprintf("Remove %d hosts from the session?\n\nAll observations for these hosts will be deleted.", len(selected))
+				}
+				if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
+					for _, ip := range selected {
 						delete(hostRegistry, ip)
-						postMessage(hwndMain, WM_HOST_REFRESH, 0, 0)
-						pickHostRepopulate(getWindowText(hwndPickEdit))
-						pickHostUpdateHint(HWND(hwnd))
 					}
+					postMessage(hwndMain, WM_HOST_REFRESH, 0, 0)
+					pickHostRepopulate(getWindowText(hwndPickEdit))
+					pickHostUpdateHint(HWND(hwnd))
 				}
 			}
 		}
