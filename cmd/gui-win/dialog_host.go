@@ -410,8 +410,9 @@ func showHostDetailDialog(parent HWND, ip string) {
 
 	// Auto-create a minimal registry entry so probe/scan results are persisted
 	// for manually entered addresses that aren't yet in the session registry.
+	// ensureHostEntry initialises hostRegistry if nil — never write directly.
 	if _, ok := hostRegistry[ip]; !ok {
-		hostRegistry[ip] = &hostEntry{LastSeen: time.Now()}
+		ensureHostEntry(ip)
 		postMessage(hwndMain, WM_SCAN_RESULT, 0, 0) // refresh main host list
 	}
 
