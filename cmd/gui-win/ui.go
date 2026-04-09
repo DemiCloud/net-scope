@@ -384,36 +384,6 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		applyActiveFilter()
 		return 0
 
-	case WM_RESOLVE_HOST:
-		// Background hostname→IP resolution finished.
-		// wParam is the index into pendingResolveHosts.
-		pendingResolveHostsMu.Lock()
-		var res resolveHostResult
-		if int(wParam) < len(pendingResolveHosts) {
-			res = pendingResolveHosts[int(wParam)]
-		}
-		pendingResolveHostsMu.Unlock()
-
-		if res.err != "" {
-			messageBox(HWND(hwnd), "Could not resolve \u201c"+res.hostname+"\u201d:\n"+res.err, "Host Lookup", MB_ICONWARNING)
-			return 0
-		}
-		if len(res.ips) == 0 {
-			messageBox(HWND(hwnd), "\u201c"+res.hostname+"\u201d has no address records.", "Host Lookup", MB_ICONWARNING)
-			return 0
-		}
-		// Ensure all resolved IPs are in the registry and carry the hostname.
-		for _, ip := range res.ips {
-			en := ensureHostEntry(ip)
-			if en.Result.Hostname == "" {
-				en.Result.Hostname = res.hostname
-			}
-			en.LastSeen = time.Now()
-		}
-		// Open the detail dialog for the first (or only) resolved IP.
-		showHostDetailDialog(HWND(hwnd), res.ips[0])
-		return 0
-
 	case WM_DHCP_EVENT:
 		pendingDHCPMu.Lock()
 		var evt scan.DHCPEvent

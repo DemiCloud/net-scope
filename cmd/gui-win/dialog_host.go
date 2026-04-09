@@ -1517,10 +1517,11 @@ const (
 var (
 	hwndPickEdit            HWND
 	hwndPickList            HWND
-	hwndPickHint            HWND   // bottom hint / validation label
-	hwndPickHostPlaceholder HWND   // empty-state overlay for the listview
-	hwndPickDialog          HWND   // the Hosts dialog itself (set in WM_CREATE)
-	pickHintIsError         bool   // true → hint is shown in red
+	hwndPickHint            HWND    // bottom hint / validation label
+	hwndPickHostPlaceholder HWND    // empty-state overlay for the listview
+	hwndPickDialog          HWND    // the Hosts dialog itself (set in WM_CREATE)
+	pickHintIsError         bool    // true → hint is shown in red
+	pickResolving           bool    // true while a DNS lookup is in progress
 	pickEditOrigProc        uintptr // original wndproc for the edit subclass
 )
 
@@ -1665,11 +1666,18 @@ func pickHostSelectedIP() string {
 // Priority:  explicit listview selection (single only)  →  typed input (validated).
 // Multiple selections do nothing — the hint already explains what to do.
 //
-// If the typed input is a hostname (not an IP address), hostname→IP resolution
-// is performed in a background goroutine so the UI thread is not blocked.
-// All resolved IPs are added to the host registry, and the detail dialog is
-// opened for the first result.
+// If the typed input is a hostname (not a literal IP), resolution is performed
+// in a background goroutine.  The dialog stays open showing "Resolving…".
+// WM_RESOLVE_HOST is posted back to the dialog when the lookup finishes:
+//   - error        → inline error shown; user can retry or dismiss
+//   - single IP    → host added to registry; dialog closed; detail dialog opened
+//   - multiple IPs → all hosts added to registry; list repopulated to show them;
+//                    hint updated so the user selects one to open
 func pickHostConfirm(hwnd HWND) {
+	if pickResolving {
+		// Don't allow a second confirm while a lookup is already in flight.
+		return
+	}
 	selected := pickHostSelectedIPs()
 	if len(selected) > 1 {
 		// Multi-selection: confirm is disabled; hint already shows the error.
@@ -1690,34 +1698,38 @@ func pickHostConfirm(hwnd HWND) {
 	if ip == "" {
 		return
 	}
-	// If the user typed a hostname rather than a literal IP, resolve it in the
-	// background so we don't stall the UI thread.  WM_RESOLVE_HOST is posted
-	// when the lookup finishes (or fails).
-	if !isIPString(ip) {
-		hostname := ip
+	// Literal IP — open the detail dialog immediately.
+	if isIPString(ip) {
 		closeModal(hwnd)
-		go func() {
-			addrs, err := net.LookupHost(hostname)
-			pendingResolveHostsMu.Lock()
-			idx := len(pendingResolveHosts)
-			if err != nil {
-				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
-					hostname: hostname,
-					err:      err.Error(),
-				})
-			} else {
-				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
-					hostname: hostname,
-					ips:      addrs,
-				})
-			}
-			pendingResolveHostsMu.Unlock()
-			postMessage(hwndMain, WM_RESOLVE_HOST, uintptr(idx), 0)
-		}()
+		showHostDetailDialog(hwndMain, ip)
 		return
 	}
-	closeModal(hwnd)
-	showHostDetailDialog(hwndMain, ip)
+	// Hostname — resolve in the background.  Keep the modal open and show
+	// "Resolving…" feedback while the lookup is in flight.
+	pickResolving = true
+	pickHintIsError = false
+	setWindowText(hwndPickHint, "Resolving\u2026")
+	enableWindow(hwndPickEdit, false)
+	enableWindow(hwndPickList, false)
+	hostname := ip
+	go func() {
+		addrs, err := net.LookupHost(hostname)
+		pendingResolveHostsMu.Lock()
+		idx := len(pendingResolveHosts)
+		if err != nil {
+			pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
+				hostname: hostname,
+				err:      err.Error(),
+			})
+		} else {
+			pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
+				hostname: hostname,
+				ips:      addrs,
+			})
+		}
+		pendingResolveHostsMu.Unlock()
+		postMessage(hwndPickDialog, WM_RESOLVE_HOST, uintptr(idx), 0)
+	}()
 }
 
 var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -1731,6 +1743,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		const hintH int32 = 18
 
 		hwndPickDialog = HWND(hwnd)
+		pickResolving = false
 
 		// Filter / freeform edit field at the top.
 		hwndPickEdit, _ = createWindowEx(
@@ -1871,6 +1884,61 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 		}
 		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
+
+	case WM_RESOLVE_HOST:
+		// Background hostname→IP resolution finished.
+		pendingResolveHostsMu.Lock()
+		var res resolveHostResult
+		if int(wParam) < len(pendingResolveHosts) {
+			res = pendingResolveHosts[int(wParam)]
+		}
+		pendingResolveHostsMu.Unlock()
+
+		pickResolving = false
+		enableWindow(hwndPickEdit, true)
+		enableWindow(hwndPickList, true)
+
+		if res.err != "" {
+			// Resolution failed: show inline error and let the user retry or dismiss.
+			pickHintIsError = true
+			setWindowText(hwndPickHint, "Could not resolve \u201c"+res.hostname+"\u201d")
+			invalidateRect(HWND(hwnd), nil, true)
+			return 0
+		}
+		if len(res.ips) == 0 {
+			pickHintIsError = true
+			setWindowText(hwndPickHint, "\u201c"+res.hostname+"\u201d has no address records")
+			invalidateRect(HWND(hwnd), nil, true)
+			return 0
+		}
+
+		// Register all resolved IPs, pre-filling the hostname so the list
+		// and the detail dialog are immediately informative.
+		for _, ip := range res.ips {
+			en := ensureHostEntry(ip)
+			if en.Result.Hostname == "" {
+				en.Result.Hostname = res.hostname
+			}
+			en.LastSeen = time.Now()
+		}
+
+		if len(res.ips) == 1 {
+			// Single result: close and open the detail dialog.
+			closeModal(HWND(hwnd))
+			showHostDetailDialog(hwndMain, res.ips[0])
+			return 0
+		}
+
+		// Multiple results: repopulate the list filtered to show only the
+		// resolved addresses (they share the hostname in the registry now),
+		// and update the hint so the user knows to select one.
+		pickHintIsError = false
+		setWindowText(hwndPickEdit, res.hostname)
+		pickHostRepopulate(res.hostname)
+		setWindowText(hwndPickHint,
+			fmt.Sprintf("%d addresses found \u2014 select one to open", len(res.ips)))
+		invalidateRect(HWND(hwnd), nil, true)
+		return 0
 
 	case WM_CLOSE:
 		closeModal(HWND(hwnd))
