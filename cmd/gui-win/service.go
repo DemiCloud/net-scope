@@ -39,6 +39,11 @@ var (
 	// hwndActiveDBDialogAtomic holds the HWND of the currently-open Databases
 	// dialog, or 0 if none is open. Used to forward OUI download results.
 	hwndActiveDBDialogAtomic uintptr
+
+	// hwndPickDialogAtomic holds the HWND of the currently-open Query Host
+	// (pick host) dialog, or 0 if none is open. Used to route ResolveResult
+	// messages back to the dialog that issued the "resolve" command.
+	hwndPickDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -227,6 +232,19 @@ func spawnService(hwnd HWND, elevated bool) {
 				if h := atomic.LoadUintptr(&hwndActiveDBDialogAtomic); h != 0 {
 					postMessage(HWND(h), WM_OUI_FAIL, 0, 0)
 				}
+			} else if m.ResolveResult != nil {
+				rr := m.ResolveResult
+				pendingResolveHostsMu.Lock()
+				idx := len(pendingResolveHosts)
+				pendingResolveHosts = append(pendingResolveHosts, resolveHostResult{
+					hostname: rr.Hostname,
+					ips:      rr.IPs,
+					err:      rr.Err,
+				})
+				pendingResolveHostsMu.Unlock()
+				if h := atomic.LoadUintptr(&hwndPickDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_RESOLVE_HOST, uintptr(idx), 0)
+				}
 			}
 		}
 
@@ -294,6 +312,22 @@ func stopServiceScan() {
 		_ = enc.Encode(scan.ServiceCmd{Cmd: "stop"})
 		serviceEncMu.Unlock()
 	}
+}
+
+// sendResolveViaService asks the service to perform a forward DNS lookup for
+// hostname. The result is delivered asynchronously as WM_RESOLVE_HOST posted
+// to the active pick-host dialog (hwndPickDialogAtomic).
+func sendResolveViaService(hostname string) error {
+	serviceMu.Lock()
+	enc := serviceEnc
+	serviceMu.Unlock()
+	if enc == nil {
+		return errors.New("sensor service is not running")
+	}
+	serviceEncMu.Lock()
+	err := enc.Encode(scan.ServiceCmd{Cmd: "resolve", Target: hostname})
+	serviceEncMu.Unlock()
+	return err
 }
 
 // startDHCPCapture tells the elevated service to begin passive DHCP capture.

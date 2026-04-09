@@ -85,6 +85,11 @@ type ServiceMsg struct {
 	// OUIComplete / OUIErr carry the result of an "oui-update" command.
 	OUIComplete bool         `json:"oui_complete,omitempty"`
 	OUIErr      string       `json:"oui_err,omitempty"`
+
+	// PTRUpdate carries a background reverse-DNS enrichment for a previously-scanned IP.
+	PTRUpdate   *PTRResult   `json:"ptr_update,omitempty"`
+	// ResolveResult carries the result of a "resolve" command (forward DNS).
+	ResolveResult *ResolveResult `json:"resolve_result,omitempty"`
 }
 
 // ARPResult carries a single ARP table entry streamed from service to GUI.
@@ -97,6 +102,19 @@ type ARPResult struct {
 type NetBIOSMsg struct {
 	IP   string `json:"ip"`
 	Name string `json:"name"`
+}
+
+// PTRResult carries a background reverse-DNS enrichment result.
+type PTRResult struct {
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+}
+
+// ResolveResult carries the result of a forward DNS lookup ("resolve" command).
+type ResolveResult struct {
+	Hostname string   `json:"hostname"`
+	IPs      []string `json:"ips,omitempty"`
+	Err      string   `json:"err,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +211,10 @@ func DialService(addr, fingerprint string) (net.Conn, error) {
 func RunServiceConn(conn net.Conn) error {
 	defer conn.Close()
 
+	// connCtx is cancelled when the connection ends, stopping background goroutines.
+	connCtx, connCancel := context.WithCancel(context.Background())
+	defer connCancel()
+
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
 	var encMu sync.Mutex
@@ -209,6 +231,44 @@ func RunServiceConn(conn net.Conn) error {
 	if err := safeSend(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
 		return fmt.Errorf("service ready: %w", err)
 	}
+
+	// ptrQueue receives IPs that need background PTR (reverse-DNS) resolution.
+	// Buffered to absorb a full /24 without blocking the scan streamer.
+	ptrQueue := make(chan string, 256)
+	ptrSeen := make(map[string]bool)
+	var ptrMu sync.Mutex
+
+	go func() {
+		for {
+			select {
+			case <-connCtx.Done():
+				return
+			case ip, ok := <-ptrQueue:
+				if !ok {
+					return
+				}
+				ptrMu.Lock()
+				already := ptrSeen[ip]
+				if !already {
+					ptrSeen[ip] = true
+				}
+				ptrMu.Unlock()
+				if already {
+					continue
+				}
+				name := reverseDNS(net.ParseIP(ip), time.Second)
+				if name != "" {
+					_ = safeSend(ServiceMsg{PTRUpdate: &PTRResult{IP: ip, Hostname: name}})
+				}
+				// Throttle to avoid bursting the local resolver.
+				select {
+				case <-connCtx.Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+		}
+	}()
 
 	var scanCancel context.CancelFunc
 	var dhcpCancel context.CancelFunc
@@ -249,6 +309,13 @@ func RunServiceConn(conn net.Conn) error {
 					rCopy := r
 					if werr := safeSend(ServiceMsg{Result: &rCopy, ScanID: scanID}); werr != nil {
 						return
+					}
+					// Queue hosts without hostnames for background PTR resolution.
+					if rCopy.Hostname == "" && rCopy.IP != nil {
+						select {
+						case ptrQueue <- rCopy.IP.String():
+						default: // queue full; skip rather than block
+						}
 					}
 				}
 				_ = safeSend(ServiceMsg{Done: true, Stats: &sc.Stats, ScanID: scanID})
@@ -411,6 +478,20 @@ func RunServiceConn(conn net.Conn) error {
 					return
 				}
 				_ = safeSend(ServiceMsg{OUIComplete: true})
+			}()
+
+		case "resolve":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				addrs, err := net.DefaultResolver.LookupHost(context.Background(), target)
+				if err != nil {
+					_ = safeSend(ServiceMsg{ResolveResult: &ResolveResult{Hostname: target, Err: err.Error()}})
+					return
+				}
+				_ = safeSend(ServiceMsg{ResolveResult: &ResolveResult{Hostname: target, IPs: addrs}})
 			}()
 
 		case "shutdown":
