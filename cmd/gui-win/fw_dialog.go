@@ -36,7 +36,13 @@ var (
 	modalParent HWND
 )
 
+// runModal supports nesting: a dialog opened from inside a modal WndProc
+// (e.g. a Probes sub-dialog from a Host Detail dialog) works correctly because
+// the outer loop only checks modalActive BEFORE and AFTER dispatchMessage —
+// never concurrently. Save/restore preserves the outer state.
 func runModal(dlg, parent HWND) {
+	prevActive := modalActive
+	prevParent := modalParent
 	modalActive = true
 	modalParent = parent
 	enableWindow(parent, false)
@@ -53,8 +59,9 @@ func runModal(dlg, parent HWND) {
 	// closeModal already re-enabled the parent and restored focus;
 	// clear state here in case the loop exited another way.
 	enableWindow(parent, true)
-	modalActive = false
-	modalParent = 0
+	// Restore outer modal state so the enclosing loop can continue.
+	modalActive = prevActive
+	modalParent = prevParent
 }
 
 // closeModal is safe to call from inside a dialog WndProc.
