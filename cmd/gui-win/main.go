@@ -115,8 +115,11 @@ func Run(v, target string) {
 	hMenu := createMenu()
 
 	hFile := createPopupMenu()
-	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_JSON, "Export as &JSON…")
-	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_CSV, "Export as &CSV…")
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_JSON, "Export &All Hosts as JSON…")
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_CSV, "Export A&ll Hosts as CSV…")
+	appendMenu(hFile, MF_SEPARATOR, 0, "")
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_SCAN_JSON, "Export C&urrent Scan as JSON…")
+	appendMenu(hFile, MF_STRING, IDM_FILE_EXPORT_SCAN_CSV, "Export Cu&rrent Scan as CSV…")
 	appendMenu(hFile, MF_SEPARATOR, 0, "")
 	appendMenu(hFile, MF_STRING, IDM_FILE_EXIT, "E&xit")
 	appendMenu(hMenu, MF_POPUP, uintptr(hFile), "&File")

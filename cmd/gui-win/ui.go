@@ -892,8 +892,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			stopScan()
 			postQuitMessage(0)
 		case IDM_FILE_EXPORT_JSON:
-			exportResults(HWND(hwnd), "json")
+			exportAllHosts(HWND(hwnd), "json")
 		case IDM_FILE_EXPORT_CSV:
+			exportAllHosts(HWND(hwnd), "csv")
+		case IDM_FILE_EXPORT_SCAN_JSON:
+			exportResults(HWND(hwnd), "json")
+		case IDM_FILE_EXPORT_SCAN_CSV:
 			exportResults(HWND(hwnd), "csv")
 		case IDM_OPT_SETTINGS:
 			showSettingsDialog(HWND(hwnd))
@@ -1927,23 +1931,78 @@ func applyProxyMode(hwnd HWND, enable bool) {
 
 
 
-// exportResults saves the current results to a JSON or CSV file via a Save dialog.
-func exportResults(hwnd HWND, format string) {
-	pendingMu.Lock()
-	results := make([]scan.Result, 0, len(pendingResults))
-	for _, r := range pendingResults {
-		if r.Alive {
-			results = append(results, r)
+// hostEntryToResult converts a hostEntry to a scan.Result for export,
+// merging ExtraServices that are not already present in Result.Services.
+func hostEntryToResult(en *hostEntry) scan.Result {
+	r := en.Result
+	if r.IP == nil {
+		r.IP = net.ParseIP(en.IP)
+	}
+	for _, svc := range en.ExtraServices {
+		found := false
+		for _, s := range r.Services {
+			if s.Source == svc.Source && s.Name == svc.Name && s.Type == svc.Type {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.Services = append(r.Services, svc)
 		}
 	}
-	pendingMu.Unlock()
+	return r
+}
 
-	if len(results) == 0 {
-		messageBox(hwnd, "No results to export. Run a scan first.", "Export", 0)
+// exportAllHosts saves every known host from the session's hostRegistry to a
+// JSON or CSV file via a Save dialog. This is the "Export All Hosts" action.
+func exportAllHosts(hwnd HWND, format string) {
+	if len(hostRegistry) == 0 {
+		messageBox(hwnd, "No hosts to export. Run a scan first.", "Export", 0)
 		return
 	}
 
-	var title, defExt, filter, path string
+	ips := allHostIPs()
+	results := make([]scan.Result, 0, len(ips))
+	for _, ip := range ips {
+		en := hostRegistry[ip]
+		results = append(results, hostEntryToResult(en))
+	}
+
+	doExport(hwnd, results, format)
+}
+
+// exportResults saves the results from the most recently completed scan
+// (allScanResults) to a JSON or CSV file via a Save dialog.
+func exportResults(hwnd HWND, format string) {
+	if len(allScanResults) == 0 {
+		messageBox(hwnd, "No scan results to export. Run a scan first.", "Export", 0)
+		return
+	}
+
+	results := make([]scan.Result, 0, len(allScanResults))
+	for _, r := range allScanResults {
+		results = append(results, r)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		ai := results[i].IP.To4()
+		aj := results[j].IP.To4()
+		if ai == nil || aj == nil {
+			return results[i].IP.String() < results[j].IP.String()
+		}
+		for k := 0; k < 4; k++ {
+			if ai[k] != aj[k] {
+				return ai[k] < aj[k]
+			}
+		}
+		return false
+	})
+
+	doExport(hwnd, results, format)
+}
+
+// doExport writes results to a user-chosen file in the given format.
+func doExport(hwnd HWND, results []scan.Result, format string) {
+	var title, defExt, filter string
 	if format == "json" {
 		title = "Export as JSON"
 		defExt = "json"
@@ -1954,7 +2013,7 @@ func exportResults(hwnd HWND, format string) {
 		filter = "CSV files|*.csv|All files|*.*|"
 	}
 
-	path = getSaveFileName(hwnd, title, defExt, filter)
+	path := getSaveFileName(hwnd, title, defExt, filter)
 	if path == "" {
 		return // user cancelled
 	}
