@@ -1,9 +1,5 @@
 # NetScope — Backlog
 
-## Naming / UX
-
-- [x] **Nicer text-only dialogs** (Help, About, etc.) — modern look: styled EDIT or custom owner-draw with proper padding, link-style text, maybe a header banner
-
 ## Query Host (redesign)
 
 - [ ] **Query Host full redesign** — replace the simple picker with a self-contained probe+scan dialog:
@@ -18,29 +14,10 @@
 - [ ] **Worker-pool port scanner** — replace the current goroutine-per-probe approach with a bounded worker pool; default concurrency = "auto" (calculated from available CPU cores and typical socket limits); expose as a Settings field so the user can cap it manually; target: no goroutine explosion even on /24 all-ports scan
 - [ ] **Safe scanning mode** — a checkbox in Settings and on the Scanner toolbar; when enabled: lower concurrency cap, longer timeouts, randomise probe order, and suppress raw-socket operations; intended for environments where aggressive scanning would trip IDS/firewalls or violate policy; default off, but recommended UI hint when not running as admin
 
-## Service Security
-
-- [x] **GUI ↔ service communication hardening** — TLS 1.3 with an ephemeral ECDSA P-256 self-signed cert; the parent generates the cert, passes the hex-encoded SHA-256 fingerprint to the subprocess via argv; the subprocess pins the fingerprint in `DialService` (custom `VerifyConnection`); the private key never leaves the parent process so knowing the fingerprint from `/proc/<pid>/cmdline` cannot impersonate the server; all session traffic is encrypted; `RunServiceConn` token echo removed; implemented in `internal/scan/service.go` (`NewServiceTLS`, `DialService`), cross-platform (Windows, Linux, FreeBSD)
-
-## GUI (Windows)
-
-- [x] **Scanner tab — "Show Active Only" toggle** — add a checkbox (or toolbar toggle button) to the Scanner tab that hides all unresponsive (red/dead) rows; when enabled only live hosts are visible; toggling off restores the full list; helps usability on /24+ scans where dead IPs bury active devices; consider defaulting to enabled after a scan completes
-- [x] **Ctrl+F find bar drawing artifacts** — find bar EDIT and close button were created without `WS_CLIPSIBLINGS`; the active ListView was also missing `WS_CLIPSIBLINGS`, so it could paint over the floating bar on scroll/update, and the bar left ghost pixels on dismiss; fixed by adding `WS_CLIPSIBLINGS` to all five content ListViews and both find bar controls, and explicitly invalidating the active pane in `hideFindBar`
-- [x] **Scanner tab — inline search/filter** — Ctrl+F floating bar on the Scanner tab filters visible rows by IP, MAC address, hostname, vendor, and OS hint as the user types; same popup used on mDNS/SSDP/WSD/DHCP tabs; Escape dismisses and clears the filter
-- [x] **Multi-row right-click menus** — when multiple rows selected, hide single-host actions; Copy/Export include all selected rows
-- [x] **View All Hosts — live filter** — text box above the list; filters rows by IP or hostname as you type; Ctrl+F focuses it
-- [x] **Broadcast host decay** — row background fades normal → light yellow (2–5 min) → light orange (5–15 min) → light red (15+ min) since last broadcast seen; add relative "Last Seen" column (`32s`, `4m`, `18m`); both reset on re-detection
-
 ## Export
 
 - [ ] **File > Export should export all known hosts** — currently exports only the rows visible in the last active scan; it should export the full `hostRegistry` (every host seen across all scans and broadcast events in the session), including enrichment data (DHCP hostnames, NetBIOS names, ARP MACs accumulated post-scan); JSON and CSV both affected
 - [ ] **File > Export Current Scan** — add a separate menu item that exports only the results from the most recently completed scan (i.e. `allScanResults` / the current ListView contents), for users who want a point-in-time snapshot rather than the full session history
-
-## OS / Host Intelligence
-
-- [x] **Extend `guessOS()` with vendor OUI signals** — vendor OUI tier added between SNMP and SSH checks: Apple → macOS; Raspberry Pi → Linux; Cisco/Juniper/Ubiquiti/MikroTik/Aruba/Fortinet/Palo Alto → Network Device
-- [x] **TCP SYN window-size probe for OS fingerprinting**
-- [x] **Raw fingerprint dump tool** — surface raw TCP/IP stack signals collected for a host (ICMP TTL, SYN-ACK window size, TCP options order, SNMP sysDescr, SSH banner, HTTP Server header, mDNS/SSDP service strings) in a copyable text format; useful for crafting new `guessOS()` rules; expose via right-click context menu, Tools menu, or a debug panel
 
 ## ARP Integrity
 
@@ -104,14 +81,6 @@
 ## Debug / Diagnostics Menu
 
 - [ ] **Debug menu (ARP/DNS inspect/clear)** — developer/power-user menu item (hidden behind a flag or key combo) to inspect the live ARP cache, DNS cache, and force-clear them without leaving the app
-
-## Broadcast Tab
-
-- [x] **Broadcast tab auto-poll** — periodic background refresh of the broadcast/mDNS/SSDP/WSD tabs on a configurable interval rather than only on manual trigger
-
-## Admin Mode
-
-- [x] **Admin mode toggle** — in-app button or menu item to relaunch self elevated (UAC prompt) without closing and re-opening manually; Windows only; Linux stub
 
 ## Event Log
 
