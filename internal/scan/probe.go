@@ -51,6 +51,13 @@ func RunProbe(ctx context.Context, ip string, spec ProbeSpec, timeout time.Durat
 		return res
 	}
 	switch spec.Type {
+	case "TLS":
+		// TLS handshake against any port; returns certificate subject/issuer.
+		if v := grabTLSCert(ctx, parsed, spec.Port, timeout, dial); v != "" {
+			res.Result = v
+		} else {
+			res.Result = probeTCPStatus(ctx, ip, spec.Port, timeout, dial)
+		}
 	case "SSH":
 		if v := probeSSHBanner(ctx, parsed, spec.Port, timeout, dial); v != "" {
 			res.Result = v
