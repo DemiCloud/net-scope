@@ -7,6 +7,7 @@
 package guiwin
 
 import (
+	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -20,6 +21,13 @@ var initialTarget string
 
 // appConfig is loaded once at startup and used to populate UI defaults.
 var appConfig config.Config
+
+// appState is loaded once at startup from state.json (if a config file was found).
+var appState config.State
+
+// stateDirPath is the directory where state.json lives.
+// Empty when no config file was found at startup — state is not persisted.
+var stateDirPath string
 
 // noConfigFile is true when no config file was found at startup.
 var noConfigFile bool
@@ -59,6 +67,10 @@ func Run(v, target string) {
 		_ = cfgErr // non-fatal, defaults used
 	}
 	noConfigFile = (cfgPath == "")
+	if cfgPath != "" {
+		stateDirPath = filepath.Dir(cfgPath)
+		appState = config.LoadState(stateDirPath)
+	}
 
 	// Proxy mode is session-only but defaults to active when a proxy address
 	// is already saved in settings, so the user's intent is preserved on relaunch.
@@ -96,13 +108,31 @@ func Run(v, target string) {
 		return
 	}
 
+	// Determine initial window position/size from saved state.
+	// Validate the saved position against current monitors so we never place
+	// the window off-screen (e.g. after a monitor is disconnected).
+	winX, winY := CW_USEDEFAULT, CW_USEDEFAULT
+	winW, winH := int32(1160), int32(700)
+	if ws := appState.Window; ws.Valid {
+		rc := RECT{
+			Left:   int32(ws.X),
+			Top:    int32(ws.Y),
+			Right:  int32(ws.X + ws.W),
+			Bottom: int32(ws.Y + ws.H),
+		}
+		if monitorFromRect(&rc, MONITOR_DEFAULTTONULL) != 0 {
+			winX, winY = int32(ws.X), int32(ws.Y)
+			winW, winH = int32(ws.W), int32(ws.H)
+		}
+	}
+
 	hwnd, err := createWindowEx(
 		0,
 		"NetScopeWnd",
 		"NetScope",
 		WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
-		int32(CW_USEDEFAULT), int32(CW_USEDEFAULT),
-		1160, 700,
+		winX, winY,
+		winW, winH,
 		0, 0, inst,
 	)
 	if err != nil {
@@ -147,7 +177,11 @@ func Run(v, target string) {
 
 	setMenu(hwnd, hMenu)
 
-	showWindow(hwnd, SW_SHOWNORMAL)
+	if appState.Window.Maximized {
+		showWindow(hwnd, SW_SHOWMAXIMIZED)
+	} else {
+		showWindow(hwnd, SW_SHOWNORMAL)
+	}
 	updateWindow(hwnd)
 
 	var msg MSG
