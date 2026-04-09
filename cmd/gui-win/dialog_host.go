@@ -1505,6 +1505,9 @@ var pickEditSubclassProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam ui
 
 // isValidHostInput returns true if s is a complete, valid host specification.
 // Partial IPs like "1.1.1" and empty strings are rejected.
+// Hostnames are validated per RFC 952 / RFC 1123: labels of 1–63 characters
+// containing only ASCII letters, digits, and hyphens (not leading or trailing),
+// separated by dots, total length ≤ 253 characters.
 func isValidHostInput(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -1539,7 +1542,29 @@ func isValidHostInput(s string) bool {
 		}
 		return true
 	}
-	// Hostname — anything non-empty that isn't purely digits/dots.
+	// Hostname — validate per RFC 952 / RFC 1123.
+	// Strip a single trailing dot (absolute FQDN form).
+	host := s
+	if strings.HasSuffix(host, ".") {
+		host = host[:len(host)-1]
+	}
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				(c >= '0' && c <= '9') || c == '-') {
+				return false
+			}
+		}
+	}
 	return true
 }
 
