@@ -1054,46 +1054,52 @@ func createConnHandlersControls(hwnd HWND) {
 	inst := getModuleHandle()
 	r := getClientRect(hwnd)
 	cW := r.Right
+	cH := r.Bottom
 	const (
-		pad    int32 = 12
-		rowH   int32 = 22
+		pad     int32 = 12
+		btnH    int32 = 26
+		hintH   int32 = 16
+		hintGap int32 = 8
+	)
+	btnY := cH - pad - btnH
+	hintY := btnY - hintGap - hintH
+	lvH := hintY - pad - hintGap
+
+	hwndLV, _ := createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
+		pad, pad, cW-pad*2, lvH, hwnd, 0, inst)
+	sendMessage(hwndLV, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
+	subclassListViewManaged(hwndLV, []string{"Protocol", "Port", "Will launch"}, nil, nil, nil)
+	const (
 		protoW int32 = 120
 		portW  int32 = 60
-		y0     int32 = 32
 	)
-	launchW := cW - protoW - portW - pad*3
+	listViewAddColumn(hwndLV, 0, "Protocol", protoW)
+	listViewAddColumn(hwndLV, 1, "Port", portW)
+	listViewAddColumn(hwndLV, 2, "Will launch", cW-pad*2-protoW-portW-4)
 
-	// Column headers.
-	createCtrl("STATIC", "Protocol", WS_CHILD|WS_VISIBLE, pad, 10, protoW, 16, hwnd, 0, inst)
-	createCtrl("STATIC", "Port", WS_CHILD|WS_VISIBLE, pad+protoW, 10, portW, 16, hwnd, 0, inst)
-	createCtrl("STATIC", "Will launch", WS_CHILD|WS_VISIBLE, pad+protoW+portW, 10, launchW, 16, hwnd, 0, inst)
-
-	for i, row := range protoHandlerRows {
-		y := y0 + int32(i)*rowH
-		createCtrl("STATIC", row.label, WS_CHILD|WS_VISIBLE, pad, y, protoW, 16, hwnd, 0, inst)
-		createCtrl("STATIC", fmt.Sprintf("%d", row.port), WS_CHILD|WS_VISIBLE, pad+protoW, y, portW, 16, hwnd, 0, inst)
-		createCtrl("STATIC", effectiveHandlerLabel(row.key), WS_CHILD|WS_VISIBLE, pad+protoW+portW, y, launchW, 16, hwnd, 0, inst)
+	for _, row := range protoHandlerRows {
+		p := utf16(row.label)
+		item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+		rowIdx := int32(sendMessage(hwndLV, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+		if rowIdx >= 0 {
+			setSubItem(hwndLV, rowIdx, 1, fmt.Sprintf("%d", row.port))
+			setSubItem(hwndLV, rowIdx, 2, effectiveHandlerLabel(row.key))
+		}
 	}
 
-	hintY := y0 + int32(len(protoHandlerRows))*rowH + 8
 	createCtrl("STATIC", "Custom overrides are set in Options \u2192 Settings \u2192 Protocol Handlers\u2026",
-		WS_CHILD|WS_VISIBLE, pad, hintY, cW-pad*2, 16, hwnd, 0, inst)
-
-	btnY := hintY + 28
-	makePushButton(hwnd, "Configure\u2026", idConnHandlersConfigure, pad, btnY, 110, 26)
-	makePushButton(hwnd, "Close", idConnHandlersClose, cW-pad-86, btnY, 78, 26)
+		WS_CHILD|WS_VISIBLE, pad, hintY, cW-pad*2, hintH, hwnd, 0, inst)
+	makePushButton(hwnd, "Configure\u2026", idConnHandlersConfigure, pad, btnY, 110, btnH)
+	makePushButton(hwnd, "Close", idConnHandlersClose, cW-pad-86, btnY, 78, btnH)
 }
 
 func showConnHandlersDialog(parent HWND) {
-	n := int32(len(protoHandlerRows))
 	const (
-		pad  int32 = 12
-		rowH int32 = 22
-		y0   int32 = 32
+		dlgW int32 = 520
+		dlgH int32 = 280
 	)
-	dlgW := int32(500)
-	dlgH := y0 + n*rowH + 8 + 16 + 28 + pad*2
-
 	dlg := createAndCenterDialog("NetScopeConnHandlers", "Connection Handlers",
 		dlgW, dlgH, connHandlersWndProc, parent)
 	if dlg == 0 {
