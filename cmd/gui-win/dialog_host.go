@@ -972,13 +972,11 @@ func buildHostSummary(ip string) string {
 // ---------------------------------------------------------------------------
 
 // hostDetailRunScan queues a targeted scan for currentDetailIP via the main
-// window. Sets the target edit box and posts IDC_SCAN to hwndMain so the
-// existing scan machinery runs. The host detail dialog stays open; results
-// accumulate in the registry and the Observations table will be refreshed on
-// the next open.
+// window without clearing the Scanner listview. The dialog stays open; results
+// are reflected in the host list and in the host registry.
 func hostDetailRunScan(hwnd HWND) {
 	setWindowText(hwndTarget, currentDetailIP)
-	postMessage(hwndMain, WM_COMMAND, uintptr(IDC_SCAN), 0)
+	postMessage(hwndMain, WM_HOST_RESCAN, 0, 0)
 	setWindowText(hwndHostStatus, "Scan queued for "+currentDetailIP+"  \u2014  results appear in the host list")
 }
 
