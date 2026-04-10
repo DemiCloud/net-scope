@@ -46,6 +46,7 @@ var (
 	hwndSettPath          HWND
 	hwndSettDefaultTarget HWND
 	hwndSettSOCKS         HWND
+	hwndSettSvcConf       HWND // service confidence threshold
 )
 
 var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -91,6 +92,11 @@ func showSettingsDialog(parent HWND) {
 	setWindowText(hwndSettBcast, appConfig.Scan.BroadcastListen)
 	setWindowText(hwndSettDefaultTarget, appConfig.Scan.DefaultTarget)
 	setWindowText(hwndSettSOCKS, appConfig.Scan.SOCKSProxy)
+	conf := appConfig.Scan.ServiceMinConfidence
+	if conf <= 0 {
+		conf = 60
+	}
+	setWindowText(hwndSettSvcConf, strconv.Itoa(conf))
 	if appConfig.Scan.PingFirst {
 		sendMessage(hwndSettPingFirst, BM_SETCHECK, BST_CHECKED, 0)
 	}
@@ -133,6 +139,7 @@ func createSettingsControls(hwnd HWND) {
 		{"Broadcast Listen:", &hwndSettBcast},
 		{"Default Target:", &hwndSettDefaultTarget},
 		{"SOCKS5 Proxy:", &hwndSettSOCKS},
+		{"Svc Confidence >:", &hwndSettSvcConf},
 	}
 
 	for i, f := range fields {
@@ -181,6 +188,7 @@ func applySettings(hwnd HWND) bool {
 	bcast := strings.TrimSpace(getWindowText(hwndSettBcast))
 	defaultTarget := strings.TrimSpace(getWindowText(hwndSettDefaultTarget))
 	socksProxy := strings.TrimSpace(getWindowText(hwndSettSOCKS))
+	svcConfStr := strings.TrimSpace(getWindowText(hwndSettSvcConf))
 	pingFirst := sendMessage(hwndSettPingFirst, BM_GETCHECK, 0, 0) == BST_CHECKED
 	bannerGrab := sendMessage(hwndSettBanner, BM_GETCHECK, 0, 0) == BST_CHECKED
 	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
@@ -224,6 +232,16 @@ func applySettings(hwnd HWND) bool {
 		}
 	}
 
+	svcConf := 60
+	if svcConfStr != "" {
+		v, err2 := strconv.Atoi(svcConfStr)
+		if err2 != nil || v < 0 || v > 99 {
+			messageBox(hwnd, "Service confidence threshold must be an integer between 0 and 99.", "Invalid Input", 0)
+			return false
+		}
+		svcConf = v
+	}
+
 	cfg := config.Config{
 		Scan: config.ScanConfig{
 			Timeout:          timeout,
@@ -236,8 +254,9 @@ func applySettings(hwnd HWND) bool {
 			BannerGrab:       bannerGrab,
 			NetBIOS:          netBIOS,
 			DefaultTarget:    defaultTarget,
-			SOCKSProxy:       socksProxy,
-			ProtocolHandlers: appConfig.Scan.ProtocolHandlers, // edited separately
+			SOCKSProxy:            socksProxy,
+			ServiceMinConfidence:  svcConf,
+			ProtocolHandlers:      appConfig.Scan.ProtocolHandlers, // edited separately
 		},
 	}
 

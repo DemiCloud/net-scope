@@ -78,6 +78,8 @@ var (
 	hwndListNetwork HWND // Network tab — live broadcast stats
 	hwndListHealth        HWND // Scan Report tab
 	hwndHealthPlaceholder HWND // empty-state overlay for Scan Report tab
+	hwndListServices       HWND // Services tab
+	hwndServicesPlaceholder HWND // empty-state overlay for Services tab
 	scanEverCompleted     bool // true once the first scan has completed
 	hwndTabCtrl      HWND
 	hwndScanStatus   HWND // inline scan status label on the scan bar
@@ -120,8 +122,8 @@ var (
 	activeOnlyFilter bool
 
 	// tabSearchFilter stores the Ctrl+F search string for each tab (indexed
-	// by tab number 0–6).  An empty string means no filter is active.
-	tabSearchFilter [7]string
+	// by tab number 0–7).  An empty string means no filter is active.
+	tabSearchFilter [8]string
 
 	// dhcpAllEvents is the backing store for DHCP filter repopulation.
 	// Every DHCP event is appended here when received, before being rendered.
@@ -546,9 +548,21 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
-		// Right-click on mDNS / SSDP / WSD / DHCP lists → copy menu.
+		// Double-click on Services list → host detail dialog (col 0 = IP).
+		if hdr.IdFrom == IDC_LIST_SERVICES && hdr.Code == NM_DBLCLK {
+			row := int32(sendMessage(hwndListServices, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
+			if row >= 0 {
+				ip := listViewGetCellText(hwndListServices, row, 0)
+				if ip != "" {
+					showHostDetailDialog(HWND(hwnd), ip)
+				}
+			}
+			return 0
+		}
+		// Right-click on mDNS / SSDP / WSD / DHCP / Services lists → copy menu.
 		if (hdr.IdFrom == IDC_LIST_MDNS || hdr.IdFrom == IDC_LIST_SSDP ||
-			hdr.IdFrom == IDC_LIST_WSD || hdr.IdFrom == IDC_LIST_DHCP) && hdr.Code == NM_RCLICK {
+			hdr.IdFrom == IDC_LIST_WSD || hdr.IdFrom == IDC_LIST_DHCP ||
+			hdr.IdFrom == IDC_LIST_SERVICES) && hdr.Code == NM_RCLICK {
 			hwndSrc, numCols, headers := listViewInfoFor(hdr.IdFrom)
 			if hwndSrc == 0 {
 				return 0
@@ -733,7 +747,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_SEARCH_EDIT:
 			if hiword(wParam) == EN_CHANGE {
 				tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-				if tab >= 0 && tab < 7 {
+				if tab >= 0 && tab < int32(len(tabSearchFilter)) {
 					tabSearchFilter[tab] = getWindowText(hwndSearchEdit)
 					applyTabFilter()
 				}
@@ -755,6 +769,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showDatabasesDialog(HWND(hwnd))
 		case IDM_HOSTS_VIEW_HOST:
 			showPickHostDialog(HWND(hwnd))
+		case IDM_SERVICES_VIEW_ALL:
+			showAllServicesDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -913,6 +929,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// Broadcast-only hosts skip per-host probing; request enrichment.
 			if r.Hostname == "" && r.NetBIOS == "" {
 				kickNetBIOSProbe(ipStr)
+			}
+		}
+
+		// Feed PortServices into the Services tab.
+		if len(r.PortServices) > 0 {
+			servicesTabAddResult(r)
+			if len(svcTabData) > 0 {
+				showWindow(hwndServicesPlaceholder, SW_HIDE)
 			}
 		}
 
@@ -1086,6 +1110,8 @@ func activateTab(hwnd HWND, tab int32) {
 	showWindow(hwndListNetwork, SW_HIDE)
 	showWindow(hwndListHealth, SW_HIDE)
 	showWindow(hwndHealthPlaceholder, SW_HIDE)
+	showWindow(hwndListServices, SW_HIDE)
+	showWindow(hwndServicesPlaceholder, SW_HIDE)
 	// Show/hide scan bar and reposition Hosts listview accordingly.
 	// On Hosts tab the scan bar is visible and the list sits below it;
 	// on all other tabs the list fills from just below the tab strip.
@@ -1147,12 +1173,19 @@ func activateTab(hwnd HWND, tab int32) {
 			if !scanEverCompleted {
 				showWindow(hwndHealthPlaceholder, SW_SHOW)
 			}
+		case 7:
+			showWindow(hwndListServices, SW_SHOW)
+			if len(svcTabData) == 0 {
+				showWindow(hwndServicesPlaceholder, SW_SHOW)
+			}
 		}
 	}
 	// Update find bar for the new tab: reposition, reload its text,
 	// or hide it if the new tab doesn't support filtering.
+	// Tabs 5 (Network) and 6 (Scan Report) are text areas; no filtering.
+	// Tab 7 (Services) is a listview: filtering supported.
 	if isWindowVisible(hwndSearchEdit) {
-		if tab > 4 {
+		if tab == 5 || tab == 6 {
 			showWindow(hwndSearchEdit, SW_HIDE)
 			showWindow(hwndSearchClose, SW_HIDE)
 		} else {
@@ -1199,6 +1232,7 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 4, "DHCP")
 	insertTab(hwndTabCtrl, 5, "Network")
 	insertTab(hwndTabCtrl, 6, "Scan Report")
+	insertTab(hwndTabCtrl, 7, "Services")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
@@ -1329,6 +1363,24 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
 		0, otherTop, 1160, 600, hwnd, 0, inst)
 	hwndHealthPlaceholder = createEmptyStateOverlay(hwnd, "Run a scan to populate this report",
+		0, otherTop+200, 1160, scale(20))
+
+	// ---- Services listview (hidden initially) ----
+	hwndListServices, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_SERVICES, inst)
+	sendMessage(hwndListServices, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewManaged(hwndListServices, svcTabColTitles, svcTabColVis, svcTabDefWidths, nil, nil)
+	for i, title := range svcTabColTitles {
+		if i == 2 || i == 5 { // Port, Confidence: right-align
+			listViewAddColumnFmt(hwndListServices, int32(i), title, scale(svcTabDefWidths[i]), LVCFMT_RIGHT)
+		} else {
+			listViewAddColumn(hwndListServices, int32(i), title, scale(svcTabDefWidths[i]))
+		}
+	}
+	hwndServicesPlaceholder = createEmptyStateOverlay(hwnd,
+		fmt.Sprintf("Run a scan with Banner Grab enabled to populate this tab  (>%d%% confidence threshold)", appConfig.Scan.ServiceMinConfidence),
 		0, otherTop+200, 1160, scale(20))
 
 	// ---- status bar — 2 parts: Listener state | Service state ----
@@ -1470,6 +1522,8 @@ func applyTabFilter() {
 		repopulateWSD(hwndListWSD, tabSearchFilter[3])
 	case 4:
 		repopulateDHCP(hwndListDHCP, tabSearchFilter[4])
+	case 7:
+		repopulateServicesTab(tabSearchFilter[7])
 	}
 }
 
@@ -1574,6 +1628,8 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
 	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
 	moveWindow(hwndHealthPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
+	moveWindow(hwndListServices, 0, otherTop, width, otherH)
+	moveWindow(hwndServicesPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 
 	// Keep the find bar pinned to the top-right of the active pane.
 	if isWindowVisible(hwndSearchEdit) {
@@ -1740,6 +1796,14 @@ func startScan(hwnd HWND) {
 	ipRowMap = make(map[string]int32, len(hosts))
 	rowResultMap = make(map[int32]scan.Result, len(hosts))
 	allScanResults = make(map[string]scan.Result, len(hosts))
+	// Update confidence threshold from current config and reset services tab.
+	if appConfig.Scan.ServiceMinConfidence > 0 {
+		svcTabMinConf = uint8(appConfig.Scan.ServiceMinConfidence)
+	} else {
+		svcTabMinConf = 60
+	}
+	clearServicesTab()
+	showWindow(hwndServicesPlaceholder, SW_SHOW)
 
 	// Pre-populate every IP with a "Pending" row so they appear in order.
 	for _, ip := range hosts {
@@ -2246,6 +2310,8 @@ func listViewInfoFor(idFrom uintptr) (hw HWND, numCols int32, headers []string) 
 		return hwndListWSD, int32(len(wsdColTitles)), wsdColTitles
 	case IDC_LIST_DHCP:
 		return hwndListDHCP, int32(len(dhcpColTitles)), dhcpColTitles
+	case IDC_LIST_SERVICES:
+		return hwndListServices, int32(len(svcTabColTitles)), svcTabColTitles
 	}
 	return 0, 0, nil
 }

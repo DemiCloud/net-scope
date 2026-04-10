@@ -1409,11 +1409,12 @@ func applyColState(hwnd HWND, vis []bool, keys []string, colTitles []string, st 
 // state for every tab that has configurable columns, keyed by stable column names.
 func snapshotAllColumnStates() map[string]config.TabColumnState {
 	return map[string]config.TabColumnState{
-		ViewHosts: snapshotColState(hwndList, colVisible[:], hostsColKeys),
-		ViewMDNS:  snapshotColState(hwndListMDNS, mdnsColVis, mdnsColKeys),
-		ViewSSDP:  snapshotColState(hwndListSSDP, ssdpColVis, ssdpColKeys),
-		ViewWSD:   snapshotColState(hwndListWSD, wsdColVis, wsdColKeys),
-		ViewDHCP:  snapshotColState(hwndListDHCP, dhcpColVis, dhcpColKeys),
+		ViewHosts:    snapshotColState(hwndList, colVisible[:], hostsColKeys),
+		ViewMDNS:     snapshotColState(hwndListMDNS, mdnsColVis, mdnsColKeys),
+		ViewSSDP:     snapshotColState(hwndListSSDP, ssdpColVis, ssdpColKeys),
+		ViewWSD:      snapshotColState(hwndListWSD, wsdColVis, wsdColKeys),
+		ViewDHCP:     snapshotColState(hwndListDHCP, dhcpColVis, dhcpColKeys),
+		ViewServices: snapshotColState(hwndListServices, svcTabColVis, svcTabColKeys),
 	}
 }
 
@@ -1435,4 +1436,127 @@ func restoreAllColumnStates(m map[string]config.TabColumnState) {
 	if st, ok := m[ViewDHCP]; ok {
 		applyColState(hwndListDHCP, dhcpColVis, dhcpColKeys, dhcpColTitles, st)
 	}
+	if st, ok := m[ViewServices]; ok {
+		applyColState(hwndListServices, svcTabColVis, svcTabColKeys, svcTabColTitles, st)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Services tab
+// ---------------------------------------------------------------------------
+
+// svcTabColTitles are the column headings for the Services tab.
+var svcTabColTitles = []string{"IP", "Hostname", "Port", "Product", "Version", "Confidence", "Banner", "TLS Cert"}
+
+// svcTabDefWidths are the default column widths (logical px).
+var svcTabDefWidths = []int32{120, 155, 60, 155, 100, 90, 280, 180}
+
+// svcTabColVis tracks per-column visibility (all visible by default).
+var svcTabColVis = []bool{true, true, true, true, true, true, true, true}
+
+// svcTabColKeys are the stable persistence keys for state.json.
+// Never rename these.
+var svcTabColKeys = []string{"ip", "hostname", "port", "product", "version", "confidence", "banner", "tls_cert"}
+
+// svcTabEntry is one row in the Services tab backing store.
+type svcTabEntry struct {
+	ip       string
+	hostname string
+	ps       scan.PortService
+}
+
+// svcTabData is the ordered backing store for the Services tab.
+// Written and read only on the UI thread.
+var svcTabData []svcTabEntry
+
+// svcTabMinConf is the current minimum confidence threshold (exclusive).
+// Rows with Confidence <= svcTabMinConf are hidden.
+// Refreshed from appConfig when a scan starts or settings change.
+var svcTabMinConf uint8 = 60
+
+// clearServicesTab removes all rows from the Services listview and resets the
+// backing store. Called at the start of each scan.
+func clearServicesTab() {
+	svcTabData = svcTabData[:0]
+	sendMessage(hwndListServices, LVM_DELETEALLITEMS, 0, 0)
+}
+
+// servicesTabAddResult inserts rows into the Services tab for every PortService
+// in r whose Confidence exceeds svcTabMinConf. hostname is taken from r.
+// Must be called on the UI thread (from the WM_SCAN_RESULT handler).
+func servicesTabAddResult(r scan.Result) {
+	if len(r.PortServices) == 0 {
+		return
+	}
+	hostname := r.Hostname
+	if hostname == "" {
+		hostname = r.NetBIOS
+	}
+	ipStr := r.IP.String()
+	for _, ps := range r.PortServices {
+		if ps.Confidence <= svcTabMinConf {
+			continue
+		}
+		entry := svcTabEntry{ip: ipStr, hostname: hostname, ps: ps}
+		svcTabData = append(svcTabData, entry)
+		svcTabInsertRow(entry)
+	}
+}
+
+// svcTabInsertRow appends one row to hwndListServices for entry.
+func svcTabInsertRow(e svcTabEntry) {
+	ipPtr := utf16(e.ip)
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: ipPtr}
+	row := int32(sendMessage(hwndListServices, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return
+	}
+	hn := e.hostname
+	if hn == "" {
+		hn = "—"
+	}
+	setSubItem(hwndListServices, row, 1, hn)
+	setSubItem(hwndListServices, row, 2, fmt.Sprintf("%d", e.ps.Port))
+	prod := e.ps.Product
+	if prod == "" {
+		prod = "—"
+	}
+	setSubItem(hwndListServices, row, 3, prod)
+	ver := e.ps.Version
+	if ver == "" {
+		ver = "—"
+	}
+	setSubItem(hwndListServices, row, 4, ver)
+	setSubItem(hwndListServices, row, 5, fmt.Sprintf("%d%%", e.ps.Confidence))
+	banner := e.ps.Banner
+	if banner == "" {
+		banner = "—"
+	}
+	setSubItem(hwndListServices, row, 6, banner)
+	tlsCert := e.ps.TLSCert
+	if tlsCert == "" {
+		tlsCert = "—"
+	}
+	setSubItem(hwndListServices, row, 7, tlsCert)
+}
+
+// repopulateServicesTab rebuilds hwndListServices from svcTabData, applying
+// filter (case-insensitive substring across IP, hostname, product, banner).
+func repopulateServicesTab(filter string) {
+	filter = strings.ToLower(filter)
+	sendMessage(hwndListServices, LVM_DELETEALLITEMS, 0, 0)
+	for _, e := range svcTabData {
+		if filter != "" && !svcTabEntryMatchesFilter(e, filter) {
+			continue
+		}
+		svcTabInsertRow(e)
+	}
+}
+
+func svcTabEntryMatchesFilter(e svcTabEntry, filter string) bool {
+	return strings.Contains(strings.ToLower(e.ip), filter) ||
+		strings.Contains(strings.ToLower(e.hostname), filter) ||
+		strings.Contains(strings.ToLower(e.ps.Product), filter) ||
+		strings.Contains(strings.ToLower(e.ps.Version), filter) ||
+		strings.Contains(strings.ToLower(e.ps.Banner), filter)
 }
