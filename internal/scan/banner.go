@@ -320,10 +320,11 @@ func grabLineBanner(ctx context.Context, ip net.IP, port int, timeout time.Durat
 // guessService for product identification.
 type portSignals struct {
 	port         int
-	banner       string // SSH ident / FTP greeting / SMTP / Telnet / RDP result
-	serverHeader string // HTTP Server: (or X-Powered-By) header value
-	tlsCert      string // TLS cert descriptor ("SubjectCN (IssuerOrg)")
-	alpn         string // TLS ALPN negotiated protocol ("h2", "http/1.1")
+	banner       string            // SSH ident / FTP greeting / SMTP / Telnet / RDP result
+	serverHeader string            // HTTP Server: (or X-Powered-By) header value
+	tlsCert      string            // TLS cert descriptor ("SubjectCN (IssuerOrg)")
+	alpn         string            // TLS ALPN negotiated protocol ("h2", "http/1.1")
+	details      map[string]string // protocol-specific key/value data (SMB, DNS, LDAP, MQTT)
 }
 
 // probePort gathers all available signals from a single confirmed-open TCP
@@ -364,6 +365,31 @@ func probePort(ctx context.Context, ip net.IP, port int, timeout time.Duration, 
 		if sig.serverHeader == "" {
 			// Some devices serve plain HTTP on 443 (misconfigured but real).
 			sig.serverHeader = grabHTTP(ctx, ip, port, false, timeout, dial)
+		}
+
+	case 53:
+		// DNS: custom binary probe for recursion and server identification.
+		if dial == nil {
+			sig.details = probeDNSPort(ctx, ip, timeout, dial)
+		}
+
+	case 389, 3268:
+		// LDAP / LDAP Global Catalog: RootDSE query.
+		if d := probeLDAP(ctx, ip, port, timeout, dial); d != nil {
+			sig.details = d
+		}
+
+	case 445:
+		// SMB: negotiate dialect and probe SMBv1 enablement.
+		if d := probeSMB(ctx, ip, port, timeout, dial); d != nil {
+			sig.details = d
+			sig.banner = d["smb_dialect"]
+		}
+
+	case 1883, 8883:
+		// MQTT broker: test unauthenticated access.
+		if d := probeMQTT(ctx, ip, port, timeout, dial); d != nil {
+			sig.details = d
 		}
 
 	case 3389:
@@ -414,7 +440,7 @@ func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout t
 			defer wg.Done()
 			sig := probePort(ctx, ip, p, timeout, dial)
 
-			product, version, conf := guessService(p, sig.banner, sig.serverHeader, sig.tlsCert, sig.alpn)
+			product, version, conf := guessService(p, sig.banner, sig.serverHeader, sig.tlsCert, sig.alpn, sig.details)
 
 			// Banner field in PortService holds whatever text we captured:
 			// the server header for HTTP ports, the raw line banner for others.
@@ -431,6 +457,7 @@ func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout t
 				TLSCert:    sig.tlsCert,
 				ALPN:       sig.alpn,
 				Confidence: conf,
+				Details:    sig.details,
 			}}
 		}(i, port)
 	}

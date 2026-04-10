@@ -33,14 +33,27 @@ type ServiceInfo struct {
 // PortService describes a network service identified on a specific TCP port.
 // Product and Version are best-effort extractions from banner text and protocol
 // headers; Confidence reflects how reliable that identification is (0–100).
+// Details holds protocol-specific key/value data gathered during deeper probing
+// (e.g. SMB dialect, DNS recursion flag, LDAP domain, MQTT anonymous access).
+// A PortService always belongs to a specific host Result — it has no meaning
+// in isolation.
 type PortService struct {
-	Port       int    // TCP port number
-	Product    string // e.g. "OpenSSH", "nginx", "Microsoft IIS"
-	Version    string // e.g. "9.3p2", "1.27.4" (empty if unknown)
-	Banner     string // raw banner or Server: header captured from this port
-	TLSCert    string // TLS cert descriptor ("SubjectCN (IssuerOrg)"), empty if no TLS
-	ALPN       string // ALPN protocol negotiated during TLS handshake ("h2", "http/1.1")
-	Confidence uint8  // 0–100: how confident we are in the Product identification
+	Port       int               // TCP port number
+	Product    string            // e.g. "OpenSSH", "nginx", "Microsoft IIS"
+	Version    string            // e.g. "9.3p2", "1.27.4" (empty if unknown)
+	Banner     string            // raw banner or Server: header captured from this port
+	TLSCert    string            // TLS cert descriptor ("SubjectCN (IssuerOrg)"), empty if no TLS
+	ALPN       string            // ALPN protocol negotiated during TLS handshake ("h2", "http/1.1")
+	Confidence uint8             // 0–100: how confident we are in the Product identification
+	Details    map[string]string // protocol-specific details; nil when no extra data was gathered
+	// Known keys:
+	//   "smb_dialect"   – highest SMB dialect negotiated (e.g. "SMB 3.1.1")
+	//   "smb1"          – "true" if SMBv1 is also accepted by the server
+	//   "dns_recursion" – "true" if the DNS server offers recursive resolution
+	//   "dns_server"    – software version string from version.bind (BIND only)
+	//   "ldap_domain"   – Active Directory domain name (e.g. "corp.example.com")
+	//   "ldap_version"  – supported LDAP version(s) (e.g. "3")
+	//   "mqtt_anon"     – "allowed" if MQTT broker accepts unauthenticated connects
 }
 
 // Result holds everything discovered about a single host.
