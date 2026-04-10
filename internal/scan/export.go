@@ -33,7 +33,7 @@ func WriteJSON(w io.Writer, results []Result) error {
 	}
 	type jsonPortService struct {
 		Port       int    `json:"port"`
-		Product    string `json:"product,omitempty"`
+		Name       string `json:"name,omitempty"`
 		Version    string `json:"version,omitempty"`
 		Banner     string `json:"banner,omitempty"`
 		TLSCert    string `json:"tls_cert,omitempty"`
@@ -92,7 +92,7 @@ func WriteJSON(w io.Writer, results []Result) error {
 		for _, ps := range r.PortServices {
 			jr.PortServices = append(jr.PortServices, jsonPortService{
 				Port:       ps.Port,
-				Product:    ps.Product,
+				Name:       ps.Name,
 				Version:    ps.Version,
 				Banner:     ps.Banner,
 				TLSCert:    ps.TLSCert,
@@ -148,11 +148,11 @@ func WriteCSV(w io.Writer, results []Result) error {
 
 		var portSvcs []string
 		for _, ps := range r.PortServices {
-			if ps.Product != "" {
+			if ps.Name != "" {
 				if ps.Version != "" {
-					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s/%s(%d%%)", ps.Port, ps.Product, ps.Version, ps.Confidence))
+					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s/%s(%d%%)", ps.Port, ps.Name, ps.Version, ps.Confidence))
 				} else {
-					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s(%d%%)", ps.Port, ps.Product, ps.Confidence))
+					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s(%d%%)", ps.Port, ps.Name, ps.Confidence))
 				}
 			}
 		}

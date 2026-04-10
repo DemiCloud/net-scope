@@ -32,6 +32,7 @@ const (
 	WM_OUI_FAIL        = WM_APP + 20 // OUI download failed (posted to active databases dialog)
 	WM_OUI_SUCCESS     = WM_APP + 21 // OUI download succeeded (posted to active databases dialog)
 	WM_HOST_RESCAN     = WM_APP + 22 // host detail dialog: re-scan a single host without clearing the Scanner tab
+	WM_SVC_UPDATE      = WM_APP + 23 // sensor service: unified Service registry update (SvcUpdate message)
 )
 
 // ---------------------------------------------------------------------------

@@ -165,6 +165,11 @@ var (
 	pendingResolveHosts   []resolveHostResult
 	pendingResolveHostsMu sync.Mutex
 
+	// pendingSvcUpdates carries unified Service updates from the sensor service
+	// registry back to the UI thread via WM_SVC_UPDATE.
+	pendingSvcUpdates   []scan.Service
+	pendingSvcUpdatesMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -862,12 +867,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			en := ensureHostEntry(e.ip)
 			en.LastSeen = time.Now()
 			en.ExtraServices = append(en.ExtraServices, e.svc)
-			// Services tab: add every discovered service regardless of confidence.
-			hostname := en.Result.Hostname
-			if hostname == "" {
-				hostname = en.Result.NetBIOS
-			}
-			servicesTabAddDiscovery(e.ip, e.svc, hostname)
+			// Services tab is populated via WM_SVC_UPDATE from the sensor registry.
 		}
 		return 0
 
@@ -938,13 +938,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 		}
 
-		// Feed PortServices into the Services tab.
-		if len(r.PortServices) > 0 {
-			servicesTabAddResult(r)
-			if len(svcTabData) > 0 {
-				showWindow(hwndServicesPlaceholder, SW_HIDE)
-			}
-		}
+		// Feed PortServices into the Services tab via WM_SVC_UPDATE (handled by the
+		// sensor service registry). No direct call needed here.
 
 		// Mirror any services to the appropriate broadcast tab.
 		for _, svc := range r.Services {
@@ -1014,7 +1009,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if en.Result.Hostname == "" {
 				en.Result.Hostname = e.hostname
 				en.LastSeen = time.Now()
-				servicesTabUpdateHostname(e.ip, e.hostname)
+				servicesTabUpdateHostname(e.ip)
 				// Update the Hosts-tab row if it exists.
 				if row, ok := ipRowMap[e.ip]; ok {
 					if cur := listViewGetCellText(hwndList, row, colHost); cur == "\u2014" || cur == "" {
@@ -1066,6 +1061,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					en.Result.Vendor = scan.LookupVendor(e.mac)
 				}
 			}
+		}
+		return 0
+
+	case WM_SVC_UPDATE:
+		pendingSvcUpdatesMu.Lock()
+		var s scan.Service
+		if int(wParam) < len(pendingSvcUpdates) {
+			s = pendingSvcUpdates[int(wParam)]
+		}
+		pendingSvcUpdatesMu.Unlock()
+		if s.ID != "" {
+			servicesTabUpsert(s)
 		}
 		return 0
 
@@ -1820,14 +1827,12 @@ func startScan(hwnd HWND) {
 	ipRowMap = make(map[string]int32, len(hosts))
 	rowResultMap = make(map[int32]scan.Result, len(hosts))
 	allScanResults = make(map[string]scan.Result, len(hosts))
-	// Update confidence threshold from current config and reset services tab.
+	// Update confidence threshold from current config.
 	if appConfig.Scan.ServiceMinConfidence > 0 {
 		svcTabMinConf = uint8(appConfig.Scan.ServiceMinConfidence)
 	} else {
 		svcTabMinConf = 60
 	}
-	clearScanServicesFromTab()
-	showWindow(hwndServicesPlaceholder, SW_SHOW)
 
 	// Pre-populate every IP with a "Pending" row so they appear in order.
 	for _, ip := range hosts {
