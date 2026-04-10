@@ -1642,11 +1642,17 @@ func servicesTabUpsert(s scan.Service) {
 	}
 }
 
-// servicesTabUpdateHostname refreshes the Hostname column for all rows belonging
-// to ip when a PTR result arrives. Called from WM_HOST_ENRICH.
+// servicesTabUpdateHostname refreshes the Service Name and Hostname columns
+// for all rows belonging to ip when a PTR (or NetBIOS) result arrives.
+// The friendly name uses @shortname derived from the hostname, so it must
+// be re-evaluated here — it was previously stuck at @<ip>.
+// Called from WM_HOST_ENRICH on the UI thread.
 func servicesTabUpdateHostname(ip string) {
 	for row, s := range svcTabRowEntry {
 		if s.IP == ip {
+			// Name column: friendly name may now have a resolved shortname.
+			setSubItem(hwndListServices, row, 0, svcFriendlyName(s))
+			// Hostname column.
 			hn := svcDisplayHostname(s)
 			if hn == "" {
 				hn = "—"
