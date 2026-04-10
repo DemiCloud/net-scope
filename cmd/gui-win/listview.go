@@ -328,8 +328,15 @@ func mdnsPopulateRow(hwnd HWND, row int32, ip string, svc scan.ServiceInfo) {
 
 	txt := parseTXTMap(svc.Details)
 
-	// col 1: instance name with DNS label escapes and RAOP MAC-prefix removed
-	setSubItem(hwnd, row, 1, mdnsCleanName(svc.Name))
+	// col 1: instance name with DNS label escapes and RAOP MAC-prefix removed.
+	// For Googlecast, the mDNS instance is an opaque UUID; use fn= (friendly name) instead.
+	name := mdnsCleanName(svc.Name)
+	if svc.Type == "_googlecast._tcp" {
+		if fn := txtOr(txt, "fn", ""); fn != "" {
+			name = fn
+		}
+	}
+	setSubItem(hwnd, row, 1, name)
 
 	// col 2: service type prettified ("_ipp._tcp" → "IPP Printer")
 	setSubItem(hwnd, row, 2, mdnsPrettyType(svc.Type))
@@ -363,17 +370,20 @@ func mdnsPopulateRow(hwnd HWND, row int32, ip string, svc scan.ServiceInfo) {
 // mdnsCleanName removes DNS label backslash escapes and strips the leading
 // MAC-address prefix used in RAOP instance names ("AABBCCDDEEFF@Name" → "Name").
 func mdnsCleanName(s string) string {
-	// Strip RAOP MAC prefix: 12 hex digits followed by '@'.
-	if len(s) > 13 && s[12] == '@' {
+	// Strip RAOP MAC prefix: hex digits (no colons) followed by '@'.
+	// Use IndexByte rather than a hard-coded position so varied zeroconf
+	// implementations that may return 6–17 char prefixes are handled safely.
+	if at := strings.IndexByte(s, '@'); at >= 6 && at <= 17 && at < len(s)-1 {
 		allHex := true
-		for _, c := range s[:12] {
+		for i := 0; i < at; i++ {
+			c := s[i]
 			if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
 				allHex = false
 				break
 			}
 		}
 		if allHex {
-			s = s[13:]
+			s = s[at+1:]
 		}
 	}
 	// Remove DNS label backslash escapes so "EPSON\ ET-2850" → "EPSON ET-2850".
@@ -458,16 +468,23 @@ func mdnsNotes(txt map[string]string) string {
 		"ve", "srcvers", "txtvers", "protovers",
 		// AirPlay/_airplay._tcp protocol internals — opaque hex, bitmasks, or internal state
 		"features", "flags", "rsf", "gcgl", "acl", "fex", "at", "gid", "deviceid",
+		"btaddr",  // Bluetooth MAC — internal Apple pairing detail
+		"osvers",  // OS version (e.g. tvOS build); no clean label available
 		// RAOP/_raop._tcp codec/protocol boilerplate (not useful to display)
 		"cn",  // codec numbers (e.g. 0,1,2,3)
+		"da",  // digest auth enabled flag
 		"et",  // encryption types
 		"ft",  // feature flags (hex bitmask pair)
+		"ov",  // OS version (same as osvers, used in RAOP)
+		"sf",  // status flags bitmask (HAP and RAOP)
 		"tp",  // transport (always UDP)
 		"vn",  // version integer (65537 = 1.1)
+		"vs",  // AirTunes server version string
 		"vv",  // AirPlay internal version flag
 		"igl", // in-group-lead flag
 		// HAP/_hap._tcp pairing internals
 		"c#",  // configuration number (internal counter)
+		"ci",  // category identifier (HAP device class)
 		"s#",  // state number (internal counter)
 		"ff",  // feature flags bitmask
 		"pv",  // pairing protocol version (boilerplate)
