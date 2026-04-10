@@ -22,10 +22,19 @@ const (
 // for the duration of timeout. Returns a map of IPv4 string → []ServiceInfo.
 func discoverSSDP(ctx context.Context, timeout time.Duration) map[string][]ServiceInfo {
 	results := make(map[string][]ServiceInfo)
+	streamSSDP(ctx, timeout, func(ip net.IP, svc ServiceInfo) {
+		results[ip.String()] = append(results[ip.String()], svc)
+	})
+	return results
+}
 
+// streamSSDP sends an SSDP M-SEARCH and calls cb for each unique UPnP device
+// response received before timeout expires or ctx is cancelled.
+// cb is called from the same goroutine — callers must not block.
+func streamSSDP(ctx context.Context, timeout time.Duration, cb func(net.IP, ServiceInfo)) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		return results
+		return
 	}
 	defer conn.Close()
 
@@ -33,10 +42,10 @@ func discoverSSDP(ctx context.Context, timeout time.Duration) map[string][]Servi
 
 	dst, err := net.ResolveUDPAddr("udp4", ssdpMulticast)
 	if err != nil {
-		return results
+		return
 	}
 	if _, err := conn.WriteTo([]byte(ssdpMSearch), dst); err != nil {
-		return results
+		return
 	}
 
 	seen := make(map[string]bool)
@@ -76,15 +85,13 @@ func discoverSSDP(ctx context.Context, timeout time.Duration) map[string][]Servi
 			details = append(details, "server:"+server)
 		}
 
-		results[ip.String()] = append(results[ip.String()], ServiceInfo{
+		cb(ip, ServiceInfo{
 			Source:  "ssdp",
 			Name:    headers["server"],
 			Type:    headers["st"],
 			Details: details,
 		})
 	}
-
-	return results
 }
 
 // parseSSDPResponse parses an HTTP-like SSDP response into a header map.

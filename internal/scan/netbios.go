@@ -7,10 +7,11 @@ import (
 	"time"
 )
 
-const (
-	netbiosPort    = 137
-	netbiosTimeout = 2 * time.Second
-)
+const netbiosPort = 137
+
+// maxNetBIOSTimeout caps the NetBIOS UDP wait. LAN devices respond in < 10 ms;
+// 1 s is generous and avoids blocking deepProbe on slow/filtered hosts.
+const maxNetBIOSTimeout = 1 * time.Second
 
 // ProbeNetBIOS queries a host's NetBIOS Name Service (UDP 137) and returns
 // the workstation or server name, or "" if the host doesn't respond.
@@ -22,8 +23,8 @@ func ProbeNetBIOS(ip net.IP, timeout time.Duration) string {
 	}
 	defer conn.Close()
 
-	if timeout > netbiosTimeout {
-		timeout = netbiosTimeout
+	if timeout > maxNetBIOSTimeout {
+		timeout = maxNetBIOSTimeout
 	}
 	conn.SetDeadline(time.Now().Add(timeout))
 
