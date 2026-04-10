@@ -17,7 +17,14 @@ const (
 	wSvcBannerGeneric = 62 // FTP/SMTP/Telnet greeting with recognised product only
 	wSvcRDP           = 85 // RDP TPKT probe confirmed the port is RDP
 	wSvcCert          = 48 // TLS certificate subject/issuer implies product
-	minSvcScore       = 22 // minimum score required to report anything
+	// Protocol-confirmed signals — highest confidence tier.
+	// A successful protocol handshake is near-definitive; version strings within
+	// such responses lift confidence to the top of the range.
+	wSvcSMBProbe  = 93 // SMBv2 NEGOTIATE response confirmed
+	wSvcDNSProbe  = 88 // DNS query response (valid DNS message) confirmed
+	wSvcLDAPProbe = 88 // LDAP RootDSE response confirmed
+	wSvcMQTTProbe = 90 // MQTT CONNACK received (valid broker confirmed)
+	minSvcScore   = 22 // minimum score required to report anything
 )
 
 // svcPriors is the static, embedded service-port prior table.
@@ -150,9 +157,11 @@ var reVersionInBanner = regexp.MustCompile(`\b(\d+\.\d[\d\.p-]*)\b`)
 
 // guessService identifies the product and version running on a single TCP port.
 // All string inputs may be empty; the function handles any combination.
+// details carries protocol-specific key/value data from deeper probes (SMB,
+// DNS, LDAP, MQTT) — it may be nil.
 // Returns (product, version, confidence) where confidence is 0–100.
 // A zero confidence means no signal met the minimum threshold.
-func guessService(port int, banner, serverHeader, tlsCert, alpn string) (product, version string, confidence uint8) {
+func guessService(port int, banner, serverHeader, tlsCert, alpn string, details map[string]string) (product, version string, confidence uint8) {
 	type vote struct {
 		product string
 		version string
@@ -216,6 +225,37 @@ func guessService(port int, banner, serverHeader, tlsCert, alpn string) (product
 		add("HTTP/2", "", 35)
 	} else if alpn == "http/1.1" {
 		add("HTTPS", "", 30)
+	}
+
+	// ---- Protocol-confirmed signals from deep probes ----
+	// These are the highest-confidence signals: a successful protocol handshake
+	// is near-definitive identification, independent of port number.
+	if len(details) > 0 {
+		if d, ok := details["smb_dialect"]; ok && d != "" {
+			// SMBv2 NEGOTIATE succeeded — this is definitively SMB.
+			// The dialect string (e.g. "SMB 3.1.1") becomes the version.
+			add("SMB", d, wSvcSMBProbe)
+			// SMBv1 still enabled is a security finding; surface it.
+			if details["smb1"] == "true" {
+				add("SMB (v1 enabled)", d, wSvcSMBProbe)
+			}
+		}
+		if _, ok := details["dns_recursion"]; ok {
+			// A valid DNS query response confirms this is a DNS resolver.
+			// Use the version.bind string as the version if available.
+			dnsVer := details["dns_server"]
+			add("DNS", dnsVer, wSvcDNSProbe)
+		}
+		if domain, ok := details["ldap_domain"]; ok {
+			// LDAP RootDSE confirmed; domain name goes in the version field
+			// (most useful display for AD environments).
+			add("LDAP", domain, wSvcLDAPProbe)
+		} else if _, ok := details["ldap_version"]; ok {
+			add("LDAP", details["ldap_version"], wSvcLDAPProbe)
+		}
+		if anon, ok := details["mqtt_anon"]; ok && anon != "" {
+			add("MQTT", "", wSvcMQTTProbe)
+		}
 	}
 
 	// ---- Port prior (last resort, weakest signal) ----
