@@ -38,6 +38,7 @@ type ServiceInfo struct {
 // A PortService always belongs to a specific host Result — it has no meaning
 // in isolation.
 type PortService struct {
+	ID         string            // stable UUID v4 assigned at probe time; uniquely identifies this service instance
 	Port       int               // TCP port number
 	Product    string            // e.g. "OpenSSH", "nginx", "Microsoft IIS"
 	Version    string            // e.g. "9.3p2", "1.27.4" (empty if unknown)

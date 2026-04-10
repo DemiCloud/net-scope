@@ -3,6 +3,7 @@ package scan
 import (
 	"bufio"
 	"context"
+	crand "crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -12,6 +13,16 @@ import (
 	"time"
 	"unicode"
 )
+
+// newPortServiceID returns a random UUID v4 string to uniquely identify a
+// PortService instance across scans.
+func newPortServiceID() string {
+	var b [16]byte
+	_, _ = crand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 // BannerInfo holds service fingerprints grabbed from open ports.
 type BannerInfo struct {
@@ -450,6 +461,7 @@ func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout t
 			}
 
 			ch <- item{idx, PortService{
+				ID:         newPortServiceID(),
 				Port:       p,
 				Product:    product,
 				Version:    version,

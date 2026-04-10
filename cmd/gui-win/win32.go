@@ -150,13 +150,13 @@ const (
 // Index must be kept in sync with the TCM_INSERTITEM calls in createControls.
 var tabIndexToView = []string{
 	ViewHosts,    // 0
-	ViewMDNS,     // 1
-	ViewSSDP,     // 2
-	ViewWSD,      // 3
-	ViewDHCP,     // 4
-	ViewNetwork,  // 5
-	ViewHealth,   // 6
-	ViewServices, // 7
+	ViewServices, // 1
+	ViewMDNS,     // 2
+	ViewSSDP,     // 3
+	ViewWSD,      // 4
+	ViewDHCP,     // 5
+	ViewNetwork,  // 6
+	ViewHealth,   // 7
 }
 
 // viewToTabIndex is the reverse map, built once at init time.
