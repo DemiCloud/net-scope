@@ -1077,7 +1077,7 @@ func createConnHandlersControls(hwnd HWND) {
 	)
 	listViewAddColumn(hwndLV, 0, "Protocol", protoW)
 	listViewAddColumn(hwndLV, 1, "Port", portW)
-	listViewAddColumn(hwndLV, 2, "Will launch", cW-pad*2-protoW-portW-4)
+	listViewAddColumn(hwndLV, 2, "Will launch", cW-pad*2-protoW-portW-20)
 
 	for _, row := range protoHandlerRows {
 		p := utf16(row.label)
@@ -1098,7 +1098,7 @@ func createConnHandlersControls(hwnd HWND) {
 func showConnHandlersDialog(parent HWND) {
 	const (
 		dlgW int32 = 420
-		dlgH int32 = 280
+		dlgH int32 = 320
 	)
 	dlg := createAndCenterDialog("NetScopeConnHandlers", "Connection Handlers",
 		dlgW, dlgH, connHandlersWndProc, parent)
