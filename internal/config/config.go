@@ -73,6 +73,12 @@ type ScanConfig struct {
 	// Example: "192.168.1.0/24"
 	DefaultTarget string `toml:"default_target"`
 
+	// ServiceMinConfidence is the minimum confidence score (0–100) a service
+	// identification must exceed to appear in the Services tab and the View All
+	// Services dialog. Services with Confidence <= this value are hidden.
+	// Default: 60.
+	ServiceMinConfidence int `toml:"service_min_confidence"`
+
 	// ProtocolHandlers maps protocol names to custom launch commands.
 	// Supported keys: "http", "https", "ssh", "rdp", "ftp", "telnet", "smb".
 	// Each value is a command template where %s is replaced by the host IP.
@@ -103,8 +109,9 @@ func Default() Config {
 			PingFirst:       true,
 			BroadcastListen: "3s",
 			SNMPCommunity:   "public",
-			BannerGrab:      true,
-			NetBIOS:         true,
+			BannerGrab:           true,
+			NetBIOS:              true,
+			ServiceMinConfidence: 60,
 		},
 	}
 }

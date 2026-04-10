@@ -65,6 +65,7 @@ const (
 	IDC_ACTIVE_ONLY   = 118 // "Active only" checkbox in scan bar
 	IDC_SEARCH_EDIT   = 119 // Ctrl+F find bar — text input
 	IDC_SEARCH_CLOSE  = 120 // Ctrl+F find bar — "×" dismiss button
+	IDC_LIST_SERVICES = 121 // Services tab listview
 )
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,7 @@ const (
 	IDM_OPT_DATABASES         = 209 // Options > Databases...
 	IDM_HOSTS_VIEW_ALL        = 210 // Tools > View All Hosts...
 	IDM_HOSTS_VIEW_HOST       = 211 // Tools > Query Host...
+	IDM_SERVICES_VIEW_ALL     = 215 // Tools > View All Services…
 	IDM_HELP_ABOUT            = 203
 	IDM_HELP_FAQ              = 204
 	IDM_HELP_VERSION          = 207
@@ -134,25 +136,27 @@ const (
 
 // These strings are persisted to disk; do not rename them.
 const (
-	ViewHosts   = "hosts"
-	ViewMDNS    = "mdns"
-	ViewSSDP    = "ssdp"
-	ViewWSD     = "wsd"
-	ViewDHCP    = "dhcp"
-	ViewNetwork = "network"
-	ViewHealth  = "health"
+	ViewHosts    = "hosts"
+	ViewMDNS     = "mdns"
+	ViewSSDP     = "ssdp"
+	ViewWSD      = "wsd"
+	ViewDHCP     = "dhcp"
+	ViewNetwork  = "network"
+	ViewHealth   = "health"
+	ViewServices = "services"
 )
 
 // tabIndexToView maps a tab control index to its stable view identifier.
 // Index must be kept in sync with the TCM_INSERTITEM calls in createControls.
 var tabIndexToView = []string{
-	ViewHosts,   // 0
-	ViewMDNS,    // 1
-	ViewSSDP,    // 2
-	ViewWSD,     // 3
-	ViewDHCP,    // 4
-	ViewNetwork, // 5
-	ViewHealth,  // 6
+	ViewHosts,    // 0
+	ViewMDNS,     // 1
+	ViewSSDP,     // 2
+	ViewWSD,      // 3
+	ViewDHCP,     // 4
+	ViewNetwork,  // 5
+	ViewHealth,   // 6
+	ViewServices, // 7
 }
 
 // viewToTabIndex is the reverse map, built once at init time.
