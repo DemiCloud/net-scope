@@ -24,6 +24,11 @@ func probeTCPOpen(ctx context.Context, ip net.IP, port int, timeout time.Duratio
 
 // scanPorts dials each port concurrently and returns the open ones, sorted.
 func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration, dial DialFunc) []int {
+	// Apply the caller-supplied timeout so filtered ports (no RST) don't block
+	// until the OS TCP retransmit timeout (can be tens of seconds).
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	type result struct {
 		port int
 		open bool
@@ -33,7 +38,7 @@ func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duratio
 	for _, port := range ports {
 		go func(p int) {
 			addr := fmt.Sprintf("%s:%d", ip, p)
-			conn, err := dialOrDirect(dial)(ctx, "tcp", addr)
+			conn, err := dialOrDirect(dial)(ctx2, "tcp", addr)
 			if err == nil {
 				conn.Close()
 				ch <- result{p, true}
