@@ -34,6 +34,10 @@ type ServiceInfo struct {
 type Result struct {
 	IP          net.IP
 	Alive       bool
+	// Partial is true when only liveness data is available (phase 1 discovery);
+	// deepProbe has not yet run. A subsequent Result for the same IP with
+	// Partial: false replaces this one.
+	Partial     bool
 	MAC         net.HardwareAddr
 	Vendor      string // OUI vendor from MAC
 	OpenPorts   []int
@@ -53,6 +57,19 @@ type Result struct {
 func (r Result) String() string {
 	if !r.Alive {
 		return fmt.Sprintf("%s\tdown", r.IP)
+	}
+
+	if r.Partial {
+		mac := "-"
+		if r.MAC != nil {
+			mac = r.MAC.String()
+		}
+		vendor := r.Vendor
+		if vendor == "" {
+			vendor = "-"
+		}
+		return fmt.Sprintf("%s\t(discovering)\t%s\t%s\t-\t-\t%s",
+			r.IP, mac, vendor, r.Latency.Round(time.Millisecond))
 	}
 
 	mac := "-"
