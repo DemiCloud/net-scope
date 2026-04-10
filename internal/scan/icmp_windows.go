@@ -4,7 +4,6 @@ package scan
 
 import (
 	"context"
-	"encoding/binary"
 	"net"
 	"syscall"
 	"time"
@@ -56,11 +55,12 @@ func ping(ctx context.Context, ip net.IP, timeout time.Duration) (time.Duration,
 	}
 	defer procIcmpCloseHandle.Call(h)
 
-	// IcmpSendEcho expects DestinationAddress as IPAddr (ULONG) in network byte
-	// order (big-endian), matching the convention of all Win32 socket APIs.
-	// net.IP.To4() already returns bytes in network order, so BigEndian.Uint32
-	// gives the correct numeric value (e.g. 192.168.1.1 → 0xC0A80101).
-	dest := binary.BigEndian.Uint32(ip4)
+	// IcmpSendEcho expects DestinationAddress as IPAddr (ULONG), which matches the
+	// in_addr / inet_addr convention on little-endian Windows: the four IP octets are
+	// laid out in memory in network order (a,b,c,d), so the ULONG integer value is
+	// little-endian (e.g. 192.168.1.1 → 0x0101A8C0). This matches GetIpNetTable's
+	// Addr field — see arp_cache_windows.go for the same encoding.
+	dest := uint32(ip4[0]) | uint32(ip4[1])<<8 | uint32(ip4[2])<<16 | uint32(ip4[3])<<24
 
 	reqData := []byte("net-scope")
 	// Reply buffer must be sizeof(ICMP_ECHO_REPLY) + requestSize + 8 (MSDN).
