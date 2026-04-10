@@ -38,20 +38,39 @@ type Observation struct {
 	Value  string `json:"val"`
 }
 
+// EvidenceRef records a single piece of evidence supporting a DerivedClaim.
+type EvidenceRef struct {
+	Source string `json:"src"`  // observation source consulted: "banner", "mdns", "ssdp", …
+	Key    string `json:"key"`  // observation key consulted
+	Note   string `json:"note"` // short human-readable rationale
+}
+
+// DerivedClaim is a monotonic, max-confidence assertion produced by the
+// signature engine from raw Observations. Confidence only ever increases;
+// claims are never deleted. Multiple signatures may contribute evidence to
+// the same claim — all evidence is accumulated.
+type DerivedClaim struct {
+	Confidence uint8         `json:"conf"`          // 0–100; monotonic max-only
+	Value      string        `json:"val,omitempty"` // optional label (e.g. "nginx/1.27.4")
+	Evidence   []EvidenceRef `json:"ev,omitempty"`  // why we believe this
+}
+
 // Service is the unified, source-agnostic representation of a network service.
 // Evidence from port scanning, mDNS, SSDP, WSD, and other sources all enrich
 // the same Service object. A Service is never cleared by a scan — it persists
 // and accumulates evidence for the lifetime of the session.
 type Service struct {
-	ID         string        `json:"id"`              // stable UUID v4
-	IP         string        `json:"ip"`
-	Port       int           `json:"port,omitempty"` // 0 for discovery-only services
-	Name       string        `json:"name"`           // human-readable service/protocol name
-	Version    string        `json:"version,omitempty"`
-	Confidence uint8         `json:"conf,omitempty"`  // 0–100, accumulative across sources
-	FirstSeen  time.Time     `json:"first_seen"`
-	LastSeen   time.Time     `json:"last_seen"`
-	Obs        []Observation `json:"obs,omitempty"`
+	ID           string                  `json:"id"`               // stable UUID v4
+	IP           string                  `json:"ip"`
+	Port         int                     `json:"port,omitempty"`   // 0 for discovery-only services
+	Name         string                  `json:"name"`             // human-readable service/protocol name
+	Version      string                  `json:"version,omitempty"`
+	Confidence   uint8                   `json:"conf,omitempty"`   // 0–100, accumulative across sources
+	FirstSeen    time.Time               `json:"first_seen"`
+	LastSeen     time.Time               `json:"last_seen"`
+	Obs          []Observation           `json:"obs,omitempty"`
+	Capabilities map[string]DerivedClaim `json:"caps,omitempty"` // protocol capabilities: "http", "https", "ssh", …
+	Fingerprints map[string]DerivedClaim `json:"fps,omitempty"`  // identity labels: "nginx", "openssh", …
 }
 
 // PortService describes a network service identified on a specific TCP port.

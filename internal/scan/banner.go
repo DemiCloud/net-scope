@@ -453,6 +453,16 @@ func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout t
 
 			product, version, conf := guessService(p, sig.banner, sig.serverHeader, sig.tlsCert, sig.alpn, sig.details)
 
+			// Store the raw HTTP Server: header as a dedicated detail so the
+			// signature engine can determine whether HTTP was actually probed
+			// (as opposed to the product name coming from a banner or TLS cert).
+			if sig.serverHeader != "" {
+				if sig.details == nil {
+					sig.details = make(map[string]string)
+				}
+				sig.details["http_server"] = sig.serverHeader
+			}
+
 			// Banner field in PortService holds whatever text we captured:
 			// the server header for HTTP ports, the raw line banner for others.
 			displayBanner := sig.serverHeader
