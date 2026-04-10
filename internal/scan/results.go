@@ -30,6 +30,19 @@ type ServiceInfo struct {
 	Details []string // TXT records, SSDP headers, etc.
 }
 
+// PortService describes a network service identified on a specific TCP port.
+// Product and Version are best-effort extractions from banner text and protocol
+// headers; Confidence reflects how reliable that identification is (0–100).
+type PortService struct {
+	Port       int    // TCP port number
+	Product    string // e.g. "OpenSSH", "nginx", "Microsoft IIS"
+	Version    string // e.g. "9.3p2", "1.27.4" (empty if unknown)
+	Banner     string // raw banner or Server: header captured from this port
+	TLSCert    string // TLS cert descriptor ("SubjectCN (IssuerOrg)"), empty if no TLS
+	ALPN       string // ALPN protocol negotiated during TLS handshake ("h2", "http/1.1")
+	Confidence uint8  // 0–100: how confident we are in the Product identification
+}
+
 // Result holds everything discovered about a single host.
 type Result struct {
 	IP          net.IP
@@ -37,20 +50,21 @@ type Result struct {
 	// Partial is true when only liveness data is available (phase 1 discovery);
 	// deepProbe has not yet run. A subsequent Result for the same IP with
 	// Partial: false replaces this one.
-	Partial     bool
-	MAC         net.HardwareAddr
-	Vendor      string // OUI vendor from MAC
-	OpenPorts   []int
-	Hostname    string
-	NetBIOS     string    // NetBIOS workstation name (Windows hosts)
-	Latency     time.Duration
-	TTL          uint8     // ICMP TTL as received (0 = unknown)
-	OS           OSHint    // best-guess OS
-	OSConfidence uint8     // 0–100; 0 = no signal reached minimum threshold
-	Banner       BannerInfo // per-port service banners
-	SNMP        *SNMPInfo
-	SYNProbe    SYNProbeInfo  // TCP stack fingerprint from SYN-ACK (elevation-gated)
-	Services    []ServiceInfo // mDNS, SSDP discoveries
+	Partial      bool
+	MAC          net.HardwareAddr
+	Vendor       string // OUI vendor from MAC
+	OpenPorts    []int
+	Hostname     string
+	NetBIOS      string        // NetBIOS workstation name (Windows hosts)
+	Latency      time.Duration
+	TTL          uint8         // ICMP TTL as received (0 = unknown)
+	OS           OSHint        // best-guess OS
+	OSConfidence uint8         // 0–100; 0 = no signal reached minimum threshold
+	Banner       BannerInfo    // per-port service banners (derived from PortServices)
+	PortServices []PortService // per-port service identification (populated when BannerGrab is on)
+	SNMP         *SNMPInfo
+	SYNProbe     SYNProbeInfo  // TCP stack fingerprint from SYN-ACK (elevation-gated)
+	Services     []ServiceInfo // mDNS, SSDP discoveries
 }
 
 // String returns a human-readable summary of the result.

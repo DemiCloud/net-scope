@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -124,18 +125,18 @@ func grabBanners(ctx context.Context, ip net.IP, openPorts []int, timeout time.D
 	return info
 }
 
-// grabTLSCert performs a TLS handshake to ip:port and returns a short
-// descriptor of the peer certificate: "SubjectCN (IssuerOrg)" when both are
-// present, otherwise whichever is available, or "" on failure.
-// Useful for fingerprinting devices whose Server: header is empty or absent.
-func grabTLSCert(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
+// grabTLSInfo performs a TLS handshake and returns the peer certificate
+// descriptor ("SubjectCN (IssuerOrg)") and the negotiated ALPN protocol
+// (e.g. "h2", "http/1.1"). Either value may be empty on failure or when the
+// server does not advertise that information.
+func grabTLSInfo(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) (cert, alpn string) {
 	addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", port))
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	raw, err := dialOrDirect(dial)(reqCtx, "tcp", addr)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer raw.Close()
 	raw.SetDeadline(time.Now().Add(timeout)) //nolint:errcheck
@@ -143,14 +144,18 @@ func grabTLSCert(ctx context.Context, ip net.IP, port int, timeout time.Duration
 	tlsConn := tls.Client(raw, &tls.Config{ //nolint:gosec // admin LAN scanner
 		InsecureSkipVerify: true,
 		ServerName:         ip.String(),
+		NextProtos:         []string{"h2", "http/1.1"},
 	})
 	if err := tlsConn.Handshake(); err != nil {
-		return ""
+		return "", ""
 	}
 
-	certs := tlsConn.ConnectionState().PeerCertificates
+	state := tlsConn.ConnectionState()
+	alpn = state.NegotiatedProtocol
+
+	certs := state.PeerCertificates
 	if len(certs) == 0 {
-		return ""
+		return "", alpn
 	}
 	leaf := certs[0]
 
@@ -162,7 +167,6 @@ func grabTLSCert(ctx context.Context, ip net.IP, port int, timeout time.Duration
 		issuer = leaf.Issuer.CommonName
 	}
 
-	// Prefer SANs over Subject CN when the CN looks like a generic hostname.
 	if len(leaf.DNSNames) > 0 && (subject == "" || !strings.ContainsAny(subject, ".")) {
 		subject = strings.Join(leaf.DNSNames, ", ")
 	}
@@ -171,12 +175,22 @@ func grabTLSCert(ctx context.Context, ip net.IP, port int, timeout time.Duration
 	issuer = cleanASCII(issuer)
 
 	if subject != "" && issuer != "" && issuer != subject {
-		return subject + " (" + issuer + ")"
+		cert = subject + " (" + issuer + ")"
+	} else if subject != "" {
+		cert = subject
+	} else {
+		cert = issuer
 	}
-	if subject != "" {
-		return subject
-	}
-	return issuer
+	return cert, alpn
+}
+
+// grabTLSCert performs a TLS handshake to ip:port and returns a short
+// descriptor of the peer certificate: "SubjectCN (IssuerOrg)" when both are
+// present, otherwise whichever is available, or "" on failure.
+// Useful for fingerprinting devices whose Server: header is empty or absent.
+func grabTLSCert(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
+	cert, _ := grabTLSInfo(ctx, ip, port, timeout, dial)
+	return cert
 }
 
 // cleanASCII removes non-printable runes and trims whitespace.
@@ -299,4 +313,174 @@ func grabLineBanner(ctx context.Context, ip net.IP, port int, timeout time.Durat
 		}
 	}
 	return ""
+}
+
+// portSignals holds the raw signals gathered from probing a single open port.
+// It is an internal type used to pipeline signal collection before calling
+// guessService for product identification.
+type portSignals struct {
+	port         int
+	banner       string // SSH ident / FTP greeting / SMTP / Telnet / RDP result
+	serverHeader string // HTTP Server: (or X-Powered-By) header value
+	tlsCert      string // TLS cert descriptor ("SubjectCN (IssuerOrg)")
+	alpn         string // TLS ALPN negotiated protocol ("h2", "http/1.1")
+}
+
+// probePort gathers all available signals from a single confirmed-open TCP
+// port. The port must already be known open; probePort will not attempt a
+// TCP connect liveness check.
+func probePort(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) portSignals {
+	sig := portSignals{port: port}
+
+	switch port {
+	case 22:
+		sig.banner = grabSSH(ctx, ip, timeout, dial)
+
+	case 21, 23:
+		sig.banner = grabLineBanner(ctx, ip, port, timeout, dial)
+
+	case 25, 587:
+		sig.banner = grabLineBanner(ctx, ip, port, timeout, dial)
+
+	case 465, 993, 995:
+		// TLS-wrapped mail protocols: capture cert/ALPN, then try a banner read.
+		sig.tlsCert, sig.alpn = grabTLSInfo(ctx, ip, port, timeout, dial)
+		sig.banner = grabLineBanner(ctx, ip, port, timeout, dial)
+
+	case 80, 8000, 8080, 8888:
+		// Plain HTTP ports: try plain first, fall back to TLS.
+		sig.serverHeader = grabHTTP(ctx, ip, port, false, timeout, dial)
+		if sig.serverHeader == "" {
+			sig.serverHeader = grabHTTP(ctx, ip, port, true, timeout, dial)
+			if sig.serverHeader != "" {
+				sig.tlsCert, sig.alpn = grabTLSInfo(ctx, ip, port, timeout, dial)
+			}
+		}
+
+	case 443, 4443, 8443:
+		// TLS-first ports: capture cert+ALPN, then HTTP header over TLS.
+		sig.tlsCert, sig.alpn = grabTLSInfo(ctx, ip, port, timeout, dial)
+		sig.serverHeader = grabHTTP(ctx, ip, port, true, timeout, dial)
+		if sig.serverHeader == "" {
+			// Some devices serve plain HTTP on 443 (misconfigured but real).
+			sig.serverHeader = grabHTTP(ctx, ip, port, false, timeout, dial)
+		}
+
+	case 3389:
+		sig.banner = probeRDP(ctx, ip, port, timeout, dial)
+
+	default:
+		// Unknown port: try TLS first to see if it speaks HTTPS; then
+		// attempt a plain HTTP HEAD; finally fall back to a raw line read.
+		sig.tlsCert, sig.alpn = grabTLSInfo(ctx, ip, port, timeout, dial)
+		if sig.tlsCert != "" || sig.alpn != "" {
+			sig.serverHeader = grabHTTP(ctx, ip, port, true, timeout, dial)
+		} else {
+			sig.serverHeader = grabHTTP(ctx, ip, port, false, timeout, dial)
+			if sig.serverHeader == "" {
+				sig.banner = grabLineBanner(ctx, ip, port, timeout, dial)
+			}
+		}
+	}
+
+	return sig
+}
+
+// grabPortServices concurrently probes every port in openPorts and returns a
+// slice of PortService values in the same order. Each entry carries the raw
+// banner, server header, TLS certificate, and ALPN negotiated by that port,
+// as well as the product/version identification from guessService.
+//
+// Only ports already confirmed open should be passed — probePort does not
+// re-check liveness.
+func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout time.Duration, dial DialFunc) []PortService {
+	if len(openPorts) == 0 {
+		return nil
+	}
+
+	type item struct {
+		idx int
+		svc PortService
+	}
+	ch := make(chan item, len(openPorts))
+
+	var wg sync.WaitGroup
+	for i, port := range openPorts {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(idx, p int) {
+			defer wg.Done()
+			sig := probePort(ctx, ip, p, timeout, dial)
+
+			product, version, conf := guessService(p, sig.banner, sig.serverHeader, sig.tlsCert, sig.alpn)
+
+			// Banner field in PortService holds whatever text we captured:
+			// the server header for HTTP ports, the raw line banner for others.
+			displayBanner := sig.serverHeader
+			if displayBanner == "" {
+				displayBanner = sig.banner
+			}
+
+			ch <- item{idx, PortService{
+				Port:       p,
+				Product:    product,
+				Version:    version,
+				Banner:     displayBanner,
+				TLSCert:    sig.tlsCert,
+				ALPN:       sig.alpn,
+				Confidence: conf,
+			}}
+		}(i, port)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	svcs := make([]PortService, len(openPorts))
+	for it := range ch {
+		svcs[it.idx] = it.svc
+	}
+	return svcs
+}
+
+// bannerInfoFrom derives a BannerInfo from a slice of PortService values.
+// This keeps all legacy consumers of BannerInfo (guessOS, WriteJSON, CLI
+// output) working without changes after the transition to grabPortServices.
+func bannerInfoFrom(svcs []PortService) BannerInfo {
+	var b BannerInfo
+	for _, s := range svcs {
+		switch s.Port {
+		case 22:
+			if b.SSH == "" {
+				b.SSH = s.Banner
+			}
+		case 21:
+			if b.FTP == "" {
+				b.FTP = s.Banner
+			}
+		case 23:
+			if b.Telnet == "" {
+				b.Telnet = s.Banner
+			}
+		case 25, 587:
+			if b.SMTP == "" {
+				b.SMTP = s.Banner
+			}
+		}
+		if (s.Port == 80 || s.Port == 8080 || s.Port == 8000 || s.Port == 8888) && b.HTTP == "" {
+			b.HTTP = s.Banner
+		}
+		if (s.Port == 443 || s.Port == 8443 || s.Port == 4443) && b.HTTPS == "" {
+			b.HTTPS = s.Banner
+		}
+		// First TLS cert found wins; covers non-standard HTTPS ports too.
+		if b.TLSCert == "" && s.TLSCert != "" {
+			b.TLSCert = s.TLSCert
+		}
+	}
+	return b
 }

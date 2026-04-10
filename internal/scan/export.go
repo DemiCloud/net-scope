@@ -31,20 +31,30 @@ func WriteJSON(w io.Writer, results []Result) error {
 		Type    string   `json:"type,omitempty"`
 		Details []string `json:"details,omitempty"`
 	}
+	type jsonPortService struct {
+		Port       int    `json:"port"`
+		Product    string `json:"product,omitempty"`
+		Version    string `json:"version,omitempty"`
+		Banner     string `json:"banner,omitempty"`
+		TLSCert    string `json:"tls_cert,omitempty"`
+		ALPN       string `json:"alpn,omitempty"`
+		Confidence uint8  `json:"confidence,omitempty"`
+	}
 	type jsonResult struct {
-		IP        string        `json:"ip"`
-		Alive     bool          `json:"alive"`
-		MAC       string        `json:"mac,omitempty"`
-		Vendor    string        `json:"vendor,omitempty"`
-		Hostname  string        `json:"hostname,omitempty"`
-		NetBIOS   string        `json:"netbios,omitempty"`
-		OS        string        `json:"os,omitempty"`
-		OpenPorts []int         `json:"open_ports,omitempty"`
-		LatencyMs int64         `json:"latency_ms,omitempty"`
-		TTL       uint8         `json:"ttl,omitempty"`
-		Banner    *jsonBanner   `json:"banner,omitempty"`
-		SNMP      *jsonSNMP     `json:"snmp,omitempty"`
-		Services  []jsonService `json:"services,omitempty"`
+		IP           string            `json:"ip"`
+		Alive        bool              `json:"alive"`
+		MAC          string            `json:"mac,omitempty"`
+		Vendor       string            `json:"vendor,omitempty"`
+		Hostname     string            `json:"hostname,omitempty"`
+		NetBIOS      string            `json:"netbios,omitempty"`
+		OS           string            `json:"os,omitempty"`
+		OpenPorts    []int             `json:"open_ports,omitempty"`
+		LatencyMs    int64             `json:"latency_ms,omitempty"`
+		TTL          uint8             `json:"ttl,omitempty"`
+		Banner       *jsonBanner       `json:"banner,omitempty"`
+		PortServices []jsonPortService  `json:"port_services,omitempty"`
+		SNMP         *jsonSNMP         `json:"snmp,omitempty"`
+		Services     []jsonService      `json:"services,omitempty"`
 	}
 
 	out := make([]jsonResult, len(results))
@@ -79,6 +89,17 @@ func WriteJSON(w io.Writer, results []Result) error {
 				SysContact:  r.SNMP.SysContact,
 			}
 		}
+		for _, ps := range r.PortServices {
+			jr.PortServices = append(jr.PortServices, jsonPortService{
+				Port:       ps.Port,
+				Product:    ps.Product,
+				Version:    ps.Version,
+				Banner:     ps.Banner,
+				TLSCert:    ps.TLSCert,
+				ALPN:       ps.ALPN,
+				Confidence: ps.Confidence,
+			})
+		}
 		for _, svc := range r.Services {
 			jr.Services = append(jr.Services, jsonService{
 				Source:  svc.Source,
@@ -101,6 +122,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 		"ip", "alive", "mac", "vendor", "hostname", "netbios", "os",
 		"open_ports", "latency_ms", "ttl",
 		"banner_ssh", "banner_http", "banner_https", "banner_ftp", "banner_smtp", "banner_telnet",
+		"port_services",
 		"snmp_descr", "snmp_name", "snmp_location", "snmp_contact",
 		"services",
 	}); err != nil {
@@ -124,6 +146,16 @@ func WriteCSV(w io.Writer, results []Result) error {
 			snmpContact = r.SNMP.SysContact
 		}
 
+		var portSvcs []string
+		for _, ps := range r.PortServices {
+			if ps.Product != "" {
+				if ps.Version != "" {
+					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s/%s(%d%%)", ps.Port, ps.Product, ps.Version, ps.Confidence))
+				} else {
+					portSvcs = append(portSvcs, fmt.Sprintf("%d:%s(%d%%)", ps.Port, ps.Product, ps.Confidence))
+				}
+			}
+		}
 		var svcs []string
 		for _, svc := range r.Services {
 			svcs = append(svcs, fmt.Sprintf("[%s] %s (%s)", svc.Source, svc.Name, svc.Type))
@@ -146,6 +178,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 			r.Banner.FTP,
 			r.Banner.SMTP,
 			r.Banner.Telnet,
+			strings.Join(portSvcs, "; "),
 			snmpDescr, snmpName, snmpLoc, snmpContact,
 			strings.Join(svcs, "; "),
 		}); err != nil {
