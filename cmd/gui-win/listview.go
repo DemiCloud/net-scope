@@ -3,6 +3,7 @@
 package guiwin
 
 import (
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -1465,11 +1466,19 @@ func restoreAllColumnStates(m map[string]config.TabColumnState) {
 // Services tab
 // ---------------------------------------------------------------------------
 
+// Service source kind constants.
+const (
+	svcKindPort = "port" // identified via TCP banner / protocol probe
+	svcKindMDNS = "mdns" // mDNS / DNS-SD discovery
+	svcKindSSDP = "ssdp" // UPnP / SSDP discovery
+	svcKindWSD  = "wsd"  // WS-Discovery
+)
+
 // svcTabColTitles are the column headings for the Services tab.
 var svcTabColTitles = []string{"Service Name", "IP", "Hostname", "Version", "Port"}
 
 // svcTabDefWidths are the default column widths (logical px).
-var svcTabDefWidths = []int32{180, 120, 160, 110, 60}
+var svcTabDefWidths = []int32{180, 120, 160, 110, 70}
 
 // svcTabColVis tracks per-column visibility (all visible by default).
 var svcTabColVis = []bool{true, true, true, true, true}
@@ -1479,11 +1488,55 @@ var svcTabColVis = []bool{true, true, true, true, true}
 var svcTabColKeys = []string{"service_name", "ip", "hostname", "version", "port"}
 
 // svcTabEntry is one row in the Services tab backing store.
+// It can represent either a port-based service (kind == svcKindPort) or a
+// discovery-based service (kind == svcKindMDNS / svcKindSSDP / svcKindWSD).
 type svcTabEntry struct {
-	id       string
+	id       string          // UUID; identifies this instance uniquely in the session
+	kind     string          // svcKindPort / svcKindMDNS / svcKindSSDP / svcKindWSD
 	ip       string
 	hostname string
-	ps       scan.PortService
+	ps       scan.PortService // valid when kind == svcKindPort
+	svc      scan.ServiceInfo // valid when kind != svcKindPort
+}
+
+// svcEntryDisplayName returns the human-visible service name for e.
+func svcEntryDisplayName(e svcTabEntry) string {
+	switch e.kind {
+	case svcKindPort:
+		if e.ps.Product != "" {
+			return e.ps.Product
+		}
+		return fmt.Sprintf("port/%d", e.ps.Port)
+	default:
+		name := unescapeDNSLabel(e.svc.Name)
+		if name == "" {
+			name = e.svc.Type
+		}
+		return name
+	}
+}
+
+// svcEntryPortStr returns a display string for the port / source column.
+func svcEntryPortStr(e svcTabEntry) string {
+	if e.kind == svcKindPort {
+		return fmt.Sprintf("%d", e.ps.Port)
+	}
+	return strings.ToUpper(e.kind) // "MDNS", "SSDP", "WSD"
+}
+
+// svcEntryVersion returns a display string for the version column.
+func svcEntryVersion(e svcTabEntry) string {
+	if e.kind == svcKindPort {
+		if e.ps.Version != "" {
+			return e.ps.Version
+		}
+		return "—"
+	}
+	// For discovery: show the type URN as "version" detail.
+	if e.svc.Type != "" {
+		return e.svc.Type
+	}
+	return "—"
 }
 
 // svcTabData is the ordered backing store for the Services tab.
@@ -1523,19 +1576,47 @@ func servicesTabAddResult(r scan.Result) {
 		if ps.Confidence <= svcTabMinConf {
 			continue
 		}
-		entry := svcTabEntry{id: ps.ID, ip: ipStr, hostname: hostname, ps: ps}
+		entry := svcTabEntry{id: ps.ID, kind: svcKindPort, ip: ipStr, hostname: hostname, ps: ps}
 		svcTabData = append(svcTabData, entry)
 		svcTabInsertRow(entry)
 	}
 }
 
+// servicesTabAddDiscovery adds a broadcast-discovered service (mDNS, SSDP, WSD)
+// to the Services tab backing store and listview.
+// Called on the UI thread from the WM_BCAST_SVC handler.
+func servicesTabAddDiscovery(ip string, svc scan.ServiceInfo, hostname string) {
+	kind := strings.ToLower(svc.Source)
+	switch kind {
+	case svcKindMDNS, svcKindSSDP, svcKindWSD:
+	default:
+		kind = svcKindMDNS // treat unknown broadcast source as mDNS
+	}
+	id := newDiscoveryServiceID(ip, svc)
+	entry := svcTabEntry{id: id, kind: kind, ip: ip, hostname: hostname, svc: svc}
+	svcTabData = append(svcTabData, entry)
+	svcTabInsertRow(entry)
+	if len(svcTabData) == 1 {
+		// First entry: hide the placeholder.
+		showWindow(hwndServicesPlaceholder, SW_HIDE)
+	}
+}
+
+// newDiscoveryServiceID returns a random UUID v4 for a discovery service entry.
+func newDiscoveryServiceID(ip string, svc scan.ServiceInfo) string {
+	_ = ip
+	_ = svc
+	var b [16]byte
+	_, _ = crand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 // svcTabInsertRow appends one row to hwndListServices for entry.
 // Columns: Service Name | IP | Hostname | Version | Port
 func svcTabInsertRow(e svcTabEntry) {
-	name := e.ps.Product
-	if name == "" {
-		name = fmt.Sprintf("port/%d", e.ps.Port)
-	}
+	name := svcEntryDisplayName(e)
 	namePtr := utf16(name)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: namePtr}
 	row := int32(sendMessage(hwndListServices, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
@@ -1549,12 +1630,8 @@ func svcTabInsertRow(e svcTabEntry) {
 		hn = "—"
 	}
 	setSubItem(hwndListServices, row, 2, hn)
-	ver := e.ps.Version
-	if ver == "" {
-		ver = "—"
-	}
-	setSubItem(hwndListServices, row, 3, ver)
-	setSubItem(hwndListServices, row, 4, fmt.Sprintf("%d", e.ps.Port))
+	setSubItem(hwndListServices, row, 3, svcEntryVersion(e))
+	setSubItem(hwndListServices, row, 4, svcEntryPortStr(e))
 }
 
 // repopulateServicesTab rebuilds hwndListServices from svcTabData, applying
@@ -1572,14 +1649,11 @@ func repopulateServicesTab(filter string) {
 }
 
 func svcTabEntryMatchesFilter(e svcTabEntry, filter string) bool {
-	name := e.ps.Product
-	if name == "" {
-		name = fmt.Sprintf("port/%d", e.ps.Port)
-	}
-	return strings.Contains(strings.ToLower(name), filter) ||
+	return strings.Contains(strings.ToLower(svcEntryDisplayName(e)), filter) ||
 		strings.Contains(strings.ToLower(e.ip), filter) ||
 		strings.Contains(strings.ToLower(e.hostname), filter) ||
-		strings.Contains(strings.ToLower(e.ps.Version), filter)
+		strings.Contains(strings.ToLower(svcEntryVersion(e)), filter) ||
+		strings.Contains(strings.ToLower(svcEntryPortStr(e)), filter)
 }
 
 // svcDetailSummary formats PortService.Details into a compact one-line string

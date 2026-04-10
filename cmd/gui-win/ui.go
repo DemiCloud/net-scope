@@ -861,6 +861,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			en := ensureHostEntry(e.ip)
 			en.LastSeen = time.Now()
 			en.ExtraServices = append(en.ExtraServices, e.svc)
+			// Services tab: add every discovered service regardless of confidence.
+			hostname := en.Result.Hostname
+			if hostname == "" {
+				hostname = en.Result.NetBIOS
+			}
+			servicesTabAddDiscovery(e.ip, e.svc, hostname)
 		}
 		return 0
 
