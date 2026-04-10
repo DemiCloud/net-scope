@@ -523,7 +523,8 @@ func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result
 				postWg.Add(1)
 				go func() {
 					defer postWg.Done()
-					r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+					r.PortServices = grabPortServices(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+					r.Banner = bannerInfoFrom(r.PortServices)
 				}()
 			}
 			postWg.Add(1)
@@ -533,10 +534,12 @@ func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result
 			}()
 			postWg.Wait()
 		} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-			r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+			r.PortServices = grabPortServices(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+			r.Banner = bannerInfoFrom(r.PortServices)
 		}
 	} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-		r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+		r.PortServices = grabPortServices(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
+		r.Banner = bannerInfoFrom(r.PortServices)
 	}
 
 	return r
