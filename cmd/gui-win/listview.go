@@ -303,7 +303,7 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
 		// Respect the active search filter: skip the listview insert if this
 		// entry doesn't match.  It stays in mdnsBackup for later repopulation.
-		if f := strings.ToLower(tabSearchFilter[1]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
+		if f := strings.ToLower(tabSearchFilter[2]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
 			return
 		}
 	}
@@ -566,7 +566,7 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		ssdpKnownIPs[ip] = true
 		ssdpOrderedIPs = append(ssdpOrderedIPs, ip)
 		// Respect the active search filter for newly arriving devices.
-		if f := strings.ToLower(tabSearchFilter[2]); f != "" && !ssdpIPMatchesFilter(ip, f) {
+		if f := strings.ToLower(tabSearchFilter[3]); f != "" && !ssdpIPMatchesFilter(ip, f) {
 			ssdpBestST[ip] = svc.Type // track best type even when filtered out
 			return
 		}
@@ -747,7 +747,7 @@ func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		wsdKnownIPs[ip] = true
 		wsdOrderedIPs = append(wsdOrderedIPs, ip)
 		// Respect the active search filter for newly arriving devices.
-		if f := strings.ToLower(tabSearchFilter[3]); f != "" && !wsdIPMatchesFilter(ip, f) {
+		if f := strings.ToLower(tabSearchFilter[4]); f != "" && !wsdIPMatchesFilter(ip, f) {
 			return
 		}
 	}
@@ -1466,20 +1466,21 @@ func restoreAllColumnStates(m map[string]config.TabColumnState) {
 // ---------------------------------------------------------------------------
 
 // svcTabColTitles are the column headings for the Services tab.
-var svcTabColTitles = []string{"IP", "Hostname", "Port", "Product", "Version", "Confidence", "Banner", "TLS Cert"}
+var svcTabColTitles = []string{"Service Name", "IP", "Hostname", "Version", "Port"}
 
 // svcTabDefWidths are the default column widths (logical px).
-var svcTabDefWidths = []int32{120, 155, 60, 155, 100, 90, 280, 180}
+var svcTabDefWidths = []int32{180, 120, 160, 110, 60}
 
 // svcTabColVis tracks per-column visibility (all visible by default).
-var svcTabColVis = []bool{true, true, true, true, true, true, true, true}
+var svcTabColVis = []bool{true, true, true, true, true}
 
 // svcTabColKeys are the stable persistence keys for state.json.
 // Never rename these.
-var svcTabColKeys = []string{"ip", "hostname", "port", "product", "version", "confidence", "banner", "tls_cert"}
+var svcTabColKeys = []string{"service_name", "ip", "hostname", "version", "port"}
 
 // svcTabEntry is one row in the Services tab backing store.
 type svcTabEntry struct {
+	id       string
 	ip       string
 	hostname string
 	ps       scan.PortService
@@ -1488,6 +1489,10 @@ type svcTabEntry struct {
 // svcTabData is the ordered backing store for the Services tab.
 // Written and read only on the UI thread.
 var svcTabData []svcTabEntry
+
+// svcTabRowEntry maps the current listview row index to the svcTabEntry it
+// represents.  Rebuilt whenever the listview is repopulated.
+var svcTabRowEntry = map[int32]svcTabEntry{}
 
 // svcTabMinConf is the current minimum confidence threshold (exclusive).
 // Rows with Confidence <= svcTabMinConf are hidden.
@@ -1498,6 +1503,7 @@ var svcTabMinConf uint8 = 60
 // backing store. Called at the start of each scan.
 func clearServicesTab() {
 	svcTabData = svcTabData[:0]
+	svcTabRowEntry = map[int32]svcTabEntry{}
 	sendMessage(hwndListServices, LVM_DELETEALLITEMS, 0, 0)
 }
 
@@ -1517,60 +1523,45 @@ func servicesTabAddResult(r scan.Result) {
 		if ps.Confidence <= svcTabMinConf {
 			continue
 		}
-		entry := svcTabEntry{ip: ipStr, hostname: hostname, ps: ps}
+		entry := svcTabEntry{id: ps.ID, ip: ipStr, hostname: hostname, ps: ps}
 		svcTabData = append(svcTabData, entry)
 		svcTabInsertRow(entry)
 	}
 }
 
 // svcTabInsertRow appends one row to hwndListServices for entry.
+// Columns: Service Name | IP | Hostname | Version | Port
 func svcTabInsertRow(e svcTabEntry) {
-	ipPtr := utf16(e.ip)
-	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: ipPtr}
+	name := e.ps.Product
+	if name == "" {
+		name = fmt.Sprintf("port/%d", e.ps.Port)
+	}
+	namePtr := utf16(name)
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: namePtr}
 	row := int32(sendMessage(hwndListServices, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
 	if row < 0 {
 		return
 	}
+	svcTabRowEntry[row] = e
+	setSubItem(hwndListServices, row, 1, e.ip)
 	hn := e.hostname
 	if hn == "" {
 		hn = "—"
 	}
-	setSubItem(hwndListServices, row, 1, hn)
-	setSubItem(hwndListServices, row, 2, fmt.Sprintf("%d", e.ps.Port))
-	prod := e.ps.Product
-	if prod == "" {
-		prod = "—"
-	}
-	setSubItem(hwndListServices, row, 3, prod)
+	setSubItem(hwndListServices, row, 2, hn)
 	ver := e.ps.Version
 	if ver == "" {
 		ver = "—"
 	}
-	setSubItem(hwndListServices, row, 4, ver)
-	setSubItem(hwndListServices, row, 5, fmt.Sprintf("%d%%", e.ps.Confidence))
-	banner := e.ps.Banner
-	if summary := svcDetailSummary(e.ps.Details); summary != "" {
-		if banner != "" {
-			banner += "  ·  " + summary
-		} else {
-			banner = summary
-		}
-	}
-	if banner == "" {
-		banner = "—"
-	}
-	setSubItem(hwndListServices, row, 6, banner)
-	tlsCert := e.ps.TLSCert
-	if tlsCert == "" {
-		tlsCert = "—"
-	}
-	setSubItem(hwndListServices, row, 7, tlsCert)
+	setSubItem(hwndListServices, row, 3, ver)
+	setSubItem(hwndListServices, row, 4, fmt.Sprintf("%d", e.ps.Port))
 }
 
 // repopulateServicesTab rebuilds hwndListServices from svcTabData, applying
-// filter (case-insensitive substring across IP, hostname, product, banner).
+// filter (case-insensitive substring across service name, IP, hostname, version).
 func repopulateServicesTab(filter string) {
 	filter = strings.ToLower(filter)
+	svcTabRowEntry = map[int32]svcTabEntry{}
 	sendMessage(hwndListServices, LVM_DELETEALLITEMS, 0, 0)
 	for _, e := range svcTabData {
 		if filter != "" && !svcTabEntryMatchesFilter(e, filter) {
@@ -1581,19 +1572,14 @@ func repopulateServicesTab(filter string) {
 }
 
 func svcTabEntryMatchesFilter(e svcTabEntry, filter string) bool {
-	if strings.Contains(strings.ToLower(e.ip), filter) ||
+	name := e.ps.Product
+	if name == "" {
+		name = fmt.Sprintf("port/%d", e.ps.Port)
+	}
+	return strings.Contains(strings.ToLower(name), filter) ||
+		strings.Contains(strings.ToLower(e.ip), filter) ||
 		strings.Contains(strings.ToLower(e.hostname), filter) ||
-		strings.Contains(strings.ToLower(e.ps.Product), filter) ||
-		strings.Contains(strings.ToLower(e.ps.Version), filter) ||
-		strings.Contains(strings.ToLower(e.ps.Banner), filter) {
-		return true
-	}
-	for _, v := range e.ps.Details {
-		if strings.Contains(strings.ToLower(v), filter) {
-			return true
-		}
-	}
-	return false
+		strings.Contains(strings.ToLower(e.ps.Version), filter)
 }
 
 // svcDetailSummary formats PortService.Details into a compact one-line string

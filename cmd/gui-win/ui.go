@@ -393,7 +393,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// Persist every DHCP event so repopulateDHCP can replay them with a filter.
 		dhcpAllEvents = append(dhcpAllEvents, evt)
 		// Respect any active search filter: skip rendering if the event doesn't match.
-		if f := strings.ToLower(tabSearchFilter[4]); f == "" || dhcpEventMatchesFilter(evt, f) {
+		if f := strings.ToLower(tabSearchFilter[5]); f == "" || dhcpEventMatchesFilter(evt, f) {
 			listViewAddDHCPRow(hwndListDHCP, evt)
 		}
 		if bcastDHCP == 0 {
@@ -548,13 +548,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			return 0
 		}
-		// Double-click on Services list → host detail dialog (col 0 = IP).
+		// Double-click on Services list → service detail dialog.
 		if hdr.IdFrom == IDC_LIST_SERVICES && hdr.Code == NM_DBLCLK {
 			row := int32(sendMessage(hwndListServices, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
 			if row >= 0 {
-				ip := listViewGetCellText(hwndListServices, row, 0)
-				if ip != "" {
-					showHostDetailDialog(HWND(hwnd), ip)
+				if e, ok := svcTabRowEntry[row]; ok {
+					showServiceDetailDialog(HWND(hwnd), e)
 				}
 			}
 			return 0
@@ -1147,45 +1146,44 @@ func activateTab(hwnd HWND, tab int32) {
 		showWindow(hwndScanStatus, SW_HIDE)
 		switch tab {
 		case 1:
+			showWindow(hwndListServices, SW_SHOW)
+			if len(svcTabData) == 0 {
+				showWindow(hwndServicesPlaceholder, SW_SHOW)
+			}
+		case 2:
 			showWindow(hwndListMDNS, SW_SHOW)
 			if bcastMDNS == 0 || proxyEnabled {
 				showWindow(hwndMDNSPlaceholder, SW_SHOW)
 			}
-		case 2:
+		case 3:
 			showWindow(hwndListSSDP, SW_SHOW)
 			if bcastSSDP == 0 || proxyEnabled {
 				showWindow(hwndSSDPPlaceholder, SW_SHOW)
 			}
-		case 3:
+		case 4:
 			showWindow(hwndListWSD, SW_SHOW)
 			if bcastWSD == 0 || proxyEnabled {
 				showWindow(hwndWSDPlaceholder, SW_SHOW)
 			}
-		case 4:
+		case 5:
 			showWindow(hwndListDHCP, SW_SHOW)
 			if bcastDHCP == 0 || proxyEnabled {
 				showWindow(hwndDHCPPlaceholder, SW_SHOW)
 			}
-		case 5:
-			showWindow(hwndListNetwork, SW_SHOW)
 		case 6:
+			showWindow(hwndListNetwork, SW_SHOW)
+		case 7:
 			showWindow(hwndListHealth, SW_SHOW)
 			if !scanEverCompleted {
 				showWindow(hwndHealthPlaceholder, SW_SHOW)
-			}
-		case 7:
-			showWindow(hwndListServices, SW_SHOW)
-			if len(svcTabData) == 0 {
-				showWindow(hwndServicesPlaceholder, SW_SHOW)
 			}
 		}
 	}
 	// Update find bar for the new tab: reposition, reload its text,
 	// or hide it if the new tab doesn't support filtering.
-	// Tabs 5 (Network) and 6 (Scan Report) are text areas; no filtering.
-	// Tab 7 (Services) is a listview: filtering supported.
+	// Tabs 6 (Network) and 7 (Scan Report) are text areas; no filtering.
 	if isWindowVisible(hwndSearchEdit) {
-		if tab == 5 || tab == 6 {
+		if tab == 6 || tab == 7 {
 			showWindow(hwndSearchEdit, SW_HIDE)
 			showWindow(hwndSearchClose, SW_HIDE)
 		} else {
@@ -1226,13 +1224,13 @@ func createControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|TCS_FLATBUTTONS,
 		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
 	insertTab(hwndTabCtrl, 0, "Scanner")
-	insertTab(hwndTabCtrl, 1, "mDNS")
-	insertTab(hwndTabCtrl, 2, "SSDP")
-	insertTab(hwndTabCtrl, 3, "WSD")
-	insertTab(hwndTabCtrl, 4, "DHCP")
-	insertTab(hwndTabCtrl, 5, "Network")
-	insertTab(hwndTabCtrl, 6, "Scan Report")
-	insertTab(hwndTabCtrl, 7, "Services")
+	insertTab(hwndTabCtrl, 1, "Services")
+	insertTab(hwndTabCtrl, 2, "mDNS")
+	insertTab(hwndTabCtrl, 3, "SSDP")
+	insertTab(hwndTabCtrl, 4, "WSD")
+	insertTab(hwndTabCtrl, 5, "DHCP")
+	insertTab(hwndTabCtrl, 6, "Network")
+	insertTab(hwndTabCtrl, 7, "Scan Report")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
@@ -1373,7 +1371,7 @@ func createControls(hwnd HWND) {
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
 	subclassListViewManaged(hwndListServices, svcTabColTitles, svcTabColVis, svcTabDefWidths, nil, nil)
 	for i, title := range svcTabColTitles {
-		if i == 2 || i == 5 { // Port, Confidence: right-align
+		if i == 4 { // Port: right-align
 			listViewAddColumnFmt(hwndListServices, int32(i), title, scale(svcTabDefWidths[i]), LVCFMT_RIGHT)
 		} else {
 			listViewAddColumn(hwndListServices, int32(i), title, scale(svcTabDefWidths[i]))
@@ -1434,7 +1432,7 @@ func createFindBar(parent HWND) {
 // visible — just re-focuses.
 func showFindBar(parent HWND) {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	if tab > 4 {
+	if tab >= 6 {
 		return // Network and Scan Report tabs are text areas — no filter
 	}
 	positionFindBar(parent)
@@ -1459,7 +1457,7 @@ func hideFindBar() {
 		invalidateRect(pane, nil, false)
 	}
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	if tab >= 0 && tab < 7 && tabSearchFilter[tab] != "" {
+	if tab >= 0 && tab < 6 && tabSearchFilter[tab] != "" {
 		tabSearchFilter[tab] = ""
 		applyTabFilter()
 	}
@@ -1473,16 +1471,18 @@ func activeContentPane() HWND {
 	case 0:
 		return hwndList
 	case 1:
-		return hwndListMDNS
+		return hwndListServices
 	case 2:
-		return hwndListSSDP
+		return hwndListMDNS
 	case 3:
-		return hwndListWSD
+		return hwndListSSDP
 	case 4:
-		return hwndListDHCP
+		return hwndListWSD
 	case 5:
-		return hwndListNetwork
+		return hwndListDHCP
 	case 6:
+		return hwndListNetwork
+	case 7:
 		return hwndListHealth
 	}
 	return 0
@@ -1515,15 +1515,15 @@ func applyTabFilter() {
 	case 0:
 		applyActiveFilter()
 	case 1:
-		repopulateMDNS(hwndListMDNS, tabSearchFilter[1])
+		repopulateServicesTab(tabSearchFilter[1])
 	case 2:
-		repopulateSSDP(hwndListSSDP, tabSearchFilter[2])
+		repopulateMDNS(hwndListMDNS, tabSearchFilter[2])
 	case 3:
-		repopulateWSD(hwndListWSD, tabSearchFilter[3])
+		repopulateSSDP(hwndListSSDP, tabSearchFilter[3])
 	case 4:
-		repopulateDHCP(hwndListDHCP, tabSearchFilter[4])
-	case 7:
-		repopulateServicesTab(tabSearchFilter[7])
+		repopulateWSD(hwndListWSD, tabSearchFilter[4])
+	case 5:
+		repopulateDHCP(hwndListDHCP, tabSearchFilter[5])
 	}
 }
 
