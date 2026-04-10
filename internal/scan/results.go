@@ -31,8 +31,31 @@ type ServiceInfo struct {
 	Details []string // TXT records, SSDP headers, etc.
 }
 
+// Observation records a single evidence fact contributed by a specific source.
+type Observation struct {
+	Source string `json:"src"` // "banner", "mdns", "ssdp", "wsd"
+	Key    string `json:"key"` // "name", "version", "banner", "type", "instance", etc.
+	Value  string `json:"val"`
+}
+
+// Service is the unified, source-agnostic representation of a network service.
+// Evidence from port scanning, mDNS, SSDP, WSD, and other sources all enrich
+// the same Service object. A Service is never cleared by a scan — it persists
+// and accumulates evidence for the lifetime of the session.
+type Service struct {
+	ID         string        `json:"id"`              // stable UUID v4
+	IP         string        `json:"ip"`
+	Port       int           `json:"port,omitempty"` // 0 for discovery-only services
+	Name       string        `json:"name"`           // human-readable service/protocol name
+	Version    string        `json:"version,omitempty"`
+	Confidence uint8         `json:"conf,omitempty"`  // 0–100, accumulative across sources
+	FirstSeen  time.Time     `json:"first_seen"`
+	LastSeen   time.Time     `json:"last_seen"`
+	Obs        []Observation `json:"obs,omitempty"`
+}
+
 // PortService describes a network service identified on a specific TCP port.
-// Product and Version are best-effort extractions from banner text and protocol
+// Name and Version are best-effort extractions from banner text and protocol
 // headers; Confidence reflects how reliable that identification is (0–100).
 // Details holds protocol-specific key/value data gathered during deeper probing
 // (e.g. SMB dialect, DNS recursion flag, LDAP domain, MQTT anonymous access).
@@ -41,12 +64,12 @@ type ServiceInfo struct {
 type PortService struct {
 	ID         string            // stable UUID v4 assigned at probe time; uniquely identifies this service instance
 	Port       int               // TCP port number
-	Product    string            // e.g. "OpenSSH", "nginx", "Microsoft IIS"
+	Name       string            // e.g. "OpenSSH", "nginx", "Microsoft IIS"
 	Version    string            // e.g. "9.3p2", "1.27.4" (empty if unknown)
 	Banner     string            // raw banner or Server: header captured from this port
 	TLSCert    string            // TLS cert descriptor ("SubjectCN (IssuerOrg)"), empty if no TLS
 	ALPN       string            // ALPN protocol negotiated during TLS handshake ("h2", "http/1.1")
-	Confidence uint8             // 0–100: how confident we are in the Product identification
+	Confidence uint8             // 0–100: how confident we are in the service identification
 	Details    map[string]string // protocol-specific details; nil when no extra data was gathered
 	// Known keys:
 	//   "smb_dialect"   – highest SMB dialect negotiated (e.g. "SMB 3.1.1")

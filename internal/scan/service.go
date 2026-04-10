@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,6 +92,9 @@ type ServiceMsg struct {
 	PTRUpdate   *PTRResult   `json:"ptr_update,omitempty"`
 	// ResolveResult carries the result of a "resolve" command (forward DNS).
 	ResolveResult *ResolveResult `json:"resolve_result,omitempty"`
+	// SvcUpdate carries a unified Service with updated evidence. Emitted after
+	// every port-probe or broadcast-discovery upsert into the session registry.
+	SvcUpdate *Service `json:"svc_update,omitempty"`
 }
 
 // ARPResult carries a single ARP table entry streamed from service to GUI.
@@ -276,6 +281,134 @@ func RunServiceConn(conn net.Conn) error {
 	var bcastCancel context.CancelFunc
 	var arpCancel context.CancelFunc
 
+	// ---------------------------------------------------------------------------
+	// Per-connection service registry — unified Service objects that accumulate
+	// evidence from all port scans and broadcast discoveries within this session.
+	// The registry persists across scans; it is NOT reset on "scan" commands.
+	// ---------------------------------------------------------------------------
+
+	type svcRegKey struct {
+		ip   string
+		port int    // 0 for discovery-only services
+		sub  string // "source:type" for port-0 discovery services (empty for port services)
+	}
+	svcReg := map[svcRegKey]*Service{}
+	var svcRegMu sync.Mutex
+
+	// upsertObs inserts or replaces a single observation by source+key.
+	upsertObs := func(obs []Observation, src, key, val string) []Observation {
+		if val == "" {
+			return obs
+		}
+		for i := range obs {
+			if obs[i].Source == src && obs[i].Key == key {
+				obs[i].Value = val
+				return obs
+			}
+		}
+		return append(obs, Observation{Source: src, Key: key, Value: val})
+	}
+
+	// upsertPortSvc merges a PortService into the registry and emits SvcUpdate.
+	upsertPortSvc := func(ip string, ps PortService) {
+		key := svcRegKey{ip: ip, port: ps.Port}
+		now := time.Now()
+		svcRegMu.Lock()
+		s, exists := svcReg[key]
+		if !exists {
+			s = &Service{ID: ps.ID, IP: ip, Port: ps.Port, FirstSeen: now}
+			svcReg[key] = s
+		}
+		s.LastSeen = now
+		if ps.Name != "" {
+			s.Name = ps.Name
+		} else if s.Name == "" {
+			s.Name = "port/" + strconv.Itoa(ps.Port)
+		}
+		if ps.Version != "" {
+			s.Version = ps.Version
+		}
+		if ps.Confidence > s.Confidence {
+			s.Confidence = ps.Confidence
+		}
+		s.Obs = upsertObs(s.Obs, "banner", "name", ps.Name)
+		s.Obs = upsertObs(s.Obs, "banner", "version", ps.Version)
+		s.Obs = upsertObs(s.Obs, "banner", "banner", ps.Banner)
+		s.Obs = upsertObs(s.Obs, "banner", "tls_cert", ps.TLSCert)
+		s.Obs = upsertObs(s.Obs, "banner", "alpn", ps.ALPN)
+		if ps.Confidence > 0 {
+			s.Obs = upsertObs(s.Obs, "banner", "confidence", strconv.Itoa(int(ps.Confidence))+"%")
+		}
+		for k, v := range ps.Details {
+			s.Obs = upsertObs(s.Obs, "banner", k, v)
+		}
+		clone := *s
+		clone.Obs = make([]Observation, len(s.Obs))
+		copy(clone.Obs, s.Obs)
+		svcRegMu.Unlock()
+		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
+	}
+
+	// upsertDiscoverySvc merges a ServiceInfo into the registry and emits SvcUpdate.
+	upsertDiscoverySvc := func(ip string, svc ServiceInfo) {
+		key := svcRegKey{ip: ip}
+		if svc.Port > 0 {
+			key.port = svc.Port
+		} else {
+			key.sub = svc.Source + ":" + svc.Type
+		}
+		now := time.Now()
+		friendlyName := ServiceFriendlyName(svc.Type)
+		svcRegMu.Lock()
+		s, exists := svcReg[key]
+		if !exists {
+			s = &Service{
+				ID:         newPortServiceID(),
+				IP:         ip,
+				Port:       svc.Port,
+				Confidence: 80, // device is actively advertising
+				FirstSeen:  now,
+			}
+			svcReg[key] = s
+		}
+		s.LastSeen = now
+		// Prefer the friendly protocol/type name; never overwrite a name
+		// that was derived from a banner probe.
+		hasBannerName := false
+		for _, o := range s.Obs {
+			if o.Source == "banner" && o.Key == "name" && o.Value != "" {
+				hasBannerName = true
+				break
+			}
+		}
+		if !hasBannerName {
+			if friendlyName != "" && friendlyName != svc.Type {
+				s.Name = friendlyName
+			} else if s.Name == "" && svc.Name != "" {
+				s.Name = svc.Name
+			}
+		}
+		src := strings.ToLower(svc.Source)
+		if svc.Name != "" {
+			s.Obs = upsertObs(s.Obs, src, "instance", svc.Name)
+		}
+		if svc.Type != "" {
+			s.Obs = upsertObs(s.Obs, src, "type", svc.Type)
+		}
+		for _, d := range svc.Details {
+			if colon := strings.Index(d, ":"); colon > 0 {
+				s.Obs = upsertObs(s.Obs, src, d[:colon], d[colon+1:])
+			} else if d != "" {
+				s.Obs = upsertObs(s.Obs, src, "detail", d)
+			}
+		}
+		clone := *s
+		clone.Obs = make([]Observation, len(s.Obs))
+		copy(clone.Obs, s.Obs)
+		svcRegMu.Unlock()
+		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
+	}
+
 	for {
 		var cmd ServiceCmd
 		if err := dec.Decode(&cmd); err != nil {
@@ -310,6 +443,10 @@ func RunServiceConn(conn net.Conn) error {
 					rCopy := r
 					if werr := safeSend(ServiceMsg{Result: &rCopy, ScanID: scanID}); werr != nil {
 						return
+					}
+					// Upsert each discovered PortService into the session registry.
+					for _, ps := range rCopy.PortServices {
+						upsertPortSvc(rCopy.IP.String(), ps)
 					}
 					// Queue hosts without hostnames for background PTR resolution.
 					if rCopy.Hostname == "" && rCopy.IP != nil {
@@ -399,6 +536,8 @@ func RunServiceConn(conn net.Conn) error {
 				ListenBroadcast(ctx, bl, func(ip string, svc ServiceInfo) {
 					svcCopy := svc
 					_ = safeSend(ServiceMsg{BcastSvc: &svcCopy, BcastIP: ip})
+					// Merge into the session service registry.
+					upsertDiscoverySvc(ip, svcCopy)
 					// Queue IP for background PTR lookup so discovery-only hosts
 					// get a DNS hostname without requiring a full scan.
 					select {

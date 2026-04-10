@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/demicloud/net-scope/internal/scan"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,8 +48,8 @@ var (
 	hwndSvcObsHint HWND // "No observations" overlay
 )
 
-// currentSvcDetail holds the entry currently shown in the service detail dialog.
-var currentSvcDetail svcTabEntry
+// currentSvcDetail holds the service currently shown in the service detail dialog.
+var currentSvcDetail scan.Service
 
 // svcDetailWndProc is the window procedure for the service detail modal.
 var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -70,7 +72,7 @@ var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		case idSvcDetailClose:
 			closeModal(HWND(hwnd))
 		case idSvcDetailViewHost:
-			ip := currentSvcDetail.ip
+			ip := currentSvcDetail.IP
 			closeModal(HWND(hwnd))
 			if ip != "" {
 				showHostDetailDialog(hwndMain, ip)
@@ -85,13 +87,13 @@ var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-// showServiceDetailDialog opens the modal service detail dialog for e.
-func showServiceDetailDialog(parent HWND, e svcTabEntry) {
-	currentSvcDetail = e
+// showServiceDetailDialog opens the modal service detail dialog for s.
+func showServiceDetailDialog(parent HWND, s scan.Service) {
+	currentSvcDetail = s
 
-	name := svcEntryDisplayName(e)
-	portPart := svcEntryPortStr(e)
-	title := fmt.Sprintf("Service \u2014 %s \u00b7 %s \u00b7 %s", name, e.ip, portPart)
+	name := svcEntryDisplayName(s)
+	portPart := svcEntryPortStr(s)
+	title := fmt.Sprintf("Service \u2014 %s \u00b7 %s \u00b7 %s", name, s.IP, portPart)
 
 	registerDialogClass("NetScopeSvcDetail", svcDetailWndProc)
 	dlg := createAndCenterDialog("NetScopeSvcDetail", title, 640, 560, svcDetailWndProc, parent)
@@ -99,8 +101,8 @@ func showServiceDetailDialog(parent HWND, e svcTabEntry) {
 		return
 	}
 
-	setWindowText(hwndSvcSummary, buildSvcSummary(e))
-	svcDetailPopulateObservations(e)
+	setWindowText(hwndSvcSummary, buildSvcSummary(s))
+	svcDetailPopulateObservations(s)
 
 	setFontAllChildren(dlg, appFont)
 	sendMessage(hwndSvcSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
@@ -178,74 +180,73 @@ func svcDetailAddObsRow(attr, value string) {
 	setSubItem(hwndSvcObsList, row, 1, value)
 }
 
-// svcDetailPopulateObservations fills the Observations listview for e.
-func svcDetailPopulateObservations(e svcTabEntry) {
+// svcDetailPopulateObservations fills the Observations listview for s.
+func svcDetailPopulateObservations(s scan.Service) {
 	sendMessage(hwndSvcObsList, LVM_DELETEALLITEMS, 0, 0)
 	showWindow(hwndSvcObsHint, SW_SHOW)
 
-	switch e.kind {
-	case svcKindPort:
-		ps := e.ps
-		if ps.Version != "" {
-			svcDetailAddObsRow("Version", ps.Version)
+	for _, obs := range s.Obs {
+		val := obs.Value
+		if obs.Key == "confidence" {
+			val = val + "%"
 		}
-		if ps.Banner != "" {
-			svcDetailAddObsRow("Banner", ps.Banner)
-		}
-		if ps.TLSCert != "" {
-			svcDetailAddObsRow("TLS Certificate", ps.TLSCert)
-		}
-		if ps.ALPN != "" {
-			svcDetailAddObsRow("ALPN Protocol", ps.ALPN)
-		}
-		if ps.Confidence > 0 {
-			svcDetailAddObsRow("Confidence", fmt.Sprintf("%d%%", ps.Confidence))
-		}
-		for _, kv := range svcDetailRows(ps.Details) {
-			svcDetailAddObsRow(kv[0], kv[1])
-		}
-		svcDetailAddObsRow("Service ID", e.id)
-
-	default:
-		svc := e.svc
-		if svc.Type != "" {
-			svcDetailAddObsRow("Type", svc.Type)
-		}
-		// Parse TXT records / SSDP headers into key=value pairs where possible.
-		for _, d := range svc.Details {
-			eq := strings.IndexByte(d, '=')
-			if eq > 0 {
-				svcDetailAddObsRow(d[:eq], d[eq+1:])
-			} else if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
-				svcDetailAddObsRow("URL", d)
-			} else if d != "" {
-				svcDetailAddObsRow("Detail", d)
-			}
-		}
-		svcDetailAddObsRow("Source", strings.ToUpper(svc.Source))
-		svcDetailAddObsRow("Service ID", e.id)
+		svcDetailAddObsRow(obsKeyLabel(obs.Key), val)
+	}
+	if s.ID != "" {
+		svcDetailAddObsRow("Service ID", s.ID)
 	}
 }
 
+// obsKeyLabel maps an observation key to a human-readable column label.
+func obsKeyLabel(key string) string {
+	labels := map[string]string{
+		"name":         "Name",
+		"version":      "Version",
+		"banner":       "Banner",
+		"tls_cert":     "TLS Certificate",
+		"alpn":         "ALPN Protocol",
+		"confidence":   "Confidence",
+		"type":         "Type",
+		"instance":     "Instance",
+		"smb_dialect":  "SMB Dialect",
+		"smb1":         "SMBv1",
+		"dns_recursion": "DNS Recursion",
+		"dns_server":   "DNS Server",
+		"ldap_domain":  "LDAP Domain",
+		"ldap_version": "LDAP Version",
+		"mqtt_anon":    "MQTT Anon",
+	}
+	if l, ok := labels[key]; ok {
+		return l
+	}
+	return key
+}
+
 // buildSvcSummary returns the identity block text for the summary EDIT.
-func buildSvcSummary(e svcTabEntry) string {
+func buildSvcSummary(s scan.Service) string {
 	var b strings.Builder
 
-	name := svcEntryDisplayName(e)
-	fmt.Fprintf(&b, "Name:     %s\r\n", name)
-	fmt.Fprintf(&b, "IP:       %s\r\n", e.ip)
-	hostname := e.hostname
+	fmt.Fprintf(&b, "Name:     %s\r\n", svcEntryDisplayName(s))
+	fmt.Fprintf(&b, "IP:       %s\r\n", s.IP)
+	hostname := svcDisplayHostname(s)
 	if hostname == "" {
 		hostname = "\u2014"
 	}
 	fmt.Fprintf(&b, "Hostname: %s\r\n", hostname)
-	switch e.kind {
-	case svcKindPort:
-		fmt.Fprintf(&b, "Port:     %s      Source:  Port scan (%d%% confidence)\r\n",
-			strconv.Itoa(e.ps.Port), e.ps.Confidence)
-	default:
-		fmt.Fprintf(&b, "Source:   %s      Type:    %s\r\n",
-			strings.ToUpper(e.kind), e.svc.Type)
+	if s.Port > 0 {
+		conf := ""
+		if s.Confidence > 0 {
+			conf = fmt.Sprintf("  (%d%% confidence)", s.Confidence)
+		}
+		fmt.Fprintf(&b, "Port:     %s      Source: Port scan%s\r\n",
+			strconv.Itoa(s.Port), conf)
+	} else {
+		src := ""
+		for _, obs := range s.Obs {
+			src = strings.ToUpper(obs.Source)
+			break
+		}
+		fmt.Fprintf(&b, "Source:   %s\r\n", src)
 	}
 	return b.String()
 }
@@ -258,7 +259,7 @@ const idAllSvcsDlgClose = 750
 
 var (
 	hwndAllSvcsDlgList HWND
-	allSvcsDlgEntries  = map[int32]svcTabEntry{} // row → entry
+	allSvcsDlgEntries  = map[int32]scan.Service{} // row → service
 )
 
 func allSvcsDlgHeaders() []string {
@@ -345,60 +346,37 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 })
 
 func allSvcsDlgPopulate(sv HWND) {
-	allSvcsDlgEntries = map[int32]svcTabEntry{}
+	allSvcsDlgEntries = map[int32]scan.Service{}
 	sendMessage(sv, LVM_DELETEALLITEMS, 0, 0)
-
-	shown := map[string]bool{}
-
-	// Everything already in svcTabData (above-threshold port + all discovery).
-	for _, e := range svcTabData {
-		shown[e.id] = true
-		row := allSvcsDlgInsertRow(sv, e)
+	for _, s := range svcTabData {
+		row := allSvcsDlgInsertRow(sv, s)
 		if row >= 0 {
-			allSvcsDlgEntries[row] = e
-		}
-	}
-
-	// Below-threshold port services from the registry.
-	for _, ip := range allHostIPs() {
-		en, ok := hostRegistry[ip]
-		if !ok || !en.HasResult {
-			continue
-		}
-		hostname := en.Result.Hostname
-		if hostname == "" {
-			hostname = en.Result.NetBIOS
-		}
-		for _, ps := range en.Result.PortServices {
-			if shown[ps.ID] {
-				continue
-			}
-			shown[ps.ID] = true
-			e := svcTabEntry{id: ps.ID, kind: svcKindPort, ip: ip, hostname: hostname, ps: ps}
-			row := allSvcsDlgInsertRow(sv, e)
-			if row >= 0 {
-				allSvcsDlgEntries[row] = e
-			}
+			allSvcsDlgEntries[row] = s
 		}
 	}
 }
 
-func allSvcsDlgInsertRow(sv HWND, e svcTabEntry) int32 {
-	name := svcEntryDisplayName(e)
+func allSvcsDlgInsertRow(sv HWND, s scan.Service) int32 {
+	name := svcEntryDisplayName(s)
 	p := utf16(name)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
 	row := int32(sendMessage(sv, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
 	if row < 0 {
 		return -1
 	}
-	setSubItem(sv, row, 1, e.ip)
-	hn := e.hostname
+	setSubItem(sv, row, 1, s.IP)
+	hn := svcDisplayHostname(s)
 	if hn == "" {
 		hn = "\u2014"
 	}
 	setSubItem(sv, row, 2, hn)
-	setSubItem(sv, row, 3, strings.ToUpper(e.kind))
-	setSubItem(sv, row, 4, svcEntryVersion(e))
+	src := ""
+	for _, obs := range s.Obs {
+		src = strings.ToUpper(obs.Source)
+		break
+	}
+	setSubItem(sv, row, 3, src)
+	setSubItem(sv, row, 4, svcEntryVersion(s))
 	return row
 }
 
@@ -407,24 +385,18 @@ func openAllSvcsSelectedRow(parent HWND) {
 	if row < 0 {
 		return
 	}
-	e, ok := allSvcsDlgEntries[row]
+	s, ok := allSvcsDlgEntries[row]
 	if !ok {
 		return
 	}
 	closeModal(parent)
-	showServiceDetailDialog(hwndMain, e)
+	showServiceDetailDialog(hwndMain, s)
 }
 
 // showAllServicesDlg opens the unified View All Services dialog.
 // Called from the Tools > View All Services menu item.
 func showAllServicesDlg(parent HWND) {
-	total := len(svcTabData)
-	for _, ip := range allHostIPs() {
-		if en, ok := hostRegistry[ip]; ok && en.HasResult {
-			total += len(en.Result.PortServices)
-		}
-	}
-	if total == 0 {
+	if len(svcTabData) == 0 {
 		messageBox(parent,
 			"No services have been discovered yet.\n\n"+
 				"Run a scan with Banner Grab enabled, or wait for mDNS / SSDP / WSD traffic.",

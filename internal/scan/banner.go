@@ -463,7 +463,7 @@ func grabPortServices(ctx context.Context, ip net.IP, openPorts []int, timeout t
 			ch <- item{idx, PortService{
 				ID:         newPortServiceID(),
 				Port:       p,
-				Product:    product,
+				Name:       product,
 				Version:    version,
 				Banner:     displayBanner,
 				TLSCert:    sig.tlsCert,

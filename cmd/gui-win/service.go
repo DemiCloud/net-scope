@@ -199,6 +199,12 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingBcast = append(pendingBcast, bcastEntry{m.BcastIP, *m.BcastSvc})
 				pendingBcastMu.Unlock()
 				postMessage(hwnd, WM_BCAST_SVC, uintptr(idx), 0)
+			} else if m.SvcUpdate != nil {
+				pendingSvcUpdatesMu.Lock()
+				idx := len(pendingSvcUpdates)
+				pendingSvcUpdates = append(pendingSvcUpdates, *m.SvcUpdate)
+				pendingSvcUpdatesMu.Unlock()
+				postMessage(hwnd, WM_SVC_UPDATE, uintptr(idx), 0)
 			} else if m.PTRUpdate != nil {
 				if m.PTRUpdate.Hostname != "" {
 					pendingEnrichMu.Lock()
