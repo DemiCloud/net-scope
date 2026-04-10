@@ -417,10 +417,23 @@ func mdnsNotes(txt map[string]string) string {
 		// decoded into Capabilities column
 		"color", "scan", "duplex", "fax", "print_wfds", "mopria-certified",
 		// version / protocol boilerplate
-		"ve", "srcvers", "txtvers",
-		// AirPlay protocol fields — opaque hex or internal protocol state
-		"features", "flags", "rsf", "gcgl", "acl", "fex", "at",
-		"protovers", "gid", "deviceid",
+		"ve", "srcvers", "txtvers", "protovers",
+		// AirPlay/_airplay._tcp protocol internals — opaque hex, bitmasks, or internal state
+		"features", "flags", "rsf", "gcgl", "acl", "fex", "at", "gid", "deviceid",
+		// RAOP/_raop._tcp codec/protocol boilerplate (not useful to display)
+		"cn",  // codec numbers (e.g. 0,1,2,3)
+		"et",  // encryption types
+		"ft",  // feature flags (hex bitmask pair)
+		"tp",  // transport (always UDP)
+		"vn",  // version integer (65537 = 1.1)
+		"vv",  // AirPlay internal version flag
+		"igl", // in-group-lead flag
+		// HAP/_hap._tcp pairing internals
+		"c#",  // configuration number (internal counter)
+		"s#",  // state number (internal counter)
+		"ff",  // feature flags bitmask
+		"pv",  // pairing protocol version (boilerplate)
+		"sh",  // setup hash (opaque base64 blob)
 		// opaque identifiers / binary blobs
 		"pdl", "urf", "uuid", "pk", "psi", "ic", "ca", "bs",
 		"id", "cd", "rm", "nf", "pi", "st",
@@ -900,7 +913,7 @@ func txtOr(m map[string]string, key, fallback string) string {
 }
 
 // extraTXT returns key: value pairs for all keys not in the skip list,
-// suppressing opaque hex values.
+// suppressing opaque hex/binary values.
 func extraTXT(m map[string]string, skip ...string) string {
 	skipSet := make(map[string]bool, len(skip))
 	for _, s := range skip {
@@ -908,7 +921,7 @@ func extraTXT(m map[string]string, skip ...string) string {
 	}
 	var parts []string
 	for k, v := range m {
-		if skipSet[k] || v == "" || isOpaqueHex(v) {
+		if skipSet[k] || v == "" || isOpaqueBlob(v) {
 			continue
 		}
 		parts = append(parts, k+": "+v)
@@ -916,21 +929,40 @@ func extraTXT(m map[string]string, skip ...string) string {
 	if len(parts) == 0 {
 		return "—"
 	}
-	return strings.Join(parts, "  ·  ")
+	sort.Strings(parts)
+	return strings.Join(parts, " · ")
 }
 
-// isOpaqueHex returns true if v is a pure hex string longer than 8 characters
-// (likely a hash, token, or device UUID with no display value).
-func isOpaqueHex(v string) bool {
+// isOpaqueBlob returns true if v appears to be an opaque binary value with no
+// human-readable meaning — either a long pure-hex string or a base64 blob.
+func isOpaqueBlob(v string) bool {
 	if len(v) <= 8 {
 		return false
 	}
-	for _, c := range v {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
+	allHex := true
+	allB64 := true
+	padding := 0
+	for i, c := range v {
+		isHexChar := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHexChar {
+			allHex = false
+		}
+		isB64Char := isHexChar || (c >= 'g' && c <= 'z') || (c >= 'G' && c <= 'Z') || c == '+' || c == '/'
+		if c == '=' {
+			// Padding is only valid at the end of a base64 string.
+			if i < len(v)-2 {
+				allB64 = false
+			}
+			padding++
+		} else if !isB64Char {
+			allB64 = false
 		}
 	}
-	return true
+	if allHex {
+		return true
+	}
+	// Accept as base64 only when it has padding or is long enough to be a hash/token.
+	return allB64 && (padding > 0 || len(v) >= 20)
 }
 
 // (setSubItem, listViewGetCellText, listViewGetRowTSV, listViewSelectAll,
