@@ -113,13 +113,11 @@ func NewScanner(cfg Config) *Scanner {
 // Scan flow:
 //  1. Broadcast discovery (mDNS + SSDP) starts concurrently
 //  2. Batch ARP determines initial live hosts and their MACs
-//  3. Phase 1 – liveness sweep: ICMP + TCP probe every host in parallel;
-//     alive hosts emit a partial Result (Partial: true) immediately for
-//     fast front-end feedback; dead hosts are emitted right away too
-//  4. Phase 2 – deep inspection: only confirmed-alive hosts are probed for
-//     DNS, open ports, SNMP, NetBIOS, banners, and TCP stack fingerprint
-//  5. Broadcast data is merged into full results
-//  6. Hosts seen only via broadcast are emitted at the end
+//  3. Per-host goroutine (all hosts concurrently):
+//     a. Liveness check (ARP hit, ICMP, TCP fallback) — emits Partial:true immediately
+//     b. Deep inspection inline (no phase barrier) — emits final result with
+//        whatever broadcast services are already known
+//  4. Hosts seen only via broadcast are emitted after the listener finishes
 func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error) {
 	if s.Config.SOCKSProxy != "" {
 		if _, err := MakeDialFunc(s.Config.SOCKSProxy); err != nil {
@@ -226,114 +224,74 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		}
 	}
 
-	// --- 4. Phase 1: liveness sweep ---
-	// All hosts are probed concurrently. Alive hosts emit a partial Result
-	// immediately so the front-end can begin displaying them without waiting
-	// for the slower deep-inspection phase. Dead hosts are also streamed now.
+	// --- 4. Per-host probing (liveness + deep inspection, pipelined) ---
+	// One goroutine per host handles both phases inline — no barrier between
+	// liveness and deep inspection. When a host responds to liveness, its
+	// partial Result is emitted immediately; deepProbe then runs without
+	// waiting for all other hosts to finish their liveness checks.
+	//
+	// Broadcast services are merged from whatever has been discovered by the
+	// time deepProbe completes. Broadcast runs concurrently, so earlier-
+	// finishing hosts get fewer services merged (devices responding fast on
+	// mDNS still appear later in the stream as broadcast-only hosts if missed).
 	sem := make(chan struct{}, s.Config.Concurrency)
-	var phase1WG sync.WaitGroup
-	var aliveMu sync.Mutex
-	alivePartials := make([]Result, 0, 16)
+	var scanWG sync.WaitGroup
+	swept := make(map[string]bool, len(hosts))
 
 	for _, host := range hosts {
+		swept[host.String()] = true
 		if ctx.Err() != nil {
 			break
 		}
 		sem <- struct{}{}
-		phase1WG.Add(1)
+		scanWG.Add(1)
 		go func(ip net.IP) {
-			defer phase1WG.Done()
+			defer scanWG.Done()
 			defer func() { <-sem }()
 			defer func() { _ = recover() }()
 
 			r := s.liveCheck(ctx, ip, macMap, dial)
 
-			if r.Alive {
-				r.Partial = true
-				// Emit partial result immediately — front-end can show the host now.
-				select {
-				case out <- r:
-				case <-ctx.Done():
-				}
-				aliveMu.Lock()
-				alivePartials = append(alivePartials, r)
-				aliveMu.Unlock()
-			} else {
-				select {
-				case out <- r:
-				case <-ctx.Done():
-				}
-			}
-		}(host)
-	}
-	phase1WG.Wait()
-
-	// --- 5. Phase 2: deep inspection of alive hosts ---
-	// Only hosts that responded to liveness probes reach this stage.
-	// Results are buffered when the broadcast listener is still running so that
-	// mDNS/SSDP service data can be merged before OS guessing and emission.
-	var phase2WG sync.WaitGroup
-	var deepMu sync.Mutex
-	pendingResults := make([]Result, 0, len(alivePartials))
-
-	for _, partial := range alivePartials {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		phase2WG.Add(1)
-		go func(pr Result) {
-			defer phase2WG.Done()
-			defer func() { <-sem }()
-			defer func() { _ = recover() }()
-
-			r := s.deepProbe(ctx, pr, dial)
-
-			if broadcastDone == nil {
-				r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
+			if !r.Alive {
 				select {
 				case out <- r:
 				case <-ctx.Done():
 				}
 				return
 			}
-			deepMu.Lock()
-			pendingResults = append(pendingResults, r)
-			deepMu.Unlock()
-		}(partial)
-	}
-	phase2WG.Wait()
 
-	// --- 6. Wait for broadcast listener, then emit buffered deep results ---
-	// Only reached when BroadcastListen > 0 (broadcastDone is non-nil).
-	// When BroadcastListen == 0 all results were already streamed above.
-	if broadcastDone == nil {
-		// Nothing buffered — fall through to emit broadcast-only hosts below.
-	} else {
-		<-broadcastDone
-
-		broadcastMu.Lock()
-		for i := range pendingResults {
-			r := &pendingResults[i]
-			if svcs := broadcastMap[r.IP.String()]; len(svcs) > 0 {
-				r.Services = svcs
-			}
-			r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
-		}
-		broadcastMu.Unlock()
-
-		for _, r := range pendingResults {
+			// Emit partial immediately — front-end shows the host while we probe.
+			r.Partial = true
 			select {
 			case out <- r:
 			case <-ctx.Done():
 				return
 			}
-		}
-	}
 
-	swept := make(map[string]bool, len(hosts))
-	for _, h := range hosts {
-		swept[h.String()] = true
+			// Deep inspection runs inline — no second-phase barrier.
+			r = s.deepProbe(ctx, r, dial)
+
+			// Merge any broadcast services already discovered for this IP.
+			broadcastMu.Lock()
+			if svcs := broadcastMap[r.IP.String()]; len(svcs) > 0 {
+				r.Services = append(r.Services, svcs...)
+			}
+			broadcastMu.Unlock()
+
+			r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
+			select {
+			case out <- r:
+			case <-ctx.Done():
+			}
+		}(host)
+	}
+	scanWG.Wait()
+
+	// --- 5. Emit broadcast-only hosts ---
+	// Devices visible via mDNS/SSDP that didn't respond to our probes.
+	// Wait for the broadcast listener to finish before checking for them.
+	if broadcastDone != nil {
+		<-broadcastDone
 	}
 
 	broadcastMu.Lock()
@@ -352,6 +310,43 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			return
 		}
 	}
+}
+
+// firstOpenPort probes all ports concurrently and returns the first one that
+// accepts a TCP connection, or 0 if none respond within timeout. Cancels the
+// remaining dials as soon as one succeeds, so the worst-case wait is exactly
+// one timeout rather than N × timeout when probing sequentially.
+func firstOpenPort(ctx context.Context, ip net.IP, ports []int, timeout time.Duration) int {
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	found := make(chan int, 1)
+	var once sync.Once
+	var wg sync.WaitGroup
+
+	for _, p := range ports {
+		wg.Add(1)
+		go func(port int) {
+			defer wg.Done()
+			addr := fmt.Sprintf("%s:%d", ip, port)
+			conn, err := (&net.Dialer{}).DialContext(ctx2, "tcp", addr)
+			if err == nil {
+				conn.Close()
+				once.Do(func() {
+					found <- port
+					cancel() // abort remaining dials immediately
+				})
+			}
+		}(p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(found)
+	}()
+
+	port, _ := <-found
+	return port
 }
 
 // liveCheck determines whether ip is reachable using ARP, ICMP echo, and a
@@ -441,7 +436,7 @@ func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.Hostname = reverseDNS(r.IP, s.Config.Timeout)
+		r.Hostname = reverseDNS(ctx, r.IP, s.Config.Timeout)
 		if r.Hostname == "" {
 			atomic.AddInt64(&s.Stats.DNSFailures, 1)
 		}
@@ -474,20 +469,16 @@ func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result
 	wg.Wait()
 
 	// Banner grab and SYN probe run after port scan.
-	// SYN probe does not require a port from the scan list: we try a small set
-	// of commonly-open ports so we still get TCP stack data for hosts that
-	// expose no ports from the configured scan range.
+	// Elect a SYN probe port: if we have confirmed open ports use the first;
+	// otherwise probe candidates in parallel and take whichever responds first.
+	// Parallel probing avoids the sequential worst-case of 5 × timeout when
+	// all candidates are filtered (no RST).
 	if dial == nil {
 		synPort := 0
 		if len(r.OpenPorts) > 0 {
 			synPort = r.OpenPorts[0]
 		} else {
-			for _, p := range []int{443, 80, 22, 8080, 8443} {
-				if probeTCPOpen(ctx, r.IP, p, s.Config.Timeout) {
-					synPort = p
-					break
-				}
-			}
+			synPort = firstOpenPort(ctx, r.IP, []int{443, 80, 22, 8080, 8443}, s.Config.Timeout)
 		}
 		if synPort > 0 {
 			var postWg sync.WaitGroup
