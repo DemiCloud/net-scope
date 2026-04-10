@@ -95,7 +95,7 @@ func DefaultConfig() Config {
 		Ports:           []int{22, 80, 443, 445, 3389, 8080, 8443},
 		PingFirst:       true,
 		SNMPCommunity:   "public",
-		BroadcastListen: 5 * time.Second,
+		BroadcastListen: 3 * time.Second,
 		BannerGrab:      true,
 		NetBIOS:         true,
 	}
@@ -161,15 +161,57 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		iface, _ = findInterface(hosts[0])
 	}
 
-	// --- 2. Broadcast discovery (runs concurrently with ARP + host sweep) ---
+	// --- 2. Broadcast discovery (streaming, concurrent with ARP + host sweep) ---
 	// Skipped in proxy mode: mDNS/SSDP are link-local multicast, not routable
 	// through a SOCKS tunnel.
+	//
+	// The broadcast callback fires as each device is heard:
+	//   • If the IP is in our sweep, services are added to broadcastMap
+	//     (deepProbe will merge them on completion).
+	//   • If the IP is not in our sweep, a live Result is emitted directly
+	//     to out — no waiting until the host sweep finishes.
 	broadcastMap := make(map[string][]ServiceInfo)
 	var broadcastMu sync.Mutex
 	var broadcastDone chan struct{}
 
 	if s.Config.BroadcastListen > 0 && dial == nil {
 		broadcastDone = make(chan struct{})
+
+		// sweptSet is read-only after this goroutine starts (populated below),
+		// so we build it now before launching the goroutine.
+		sweptSet := make(map[string]bool, len(hosts))
+		for _, h := range hosts {
+			sweptSet[h.String()] = true
+		}
+
+		broadcastCB := func(ip net.IP, svc ServiceInfo) {
+			ipStr := ip.String()
+			broadcastMu.Lock()
+			broadcastMap[ipStr] = append(broadcastMap[ipStr], svc)
+			isSwept := sweptSet[ipStr]
+			broadcastMu.Unlock()
+
+			if !isSwept {
+				// Not in our probe sweep — emit immediately as a live host.
+				// Multiple services from the same IP will each send an update;
+				// the front-end merges by IP (Partial:true updates flow the same way).
+				ip4 := ip.To4()
+				if ip4 == nil {
+					return
+				}
+				// Build the full services slice seen so far for this IP so the
+				// front-end row gets incrementally richer rather than duplicated.
+				broadcastMu.Lock()
+				svcs := make([]ServiceInfo, len(broadcastMap[ipStr]))
+				copy(svcs, broadcastMap[ipStr])
+				broadcastMu.Unlock()
+				select {
+				case out <- Result{IP: ip4, Alive: true, Partial: true, Services: svcs}:
+				case <-ctx.Done():
+				}
+			}
+		}
+
 		go func() {
 			defer close(broadcastDone)
 			defer func() { _ = recover() }()
@@ -181,20 +223,20 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			go func() {
 				defer wg.Done()
 				defer func() { _ = recover() }()
-				for ip, svcs := range discoverMDNS(bctx, s.Config.BroadcastListen) {
-					broadcastMu.Lock()
-					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
-					broadcastMu.Unlock()
+				for _, svcType := range mdnsServiceTypes {
+					st := svcType
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						defer func() { _ = recover() }()
+						browseMDNS(bctx, st, broadcastCB)
+					}()
 				}
 			}()
 			go func() {
 				defer wg.Done()
 				defer func() { _ = recover() }()
-				for ip, svcs := range discoverSSDP(bctx, s.Config.BroadcastListen) {
-					broadcastMu.Lock()
-					broadcastMap[ip] = append(broadcastMap[ip], svcs...)
-					broadcastMu.Unlock()
-				}
+				streamSSDP(bctx, s.Config.BroadcastListen, broadcastCB)
 			}()
 			wg.Wait()
 		}()
@@ -236,10 +278,8 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	// mDNS still appear later in the stream as broadcast-only hosts if missed).
 	sem := make(chan struct{}, s.Config.Concurrency)
 	var scanWG sync.WaitGroup
-	swept := make(map[string]bool, len(hosts))
 
 	for _, host := range hosts {
-		swept[host.String()] = true
 		if ctx.Err() != nil {
 			break
 		}
@@ -286,28 +326,25 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		}(host)
 	}
 	scanWG.Wait()
-
-	// --- 5. Emit broadcast-only hosts ---
-	// Devices visible via mDNS/SSDP that didn't respond to our probes.
-	// Wait for the broadcast listener to finish before checking for them.
+	// The result channel closes as soon as the host sweep completes.
+	// Broadcast-only hosts have already been streamed via broadcastCB as they
+	// arrived. broadcastDone is not waited on here — the goroutine may still
+	// be running, but the caller's range loop will drain any remaining sends
+	// before the channel is closed by the deferred close in Scan().
+	//
+	// Note: if a broadcast-only host arrives after scanWG.Wait() returns but
+	// before out is closed, the broadcastCB select will send it or detect
+	// ctx.Done — both are safe. The outer goroutine in Scan() does not return
+	// until runScan returns, so out is still open here.
+	//
+	// We do need to wait for broadcastDone before returning so that in-flight
+	// broadcastCB calls don't race against out being closed by the deferred
+	// close(results) in Scan(). Wait with context awareness.
 	if broadcastDone != nil {
-		<-broadcastDone
-	}
-
-	broadcastMu.Lock()
-	defer broadcastMu.Unlock()
-	for ipStr, svcs := range broadcastMap {
-		if swept[ipStr] {
-			continue
-		}
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
 		select {
-		case out <- Result{IP: ip.To4(), Alive: true, Services: svcs}:
+		case <-broadcastDone:
 		case <-ctx.Done():
-			return
+			// Scan cancelled: drain the goroutine on next GC cycle; safe.
 		}
 	}
 }
