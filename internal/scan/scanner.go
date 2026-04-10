@@ -112,10 +112,14 @@ func NewScanner(cfg Config) *Scanner {
 //
 // Scan flow:
 //  1. Broadcast discovery (mDNS + SSDP) starts concurrently
-//  2. Batch ARP determines live hosts and their MACs
-//  3. Per-host probing (ICMP fallback, ports, SNMP, DNS) runs in parallel
-//  4. Broadcast data is merged into each host result
-//  5. Hosts seen only via broadcast are emitted at the end
+//  2. Batch ARP determines initial live hosts and their MACs
+//  3. Phase 1 – liveness sweep: ICMP + TCP probe every host in parallel;
+//     alive hosts emit a partial Result (Partial: true) immediately for
+//     fast front-end feedback; dead hosts are emitted right away too
+//  4. Phase 2 – deep inspection: only confirmed-alive hosts are probed for
+//     DNS, open ports, SNMP, NetBIOS, banners, and TCP stack fingerprint
+//  5. Broadcast data is merged into full results
+//  6. Hosts seen only via broadcast are emitted at the end
 func (s *Scanner) Scan(ctx context.Context, target string) (<-chan Result, error) {
 	if s.Config.SOCKSProxy != "" {
 		if _, err := MakeDialFunc(s.Config.SOCKSProxy); err != nil {
@@ -222,28 +226,70 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 		}
 	}
 
-	// --- 4. Per-host probing ---
+	// --- 4. Phase 1: liveness sweep ---
+	// All hosts are probed concurrently. Alive hosts emit a partial Result
+	// immediately so the front-end can begin displaying them without waiting
+	// for the slower deep-inspection phase. Dead hosts are also streamed now.
 	sem := make(chan struct{}, s.Config.Concurrency)
-	var wg sync.WaitGroup
-	var resultsMu sync.Mutex
-	pendingResults := make([]Result, 0, len(hosts))
+	var phase1WG sync.WaitGroup
+	var aliveMu sync.Mutex
+	alivePartials := make([]Result, 0, 16)
 
 	for _, host := range hosts {
 		if ctx.Err() != nil {
 			break
 		}
 		sem <- struct{}{}
-		wg.Add(1)
+		phase1WG.Add(1)
 		go func(ip net.IP) {
-			defer wg.Done()
+			defer phase1WG.Done()
 			defer func() { <-sem }()
-			defer func() { _ = recover() }() // raw-socket panics must not kill the process
+			defer func() { _ = recover() }()
 
-			r := s.probeHost(ctx, ip, macMap, dial)
+			r := s.liveCheck(ctx, ip, macMap, dial)
+
+			if r.Alive {
+				r.Partial = true
+				// Emit partial result immediately — front-end can show the host now.
+				select {
+				case out <- r:
+				case <-ctx.Done():
+				}
+				aliveMu.Lock()
+				alivePartials = append(alivePartials, r)
+				aliveMu.Unlock()
+			} else {
+				select {
+				case out <- r:
+				case <-ctx.Done():
+				}
+			}
+		}(host)
+	}
+	phase1WG.Wait()
+
+	// --- 5. Phase 2: deep inspection of alive hosts ---
+	// Only hosts that responded to liveness probes reach this stage.
+	// Results are buffered when the broadcast listener is still running so that
+	// mDNS/SSDP service data can be merged before OS guessing and emission.
+	var phase2WG sync.WaitGroup
+	var deepMu sync.Mutex
+	pendingResults := make([]Result, 0, len(alivePartials))
+
+	for _, partial := range alivePartials {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		phase2WG.Add(1)
+		go func(pr Result) {
+			defer phase2WG.Done()
+			defer func() { <-sem }()
+			defer func() { _ = recover() }()
+
+			r := s.deepProbe(ctx, pr, dial)
 
 			if broadcastDone == nil {
-				// No broadcast listener: compute OS hint now and stream immediately
-				// so the caller receives live updates as each host completes.
 				r.OS, r.OSConfidence = guessOS(r.TTL, r.Banner, r.Services, r.SNMP, r.Vendor, r.SYNProbe)
 				select {
 				case out <- r:
@@ -251,16 +297,14 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 				}
 				return
 			}
-			// Broadcast listener active: buffer until it completes so OS
-			// guessing can incorporate mDNS/SSDP service data.
-			resultsMu.Lock()
+			deepMu.Lock()
 			pendingResults = append(pendingResults, r)
-			resultsMu.Unlock()
-		}(host)
+			deepMu.Unlock()
+		}(partial)
 	}
-	wg.Wait()
+	phase2WG.Wait()
 
-	// --- 5. Wait for broadcast listener, then emit buffered host results ---
+	// --- 6. Wait for broadcast listener, then emit buffered deep results ---
 	// Only reached when BroadcastListen > 0 (broadcastDone is non-nil).
 	// When BroadcastListen == 0 all results were already streamed above.
 	if broadcastDone == nil {
@@ -310,43 +354,48 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	}
 }
 
-// probeHost runs all per-host probes and returns a populated Result.
-func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]net.HardwareAddr, dial DialFunc) Result {
+// liveCheck determines whether ip is reachable using ARP, ICMP echo, and a
+// quick TCP connect fallback. It returns a partial Result: Alive, IP, MAC,
+// Vendor, Latency and TTL may be set, but DNS, open ports, SNMP and banners
+// are not populated. Pass the result to deepProbe for full inspection.
+//
+// Liveness order:
+//  1. ARP (pre-populated macMap — fastest, no I/O here)
+//  2. ICMP echo (skipped in proxy mode or when PingFirst is false)
+//  3. TCP connect on a small set of common ports (works through SOCKS proxy)
+func (s *Scanner) liveCheck(ctx context.Context, ip net.IP, macMap map[string]net.HardwareAddr, dial DialFunc) Result {
 	r := Result{IP: ip}
 
-	// ARP result → alive + MAC + vendor
+	// 1. ARP result → alive + MAC + vendor (no I/O; macMap was pre-populated).
 	if mac, ok := macMap[ip.String()]; ok {
 		r.Alive = true
 		r.MAC = mac
 		r.Vendor = lookupVendor(mac)
 	}
 
-	// ICMP fallback if ARP missed the host (skipped in proxy mode).
-	if dial == nil && !r.Alive && s.Config.PingFirst {
-		atomic.AddInt64(&s.Stats.PacketsSent, 1)
-		latency, ttl, alive := ping(ctx, ip, s.Config.Timeout)
-		if alive {
-			atomic.AddInt64(&s.Stats.RepliesReceived, 1)
-			atomic.AddInt64(&s.Stats.LatencySum, latency.Nanoseconds())
-			r.Alive = true
-			r.Latency = latency
-			r.TTL = ttl
-			// The ICMP probe causes the kernel to ARP for the host, so the
-			// neighbor cache is now populated. Read it to fill in the MAC
-			// (handles the common case of Windows running without admin where
-			// batchARP is unavailable).
-			if r.MAC == nil {
-				if mac := lookupARPCache(ip); mac != nil {
-					r.MAC = mac
-					r.Vendor = lookupVendor(mac)
+	// 2. ICMP (skipped in proxy mode or when PingFirst is off).
+	if dial == nil && s.Config.PingFirst && !s.Config.TCPFirst {
+		if !r.Alive {
+			atomic.AddInt64(&s.Stats.PacketsSent, 1)
+			latency, ttl, alive := ping(ctx, ip, s.Config.Timeout)
+			if alive {
+				atomic.AddInt64(&s.Stats.RepliesReceived, 1)
+				atomic.AddInt64(&s.Stats.LatencySum, latency.Nanoseconds())
+				r.Alive = true
+				r.Latency = latency
+				r.TTL = ttl
+				// ICMP causes the kernel to ARP; read cache to fill the MAC.
+				if r.MAC == nil {
+					if mac := lookupARPCache(ip); mac != nil {
+						r.MAC = mac
+						r.Vendor = lookupVendor(mac)
+					}
 				}
+			} else {
+				atomic.AddInt64(&s.Stats.Timeouts, 1)
 			}
-		} else {
-			atomic.AddInt64(&s.Stats.Timeouts, 1)
-		}
-	} else if dial == nil && r.Alive && s.Config.PingFirst {
-		// We got MAC via ARP but still want latency + TTL — ping if no latency yet.
-		if r.Latency == 0 {
+		} else if r.Latency == 0 {
+			// Already live via ARP — ping just for latency + TTL.
 			atomic.AddInt64(&s.Stats.PacketsSent, 1)
 			latency, ttl, ok := ping(ctx, ip, s.Config.Timeout)
 			if ok {
@@ -360,15 +409,15 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}
 	}
 
-	// TCP liveness fallback — last resort when ARP/ICMP both failed, or the
-	// primary path in proxy mode (where ARP+ICMP are always skipped).
-	if !r.Alive && len(s.Config.Ports) > 0 {
-		open := scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout, dial)
+	// 3. TCP liveness fallback — a quick parallel probe on a small set of
+	// commonly-open ports. Stops as soon as any one responds. Works through
+	// SOCKS proxy. The full port enumeration runs later in deepProbe.
+	if !r.Alive {
+		livePorts := []int{80, 443, 22, 3389, 8080}
+		open := scanPorts(ctx, ip, livePorts, s.Config.Timeout, dial)
 		if len(open) > 0 {
 			r.Alive = true
-			r.OpenPorts = open // already have results — skip the second scan below
-			// Try to fill in MAC from kernel ARP cache (populated by TCP SYN).
-			if r.MAC == nil {
+			if r.MAC == nil && dial == nil {
 				if mac := lookupARPCache(ip); mac != nil {
 					r.MAC = mac
 					r.Vendor = lookupVendor(mac)
@@ -377,17 +426,22 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		}
 	}
 
-	if !r.Alive {
-		return r
-	}
+	return r
+}
 
-	// Reverse DNS, ports, SNMP, NetBIOS run in parallel.
+// deepProbe performs full inspection of a confirmed-alive host. It takes the
+// partial Result from liveCheck as a starting point and adds DNS, open ports,
+// SNMP, NetBIOS, service banners, and TCP stack fingerprint (SYN probe).
+func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result {
+	r.Partial = false
+
+	// DNS, port scan, SNMP and NetBIOS run in parallel.
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.Hostname = reverseDNS(ip, s.Config.Timeout)
+		r.Hostname = reverseDNS(r.IP, s.Config.Timeout)
 		if r.Hostname == "" {
 			atomic.AddInt64(&s.Stats.DNSFailures, 1)
 		}
@@ -396,8 +450,8 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if len(s.Config.Ports) > 0 && len(r.OpenPorts) == 0 {
-			r.OpenPorts = scanPorts(ctx, ip, s.Config.Ports, s.Config.Timeout, dial)
+		if len(s.Config.Ports) > 0 {
+			r.OpenPorts = scanPorts(ctx, r.IP, s.Config.Ports, s.Config.Timeout, dial)
 		}
 	}()
 
@@ -405,7 +459,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.SNMP = probeSNMP(ctx, ip, s.Config.SNMPCommunity, s.Config.Timeout)
+			r.SNMP = probeSNMP(ctx, r.IP, s.Config.SNMPCommunity, s.Config.Timeout)
 		}()
 	}
 
@@ -413,7 +467,7 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.NetBIOS = ProbeNetBIOS(ip, s.Config.Timeout)
+			r.NetBIOS = ProbeNetBIOS(r.IP, s.Config.Timeout)
 		}()
 	}
 
@@ -421,16 +475,15 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 
 	// Banner grab and SYN probe run after port scan.
 	// SYN probe does not require a port from the scan list: we try a small set
-	// of commonly-open ports (443, 80, 22) so we still get TCP stack data for
-	// hosts that expose no ports from the configured scan range (e.g. Apple TV,
-	// smart TVs, IoT devices that only speak non-standard ports).
+	// of commonly-open ports so we still get TCP stack data for hosts that
+	// expose no ports from the configured scan range.
 	if dial == nil {
 		synPort := 0
 		if len(r.OpenPorts) > 0 {
 			synPort = r.OpenPorts[0]
 		} else {
 			for _, p := range []int{443, 80, 22, 8080, 8443} {
-				if probeTCPOpen(ctx, ip, p, s.Config.Timeout) {
+				if probeTCPOpen(ctx, r.IP, p, s.Config.Timeout) {
 					synPort = p
 					break
 				}
@@ -442,20 +495,20 @@ func (s *Scanner) probeHost(ctx context.Context, ip net.IP, macMap map[string]ne
 				postWg.Add(1)
 				go func() {
 					defer postWg.Done()
-					r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+					r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
 				}()
 			}
 			postWg.Add(1)
 			go func() {
 				defer postWg.Done()
-				r.SYNProbe = probeSYN(ctx, ip, synPort, s.Config.Timeout)
+				r.SYNProbe = probeSYN(ctx, r.IP, synPort, s.Config.Timeout)
 			}()
 			postWg.Wait()
 		} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-			r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+			r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
 		}
 	} else if s.Config.BannerGrab && len(r.OpenPorts) > 0 {
-		r.Banner = grabBanners(ctx, ip, r.OpenPorts, s.Config.Timeout, dial)
+		r.Banner = grabBanners(ctx, r.IP, r.OpenPorts, s.Config.Timeout, dial)
 	}
 
 	return r
