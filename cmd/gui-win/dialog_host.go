@@ -853,40 +853,7 @@ func unescapeDNSLabel(s string) string {
 	return b.String()
 }
 
-// svcDetailRows converts a PortService.Details map into a list of [label,
-// value] pairs suitable for display as host-detail observation rows.
-// The order is deterministic and human-readable.
-func svcDetailRows(d map[string]string) [][2]string {
-	// Ordered display rules: key → human label.
-	type rule struct {
-		key   string
-		label string
-	}
-	rules := []rule{
-		{"smb_dialect", "SMB Dialect"},
-		{"smb1", "SMBv1"},
-		{"dns_recursion", "DNS Recursion"},
-		{"dns_server", "DNS Server"},
-		{"ldap_domain", "LDAP Domain"},
-		{"ldap_version", "LDAP Version"},
-		{"mqtt_anon", "MQTT Anon"},
-	}
-	var rows [][2]string
-	seen := make(map[string]bool, len(d))
-	for _, r := range rules {
-		if v, ok := d[r.key]; ok && v != "" {
-			rows = append(rows, [2]string{r.label, v})
-			seen[r.key] = true
-		}
-	}
-	// Append any keys not in the rule list (future-proofing).
-	for k, v := range d {
-		if !seen[k] && v != "" {
-			rows = append(rows, [2]string{k, v})
-		}
-	}
-	return rows
-}
+// svcDetailRows is defined in dialog_service_detail.go and shared here.
 
 
 
