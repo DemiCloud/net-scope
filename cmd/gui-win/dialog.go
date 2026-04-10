@@ -1066,7 +1066,7 @@ func createConnHandlersControls(hwnd HWND) {
 	lvH := hintY - pad - hintGap
 
 	hwndLV, _ := createWindowEx(0, WC_LISTVIEW, "",
-		WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
+		WS_CHILD|WS_VISIBLE|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
 		pad, pad, cW-pad*2, lvH, hwnd, 0, inst)
 	sendMessage(hwndLV, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
@@ -1097,7 +1097,7 @@ func createConnHandlersControls(hwnd HWND) {
 
 func showConnHandlersDialog(parent HWND) {
 	const (
-		dlgW int32 = 520
+		dlgW int32 = 420
 		dlgH int32 = 280
 	)
 	dlg := createAndCenterDialog("NetScopeConnHandlers", "Connection Handlers",
