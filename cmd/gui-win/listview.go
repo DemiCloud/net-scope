@@ -178,17 +178,11 @@ func fmtRelativeAge(t time.Time) string {
 func bcastDecayBg(ip string, row int32) uint32 {
 	t, ok := bcastIPLastSeen[ip]
 	if !ok {
-		if row%2 == 0 {
-			return 0x00FFFFFF
-		}
-		return 0x00F5F5F5
+		return lvRowBg(row)
 	}
 	switch age := time.Since(t); {
 	case age < 2*time.Minute:
-		if row%2 == 0 {
-			return 0x00FFFFFF
-		}
-		return 0x00F5F5F5
+		return lvRowBg(row)
 	case age < 5*time.Minute:
 		return 0x00C8FFFF // light yellow: RGB(255, 255, 200)
 	case age < 15*time.Minute:
@@ -960,17 +954,6 @@ func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, 
 		return false
 	}
 	return true
-}
-
-// appendCopyAsSubmenu appends a "Copy as…" MF_POPUP submenu carrying
-// IDM_COPY_AS_TSV / IDM_COPY_AS_CSV / IDM_COPY_AS_JSON to menu.
-// The returned HMENU is owned by menu and must not be destroyed separately.
-func appendCopyAsSubmenu(menu HMENU) {
-	hSub := createPopupMenu()
-	appendMenu(hSub, MF_STRING, IDM_COPY_AS_TSV,  "Tab Delimited")
-	appendMenu(hSub, MF_STRING, IDM_COPY_AS_CSV,  "CSV")
-	appendMenu(hSub, MF_STRING, IDM_COPY_AS_JSON, "JSON")
-	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
 }
 
 // ---------------------------------------------------------------------------

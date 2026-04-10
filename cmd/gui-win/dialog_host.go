@@ -403,8 +403,6 @@ func hostDetailForget(hwnd HWND) {
 
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
-	registerDialogClass("NetScopeHostDetail", hostDetailWndProc)
-
 	// Reset probe state.
 	pendingProbeResultsMu.Lock()
 	pendingProbeResults = pendingProbeResults[:0]
@@ -412,18 +410,11 @@ func showHostDetailDialog(parent HWND, ip string) {
 	atomic.StoreInt32(&activeProbes, 0)
 	currentDetailIP = ip
 
-	const dlgW, dlgH int32 = 740, 640
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeHostDetail", "Host \u2014 "+ip,
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeHostDetail", "Host \u2014 "+ip,
+		740, 640, hostDetailWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	// Auto-create a minimal registry entry so probe/scan results are persisted
 	// for manually entered addresses that aren't yet in the session registry.
@@ -1141,25 +1132,17 @@ func probesRunSingle(hwnd HWND) {
 // showProbesDialog opens the Probes sub-dialog for the current host.
 // Registers itself as the WM_PROBE_RESULT target while open; restores on close.
 func showProbesDialog(parent HWND) {
-	registerDialogClass("NetScopeProbes", probesWndProc)
 	hwndProbesHostDetail = parent
 
 	// Disable the Probes button while the dialog is open.
 	enableWindow(hwndHostProbesBtn, false)
 
-	const dlgW, dlgH int32 = 520, 90
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeProbes", "Probes \u2014 "+currentDetailIP,
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeProbes", "Probes \u2014 "+currentDetailIP,
+		520, 90, probesWndProc, parent)
+	if dlg == 0 {
 		enableWindow(hwndHostProbesBtn, true)
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	// Populate the probe kind combo.
 	for _, k := range probeKinds {
@@ -1234,20 +1217,11 @@ func createDiagnosticsControls(hwnd HWND) {
 
 // showDiagnosticsDialog opens the Diagnostics sub-dialog for the current host.
 func showDiagnosticsDialog(parent HWND) {
-	registerDialogClass("NetScopeDiagnostics", diagWndProc)
-
-	const dlgW, dlgH int32 = 400, 90
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
+		400, 90, diagWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
 }
@@ -1410,9 +1384,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if ip == "" {
 				// Try hit-test at cursor position.
 				pt := getCursorPos()
-				cpt := POINT{X: pt.X, Y: pt.Y}
-				procScreenToClient.Call(uintptr(hwndAllHostsList), uintptr(unsafe.Pointer(&cpt)))
-				ht := LVHITTESTINFO{Pt: cpt}
+				ht := LVHITTESTINFO{Pt: screenToClient(hwndAllHostsList, pt)}
 				row := int32(sendMessage(hwndAllHostsList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
 				if row >= 0 {
 					ip = listViewGetCellText(hwndAllHostsList, row, 0)
@@ -1447,20 +1419,11 @@ func showAllHostsDialog(parent HWND) {
 		return
 	}
 
-	registerDialogClass("NetScopeAllHosts", allHostsWndProc)
-
-	const dlgW, dlgH int32 = 480, 400
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeAllHosts", "All Hosts",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeAllHosts", "All Hosts",
+		480, 400, allHostsWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
 }
@@ -1834,9 +1797,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			selected := pickHostSelectedIPs()
 			if len(selected) == 0 {
 				pt := getCursorPos()
-				cpt := POINT{X: pt.X, Y: pt.Y}
-				procScreenToClient.Call(uintptr(hwndPickList), uintptr(unsafe.Pointer(&cpt)))
-				ht := LVHITTESTINFO{Pt: cpt}
+				ht := LVHITTESTINFO{Pt: screenToClient(hwndPickList, pt)}
 				row := int32(sendMessage(hwndPickList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
 				if row >= 0 {
 					selected = []string{listViewGetCellText(hwndPickList, row, 0)}
@@ -1965,20 +1926,11 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // showPickHostDialog opens the Query Host dialog.
 // Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
-	registerDialogClass("NetScopePickHost", pickHostWndProc)
-
-	const dlgW, dlgH int32 = 460, 360
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopePickHost", "Hosts",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopePickHost", "Hosts",
+		460, 360, pickHostWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
 }

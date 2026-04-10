@@ -75,34 +75,12 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 })
 
 func showSettingsDialog(parent HWND) {
-	registerDialogClass("NetScopeSettings", settingsWndProc)
+	_, cfgPath, _ := config.Load()
 
-	// Populate fields from the current in-memory config (appConfig), which
-	// reflects any changes already made this session.
-	cfg, cfgPath, _ := config.Load()
-	_ = cfg // we'll use appConfig below if it's been modified
-
-	// Build a descriptive title: show the config file being edited, or
-	// indicate these are runtime-only settings if no file exists.
-	var titleSuffix string
-	if cfgPath != "" {
-		titleSuffix = "Editing: " + cfgPath
-	} else {
-		titleSuffix = "First Run — settings apply this session; use OK to save"
-	}
-
-	const dlgW, dlgH int32 = 560, 470
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeSettings", "Settings — "+titleSuffix,
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeSettings", "Settings", 560, 470, settingsWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	// Populate fields from the current config.
 	setWindowText(hwndSettTimeout, appConfig.Scan.Timeout)
@@ -352,21 +330,14 @@ var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 })
 
 func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
-	registerDialogClass("NetScopeCfgLoc", cfgLocWndProc)
 	cfgLocResult = "neither"
 
 	const dlgW, dlgH int32 = 520, 360
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeCfgLoc", "Where should NetScope save its config?",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeCfgLoc", "Where should NetScope save its config?",
+		dlgW, dlgH, cfgLocWndProc, parent)
+	if dlg == 0 {
 		return ""
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	inst := getModuleHandle()
 	y := int32(14)
@@ -493,8 +464,6 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 })
 
 func showVersionDialog(parent HWND) {
-	registerDialogClass("NetScopeVersion", versionWndProc)
-
 	const (
 		pad        int32  = 14
 		cW         int32  = 430
@@ -507,17 +476,11 @@ func showVersionDialog(parent HWND) {
 	clientH := btnY + 26 + pad // 272
 	outer := adjustWindowRectEx(RECT{0, 0, cW, clientH}, dlgStyle, dlgExStyle, false)
 
-	dlg, err := createWindowEx(
-		dlgExStyle,
-		"NetScopeVersion", "Version — NetScope",
-		dlgStyle,
-		0, 0, outer.Right-outer.Left, outer.Bottom-outer.Top,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeVersion", "Version — NetScope",
+		outer.Right-outer.Left, outer.Bottom-outer.Top, versionWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, outer.Right-outer.Left, outer.Bottom-outer.Top)
 	runModal(dlg, parent)
 }
 
@@ -575,19 +538,10 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 })
 
 func showDatabasesDialog(parent HWND) {
-	registerDialogClass("NetScopeDatabases", databasesWndProc)
-	const dlgW, dlgH int32 = 560, 330
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeDatabases", "Databases",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeDatabases", "Databases", 560, 330, databasesWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 
 	// Register the dialog HWND so the service receive loop can deliver OUI
 	// download results (WM_OUI_SUCCESS / WM_OUI_FAIL) to the correct window.
@@ -725,29 +679,13 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 func showAboutDialog(parent HWND) {
 	aboutHIcon = createAppIcon(96)
 
-	registerDialogClass("NSAbout", aboutWndProc)
-
-	dlgW, dlgH := int32(390), int32(190)
-	inst := getModuleHandle()
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NSAbout", "About NetScope",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU,
-		CW_USEDEFAULT, CW_USEDEFAULT, dlgW, dlgH,
-		parent, 0, inst,
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NSAbout", "About NetScope",
+		390, 190, aboutWndProc, parent)
+	if dlg == 0 {
 		destroyIcon(aboutHIcon)
 		aboutHIcon = 0
 		return
 	}
-
-	// Center over parent
-	pr := getWindowRect(parent)
-	dr := getWindowRect(dlg)
-	x := pr.Left + (pr.Right-pr.Left-(dr.Right-dr.Left))/2
-	y := pr.Top + (pr.Bottom-pr.Top-(dr.Bottom-dr.Top))/2
-	setWindowPos(dlg, 0, x, y, 0, 0, SWP_NOZORDER|SWP_NOSIZE|SWP_NOACTIVATE)
 
 	runModal(dlg, parent)
 
@@ -1053,8 +991,6 @@ func applyProtoHandlers() {
 }
 
 func showProtocolHandlersDialog(parent HWND) {
-	registerDialogClass("NetScopeProtoHandlers", protoHandlersWndProc)
-
 	n := int32(len(protoHandlerRows))
 	const (
 		pad  int32 = 12
@@ -1068,20 +1004,12 @@ func showProtocolHandlersDialog(parent HWND) {
 	clientW := int32(640)
 	clientH := y0 + n*rowH + 4 + 26 + 26 + pad
 	outer := adjustWindowRectEx(RECT{0, 0, clientW, clientH}, dlgStyle, dlgExStyle, false)
-	dlgW := outer.Right - outer.Left
-	dlgH := outer.Bottom - outer.Top
 
-	dlg, err := createWindowEx(
-		dlgExStyle,
-		"NetScopeProtoHandlers", "Protocol Handlers",
-		dlgStyle,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeProtoHandlers", "Protocol Handlers",
+		outer.Right-outer.Left, outer.Bottom-outer.Top, protoHandlersWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
 }
@@ -1157,8 +1085,6 @@ func createConnHandlersControls(hwnd HWND) {
 }
 
 func showConnHandlersDialog(parent HWND) {
-	registerDialogClass("NetScopeConnHandlers", connHandlersWndProc)
-
 	n := int32(len(protoHandlerRows))
 	const (
 		pad  int32 = 12
@@ -1168,17 +1094,11 @@ func showConnHandlersDialog(parent HWND) {
 	dlgW := int32(500)
 	dlgH := y0 + n*rowH + 8 + 16 + 28 + pad*2
 
-	dlg, err := createWindowEx(
-		WS_EX_DLGMODALFRAME,
-		"NetScopeConnHandlers", "Connection Handlers",
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		0, 0, dlgW, dlgH,
-		parent, 0, getModuleHandle(),
-	)
-	if err != nil || dlg == 0 {
+	dlg := createAndCenterDialog("NetScopeConnHandlers", "Connection Handlers",
+		dlgW, dlgH, connHandlersWndProc, parent)
+	if dlg == 0 {
 		return
 	}
-	centerOnParent(dlg, parent, dlgW, dlgH)
 	setFontAllChildren(dlg, appFont)
 	runModal(dlg, parent)
 }

@@ -536,8 +536,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_RCLICK {
 			pt := getCursorPos()
 			// Convert screen coords to list-view client coords for hit-test.
-			cpt := POINT{X: pt.X, Y: pt.Y}
-			procScreenToClient.Call(uintptr(hwndList), uintptr(unsafe.Pointer(&cpt)))
+			cpt := screenToClient(hwndList, pt)
 			htInfo := LVHITTESTINFO{Pt: cpt}
 			row := int32(sendMessage(hwndList, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo))))
 			if row >= 0 {
@@ -555,9 +554,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				return 0
 			}
 			pt := getCursorPos()
-			cpt := POINT{X: pt.X, Y: pt.Y}
-			procScreenToClient.Call(uintptr(hwndSrc), uintptr(unsafe.Pointer(&cpt)))
-			htInfo := LVHITTESTINFO{Pt: cpt}
+			htInfo := LVHITTESTINFO{Pt: screenToClient(hwndSrc, pt)}
 			sendMessage(hwndSrc, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&htInfo)))
 			// Use selected rows; fall back to the hovered row if nothing is selected.
 			rows := listViewGetSelectedRows(hwndSrc)
@@ -639,11 +636,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				return CDRF_NOTIFYITEMDRAW
 			case CDDS_ITEMPREPAINT:
 				row := int32(cd.DwItemSpec)
-				if row%2 == 0 {
-					cd.ClrTextBk = 0x00FFFFFF // white
-				} else {
-					cd.ClrTextBk = 0x00F5F5F5 // very light gray
-				}
+				cd.ClrTextBk = lvRowBg(row)
 				// Request per-subitem notifications to colour the status column.
 				return CDRF_NOTIFYITEMDRAW | CDRF_NEWFONT
 			case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
@@ -661,11 +654,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 						}
 					}
 					// Alternating row background (match CDDS_ITEMPREPAINT logic).
-					bgColor := uint32(0x00FFFFFF)
-					if row%2 != 0 {
-						bgColor = 0x00F5F5F5
-					}
-					bg := createSolidBrush(bgColor)
+					bg := createSolidBrush(lvRowBg(row))
 					rc := cd.Rc
 					fillRect(cd.Hdc, &rc, bg)
 					deleteObject(uintptr(bg))
@@ -685,15 +674,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			case CDDS_PREPAINT:
 				return CDRF_NOTIFYITEMDRAW
 			case CDDS_ITEMPREPAINT:
-				var hwndSrc HWND
-				switch hdr.IdFrom {
-				case IDC_LIST_MDNS:
-					hwndSrc = hwndListMDNS
-				case IDC_LIST_SSDP:
-					hwndSrc = hwndListSSDP
-				case IDC_LIST_WSD:
-					hwndSrc = hwndListWSD
-				}
+				hwndSrc, _, _ := listViewInfoFor(hdr.IdFrom)
 				row := int32(cd.DwItemSpec)
 				ip := listViewGetCellText(hwndSrc, row, 0)
 				cd.ClrTextBk = bcastDecayBg(ip, row)
@@ -1513,12 +1494,6 @@ func hostsResultMatchesFilter(r scan.Result, filter string) bool {
 		strings.Contains(strings.ToLower(string(r.OS)), filter)
 }
 
-// createCtrl is a shorthand for plain child controls (STATIC, BUTTON).
-func createCtrl(class, title string, style uint32, x, y, w, h int32, parent HWND, id uintptr, inst HINSTANCE) HWND {
-	hwnd, _ := createWindowEx(0, class, title, style, x, y, w, h, parent, HMENU(id), inst)
-	return hwnd
-}
-
 // ---------------------------------------------------------------------------
 // Layout — resize all panes to fill the client area
 // ---------------------------------------------------------------------------
@@ -2174,6 +2149,17 @@ func copyToClipboard(hwnd HWND, text string) {
 	procEmptyClipboard.Call()
 	procSetClipboardData.Call(CF_UNICODETEXT, hMem)
 	procCloseClipboard.Call()
+}
+
+// appendCopyAsSubmenu appends a "Copy as…" MF_POPUP submenu carrying
+// IDM_COPY_AS_TSV / IDM_COPY_AS_CSV / IDM_COPY_AS_JSON to menu.
+// The returned HMENU is owned by menu and must not be destroyed separately.
+func appendCopyAsSubmenu(menu HMENU) {
+	hSub := createPopupMenu()
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_TSV,  "Tab Delimited")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_CSV,  "CSV")
+	appendMenu(hSub, MF_STRING, IDM_COPY_AS_JSON, "JSON")
+	appendMenu(menu, MF_POPUP, uintptr(hSub), "Copy as\u2026")
 }
 
 // showHostContextMenu builds and tracks a context menu for the given Result at

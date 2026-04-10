@@ -103,10 +103,39 @@ func registerDialogClass(name string, wndProc uintptr) {
 }
 
 // ---------------------------------------------------------------------------
-// WM_CTLCOLORSTATIC handler
+// Dialog creation
 // ---------------------------------------------------------------------------
 
-// ctlColorDialog handles WM_CTLCOLORSTATIC for standard dialog panels.
+// createAndCenterDialog registers className, creates a standard modal-style
+// popup window of dimensions (w×h), and centers it over parent.
+// Returns the HWND on success, 0 on failure. The caller is responsible for
+// any per-dialog control creation, applying fonts, and calling runModal.
+//
+// The window is created with the standard application dialog style:
+//   - exStyle: WS_EX_DLGMODALFRAME
+//   - style:   WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+//
+// Note: w and h are outer (window) dimensions. To derive them from a desired
+// client area, use adjustWindowRectEx first.
+func createAndCenterDialog(className, title string, w, h int32, wndProc uintptr, parent HWND) HWND {
+	registerDialogClass(className, wndProc)
+	dlg, err := createWindowEx(
+		WS_EX_DLGMODALFRAME,
+		className, title,
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		0, 0, w, h,
+		parent, 0, getModuleHandle(),
+	)
+	if err != nil || dlg == 0 {
+		return 0
+	}
+	centerWindowOver(dlg, parent)
+	return dlg
+}
+
+// ---------------------------------------------------------------------------
+// WM_CTLCOLORSTATIC handler
+// ---------------------------------------------------------------------------
 // Returns the COLOR_BTNFACE system brush with transparent text background so
 // STATIC labels blend into the dialog background.
 //
