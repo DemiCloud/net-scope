@@ -170,6 +170,11 @@ var (
 	pendingSvcUpdates   []scan.Service
 	pendingSvcUpdatesMu sync.Mutex
 
+	// pendingWorkUpdates carries host probe state transitions from the sensor
+	// service back to the UI thread via WM_WORK_UPDATE.
+	pendingWorkUpdates   []scan.WorkItem
+	pendingWorkUpdatesMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -776,6 +781,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showPickHostDialog(HWND(hwnd))
 		case IDM_SERVICES_VIEW_ALL:
 			showAllServicesDialog(HWND(hwnd))
+		case IDM_TOOLS_WORKER_QUEUE:
+			showWorkerQueueDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1073,6 +1080,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingSvcUpdatesMu.Unlock()
 		if s.ID != "" {
 			servicesTabUpsert(s)
+		}
+		return 0
+
+	case WM_WORK_UPDATE:
+		pendingWorkUpdatesMu.Lock()
+		var wi scan.WorkItem
+		if int(wParam) < len(pendingWorkUpdates) {
+			wi = pendingWorkUpdates[int(wParam)]
+		}
+		pendingWorkUpdatesMu.Unlock()
+		if wi.IP != "" {
+			workerQueueUpsert(wi)
 		}
 		return 0
 
