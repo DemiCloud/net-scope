@@ -24,9 +24,10 @@ type SYNProbeInfo struct {
 
 // ServiceInfo describes a service or device discovered via broadcast protocols.
 type ServiceInfo struct {
-	Source  string   // "mdns", "ssdp"
-	Name    string   // instance/device name
+	Source  string   // "mdns", "ssdp", "wsd"
+	Name    string   // instance/device name (human-readable; mDNS instance, SSDP server string, WSD scope)
 	Type    string   // service type (e.g. "_http._tcp", "urn:schemas-upnp-org:device:...")
+	Port    int      // contact port; 0 if not announced (mDNS SRV port, SSDP parsed from Location URL)
 	Details []string // TXT records, SSDP headers, etc.
 }
 

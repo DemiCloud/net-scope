@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,10 +134,16 @@ func browseMDNS(ctx context.Context, serviceType string, cb func(net.IP, Service
 					continue
 				}
 				seen[key] = true
+				// Clean the instance name: "prefix@Human Name" → "Human Name".
+				instanceName := entry.Instance
+				if at := strings.LastIndex(instanceName, "@"); at >= 0 {
+					instanceName = strings.TrimSpace(instanceName[at+1:])
+				}
 				cb(ip, ServiceInfo{
 					Source:  "mdns",
-					Name:    entry.Instance,
+					Name:    instanceName,
 					Type:    entry.Service,
+					Port:    entry.Port,
 					Details: entry.Text,
 				})
 			}
