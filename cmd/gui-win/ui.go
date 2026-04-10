@@ -588,7 +588,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			}
 			cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, HWND(hwnd))
 			destroyMenu(menu)
-			if !handleCopyAsCmd(HWND(hwnd), hwndSrc, cmd, rows, numCols, headers) {
+			if !handleCopyAsCmd(HWND(hwnd), hwndSrc, cmd, rows, numCols, headers, nil) {
 				switch cmd {
 				case IDM_BCAST_COPY_RAW:
 					switch hdr.IdFrom {
@@ -633,7 +633,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					hw, nc, hdrs := listViewInfoFor(hdr.IdFrom)
 					if hw != 0 {
 						rows := listViewGetSelectedRows(hw)
-						handleCopyAsCmd(HWND(hwnd), hw, IDM_COPY_AS_TSV, rows, nc, hdrs)
+						handleCopyAsCmd(HWND(hwnd), hw, IDM_COPY_AS_TSV, rows, nc, hdrs, nil)
 					}
 					return 0
 				case VK_KEY_F:
@@ -2328,7 +2328,7 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 		appendCopyAsSubmenu(menu)
 		cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
 		rows := listViewGetSelectedRows(hwndList)
-		handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:])
+		handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:], hostsColKeys)
 		return
 	}
 
@@ -2360,7 +2360,7 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
 	rows := listViewGetSelectedRows(hwndList)
-	if handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:]) {
+	if handleCopyAsCmd(parent, hwndList, cmd, rows, 10, hostsColTitles[:], hostsColKeys) {
 		return
 	}
 	switch cmd {

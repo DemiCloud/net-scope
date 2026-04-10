@@ -28,10 +28,10 @@ const (
 	colServices int32 = 9
 )
 
-// listViewInsertPendingRow appends a row showing ip with a "…" status placeholder.
+// listViewInsertPendingRow appends a row showing ip with a "pending" status placeholder.
 // Returns the row index, or -1 on failure.
 func listViewInsertPendingRow(hwnd HWND, ip string) int32 {
-	statusPtr := utf16("…")
+	statusPtr := utf16("pending")
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
 		IItem:   0x7fffffff, // append
@@ -48,9 +48,9 @@ func listViewInsertPendingRow(hwnd HWND, ip string) int32 {
 // listViewUpdateRow writes all result fields into an existing row.
 func listViewUpdateRow(hwnd HWND, row int32, r scan.Result) {
 	if r.Alive {
-		setSubItem(hwnd, row, colStatus, "●")
+		setSubItem(hwnd, row, colStatus, "alive")
 	} else {
-		setSubItem(hwnd, row, colStatus, "✕")
+		setSubItem(hwnd, row, colStatus, "dead")
 		return
 	}
 
@@ -1027,7 +1027,10 @@ func isOpaqueBlob(v string) bool {
 // handleCopyAsCmd executes an IDM_COPY_AS_* command for a ListView.
 // Returns true if cmd was a recognised copy-as command, false otherwise.
 // If rows is empty the copy is skipped silently.
-func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, headers []string) bool {
+// keyOverrides, when non-nil, supplies explicit JSON keys per column index;
+// pass hostsColKeys (or similar) for ListViews whose header text is not suitable
+// as a JSON key (e.g. the "●" status column).
+func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, headers []string, keyOverrides []string) bool {
 	if len(rows) == 0 {
 		return cmd == IDM_COPY_AS_TSV || cmd == IDM_COPY_AS_CSV || cmd == IDM_COPY_AS_JSON
 	}
@@ -1037,7 +1040,7 @@ func handleCopyAsCmd(parent, hwnd HWND, cmd int32, rows []int32, numCols int32, 
 	case IDM_COPY_AS_CSV:
 		copyToClipboard(parent, listViewFormatCSV(hwnd, rows, numCols, headers))
 	case IDM_COPY_AS_JSON:
-		copyToClipboard(parent, listViewFormatJSON(hwnd, rows, numCols, headers))
+		copyToClipboard(parent, listViewFormatJSON(hwnd, rows, numCols, headers, keyOverrides))
 	default:
 		return false
 	}

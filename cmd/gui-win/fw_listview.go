@@ -186,7 +186,9 @@ func listViewFormatCSV(hwnd HWND, rows []int32, numCols int32, headers []string)
 
 // listViewFormatJSON formats rows as a JSON array of objects.
 // Header strings are normalised to snake_case JSON keys.
-func listViewFormatJSON(hwnd HWND, rows []int32, numCols int32, headers []string) string {
+// keyOverrides, when non-nil, provides explicit key names indexed by column;
+// any empty string in keyOverrides falls back to the derived key.
+func listViewFormatJSON(hwnd HWND, rows []int32, numCols int32, headers []string, keyOverrides []string) string {
 	jsonQ := func(s string) string {
 		s = strings.ReplaceAll(s, `\`, `\\`)
 		s = strings.ReplaceAll(s, `"`, `\"`)
@@ -212,7 +214,11 @@ func listViewFormatJSON(hwnd HWND, rows []int32, numCols int32, headers []string
 	}
 	keys := make([]string, len(headers))
 	for i, h := range headers {
-		keys[i] = headerToKey(h)
+		if i < len(keyOverrides) && keyOverrides[i] != "" {
+			keys[i] = keyOverrides[i]
+		} else {
+			keys[i] = headerToKey(h)
+		}
 	}
 	var sb strings.Builder
 	sb.WriteString("[\n")
