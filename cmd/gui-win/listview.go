@@ -218,7 +218,13 @@ var (
 	// right-click "Copy raw data" option can reproduce the full record.
 	mdnsRaw = map[int32][]string{}
 
-	// mdnsBackup holds every mDNS entry ever received, in arrival order,
+	// mdnsSeen maps a dedup key (ip+type+instance) to the current row index.
+	// When the same service is received again (re-announcement or scan mirror),
+	// the existing row is updated in-place instead of inserting a duplicate.
+	// Reset on repopulate since row indices are reassigned.
+	mdnsSeen = map[string]int32{}
+
+	// mdnsBackup holds the latest entry per dedup key, in first-seen order,
 	// so that repopulateMDNS can rebuild the listview after a filter change.
 	mdnsBackup []mdnsBackupEntry
 
@@ -264,18 +270,44 @@ var (
 // mDNS row rendering
 // ---------------------------------------------------------------------------
 
-// listViewAddMDNSRow appends a single mDNS service entry.
+// mdnsRowKey returns the dedup key for a mDNS entry: ip + service type + instance name.
+func mdnsRowKey(ip string, svc scan.ServiceInfo) string {
+	return ip + "\x00" + svc.Type + "\x00" + svc.Name
+}
+
+// listViewAddMDNSRow adds or updates a single mDNS service entry.
+// If the same IP + service type + instance was already displayed, the existing
+// row is refreshed in-place to avoid duplicates from re-announcements or
+// scan-result mirroring. Otherwise a new row is appended.
 // Columns: IP | Name | Service | Device/Model | Capabilities | Notes
 func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
+	key := mdnsRowKey(ip, svc)
+
 	if !inRepopulate {
-		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
 		bcastIPLastSeen[ip] = time.Now()
+
+		if existingRow, dup := mdnsSeen[key]; dup {
+			// Re-announcement of an already-visible row: replace the backup entry
+			// and refresh the row in-place. Scan from the tail since the latest
+			// entry for this key is almost always near the end.
+			for i := len(mdnsBackup) - 1; i >= 0; i-- {
+				if mdnsRowKey(mdnsBackup[i].ip, mdnsBackup[i].svc) == key {
+					mdnsBackup[i] = mdnsBackupEntry{ip, svc}
+					break
+				}
+			}
+			mdnsPopulateRow(hwnd, existingRow, ip, svc)
+			return
+		}
+
+		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
 		// Respect the active search filter: skip the listview insert if this
 		// entry doesn't match.  It stays in mdnsBackup for later repopulation.
 		if f := strings.ToLower(tabSearchFilter[1]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
 			return
 		}
 	}
+
 	ipPtr := utf16(ip)
 	item := LVITEM{
 		Mask:    LVIF_TEXT,
@@ -286,6 +318,12 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 	if row < 0 {
 		return
 	}
+	mdnsSeen[key] = row
+	mdnsPopulateRow(hwnd, row, ip, svc)
+}
+
+// mdnsPopulateRow writes all non-IP columns for a mDNS row (new insert or in-place update).
+func mdnsPopulateRow(hwnd HWND, row int32, ip string, svc scan.ServiceInfo) {
 	mdnsRaw[row] = svc.Details // store for "copy raw data"
 
 	txt := parseTXTMap(svc.Details)
@@ -741,7 +779,8 @@ func mdnsEntryMatchesFilter(ip string, svc scan.ServiceInfo, filter string) bool
 func repopulateMDNS(hwnd HWND, filter string) {
 	filter = strings.ToLower(filter)
 	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
-	mdnsRaw = map[int32][]string{} // row indices change — reset
+	mdnsRaw = map[int32][]string{}  // row indices change — reset
+	mdnsSeen = map[string]int32{}   // row indices change — reset
 	inRepopulate = true
 	defer func() { inRepopulate = false }()
 	for _, e := range mdnsBackup {
