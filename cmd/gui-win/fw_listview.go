@@ -447,6 +447,10 @@ type lvManagedState struct {
 	// Column visibility (nil → Edit Columns not offered).
 	colVis    []bool
 	defWidths []int32
+
+	// Item right-click callback (nil → no action).
+	// row is the 0-based hit-test row index, or -1 if no item was under the cursor.
+	onItemRClick func(hw HWND, row int32, screenPt POINT)
 }
 
 // lvManagedStates maps a ListView HWND to its managed state.
@@ -457,14 +461,15 @@ var lvManagedStates = map[HWND]*lvManagedState{}
 // prevent the Go GC from collecting them while the subclass is active.
 var lvSubclassRefs []uintptr
 
-func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWidths []int32, onSort func(HWND, int32, bool)) {
+func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWidths []int32, onSort func(HWND, int32, bool), onItemRClick func(HWND, int32, POINT)) {
 	state := &lvManagedState{
-		sortCol:   -1,
-		sortAsc:   true,
-		colTitles: colTitles,
-		colVis:    colVis,
-		defWidths:  defWidths,
-		onSort:    onSort,
+		sortCol:      -1,
+		sortAsc:      true,
+		colTitles:    colTitles,
+		colVis:       colVis,
+		defWidths:    defWidths,
+		onSort:       onSort,
+		onItemRClick: onItemRClick,
 	}
 	lvManagedStates[hwnd] = state
 
@@ -592,6 +597,37 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 		case WM_CAPTURECHANGED:
 			// Capture stolen by another window — abort drag cleanly.
 			s.dragging = false
+
+		// ── Item right-click / keyboard context menu ──────────────────────
+		// WM_CONTEXTMENU fires on the LV itself (for both mouse right-click
+		// and the Application/Shift+F10 key) before the LV posts NM_RCLICK
+		// to its parent, so we can handle it entirely in the subclass.
+		// lParam encodes screen coordinates (-1,-1 means keyboard-triggered).
+		case WM_CONTEXTMENU:
+			if s.onItemRClick == nil {
+				break
+			}
+			screenPt := POINT{
+				X: int32(int16(lParam & 0xffff)),
+				Y: int32(int16((lParam >> 16) & 0xffff)),
+			}
+			var row int32 = -1
+			if screenPt.X != -1 || screenPt.Y != -1 {
+				ht := LVHITTESTINFO{Pt: screenToClient(hw, screenPt)}
+				row = int32(sendMessage(hw, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+			} else {
+				// Keyboard trigger: use the focused/selected item, if any.
+				row = int32(sendMessage(hw, LVM_GETNEXTITEM, ^uintptr(0), LVIS_FOCUSED))
+				if row >= 0 {
+					var ir RECT
+					ir.Left = LVIR_BOUNDS
+					sendMessage(hw, LVM_GETITEMRECT, uintptr(row), uintptr(unsafe.Pointer(&ir)))
+					clientPt := POINT{X: (ir.Left + ir.Right) / 2, Y: (ir.Top + ir.Bottom) / 2}
+					screenPt = clientToScreen(hw, clientPt)
+				}
+			}
+			s.onItemRClick(hw, row, screenPt)
+			return 0
 		}
 
 		return callWindowProc(s.origProc, hw, uint32(msg), wParam, lParam)
