@@ -60,26 +60,72 @@ func ServiceFriendlyName(svcType string) string {
 		}
 	}
 	// URN / namespace-qualified: take last colon-or-slash segment.
-	// Strip a trailing numeric version: "urn:foo:bar:1" → "bar"
+	// If that segment is purely numeric (a version suffix like ":1"), step back
+	// one more level: "urn:schemas-upnp-org:service:AVTransport:1" → "AVTransport".
 	if i := strings.LastIndexAny(t, ":/"); i >= 0 {
 		name := t[i+1:]
-		// Check if last colon-separated token is purely numeric (version suffix).
-		if colon := strings.LastIndex(name, ":"); colon >= 0 {
-			suffix := name[colon+1:]
-			allDigits := len(suffix) > 0
-			for _, c := range suffix {
-				if c < '0' || c > '9' {
-					allDigits = false
-					break
-				}
-			}
-			if allDigits {
-				name = name[:colon]
+		// If the last segment is purely numeric, it's a version suffix — use the
+		// second-to-last segment instead.
+		if svcNameAllDigits(name) {
+			t2 := t[:i]
+			if j := strings.LastIndexAny(t2, ":/"); j >= 0 {
+				name = t2[j+1:]
+			} else {
+				name = t2
 			}
 		}
-		if name != "" {
+		if name != "" && !svcNameAllDigits(name) {
 			return name
 		}
 	}
 	return svcType
+}
+
+// svcNameAllDigits reports whether s is non-empty and consists entirely of ASCII digits.
+func svcNameAllDigits(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanDNSLabel strips DNS label backslash escapes from s and removes the
+// leading MAC-address prefix used in RAOP mDNS instance names
+// ("AABBCCDDEEFF@Name" → "Name").  The result is a plain Unicode string
+// suitable for display.
+func cleanDNSLabel(s string) string {
+	// Strip RAOP MAC prefix: 12 uppercase hex digits followed by '@'.
+	if at := strings.IndexByte(s, '@'); at >= 6 && at <= 17 && at < len(s)-1 {
+		allHex := true
+		for i := 0; i < at; i++ {
+			c := s[i]
+			if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
+				allHex = false
+				break
+			}
+		}
+		if allHex {
+			s = s[at+1:]
+		}
+	}
+	// Remove DNS label backslash escapes so "SONY\ XR-65A95L" → "SONY XR-65A95L".
+	if !strings.ContainsRune(s, '\\') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++ // skip backslash, write next byte literally
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }

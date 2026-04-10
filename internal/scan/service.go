@@ -359,6 +359,14 @@ func RunServiceConn(conn net.Conn) error {
 		}
 		now := time.Now()
 		friendlyName := ServiceFriendlyName(svc.Type)
+		// Confidence: 80 when we know the protocol (it's in our friendly-name
+		// table), 50 when we could only guess from the raw type string. A 50
+		// is below the default display threshold so unknown UPnP service types
+		// are suppressed in the main Services tab but visible in View All.
+		conf := uint8(80)
+		if friendlyName == svc.Type {
+			conf = 50
+		}
 		svcRegMu.Lock()
 		s, exists := svcReg[key]
 		if !exists {
@@ -366,10 +374,12 @@ func RunServiceConn(conn net.Conn) error {
 				ID:         newPortServiceID(),
 				IP:         ip,
 				Port:       svc.Port,
-				Confidence: 80, // device is actively advertising
+				Confidence: conf,
 				FirstSeen:  now,
 			}
 			svcReg[key] = s
+		} else if conf > s.Confidence {
+			s.Confidence = conf
 		}
 		s.LastSeen = now
 		// Prefer the friendly protocol/type name; never overwrite a name
@@ -385,12 +395,14 @@ func RunServiceConn(conn net.Conn) error {
 			if friendlyName != "" && friendlyName != svc.Type {
 				s.Name = friendlyName
 			} else if s.Name == "" && svc.Name != "" {
-				s.Name = svc.Name
+				s.Name = cleanDNSLabel(svc.Name)
 			}
 		}
 		src := strings.ToLower(svc.Source)
 		if svc.Name != "" {
-			s.Obs = upsertObs(s.Obs, src, "instance", svc.Name)
+			// Strip DNS label backslash escapes before storing the instance name
+			// so the raw value is already clean for display.
+			s.Obs = upsertObs(s.Obs, src, "instance", cleanDNSLabel(svc.Name))
 		}
 		if svc.Type != "" {
 			s.Obs = upsertObs(s.Obs, src, "type", svc.Type)
