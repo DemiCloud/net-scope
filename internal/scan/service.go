@@ -342,9 +342,12 @@ func RunServiceConn(conn net.Conn) error {
 		for k, v := range ps.Details {
 			s.Obs = upsertObs(s.Obs, "banner", k, v)
 		}
+		ApplySignatures(s)
 		clone := *s
 		clone.Obs = make([]Observation, len(s.Obs))
 		copy(clone.Obs, s.Obs)
+		clone.Capabilities = copyClaimMap(s.Capabilities)
+		clone.Fingerprints = copyClaimMap(s.Fingerprints)
 		svcRegMu.Unlock()
 		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 	}
@@ -414,9 +417,12 @@ func RunServiceConn(conn net.Conn) error {
 				s.Obs = upsertObs(s.Obs, src, "detail", d)
 			}
 		}
+		ApplySignatures(s)
 		clone := *s
 		clone.Obs = make([]Observation, len(s.Obs))
 		copy(clone.Obs, s.Obs)
+		clone.Capabilities = copyClaimMap(s.Capabilities)
+		clone.Fingerprints = copyClaimMap(s.Fingerprints)
 		svcRegMu.Unlock()
 		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 	}
