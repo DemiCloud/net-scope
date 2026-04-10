@@ -891,22 +891,16 @@ func releaseCapture() {
 	procReleaseCapture.Call()
 }
 
-// centerOnParent repositions dlg so it is centered over parent on screen.
-func centerOnParent(dlg, parent HWND, w, h int32) {
-	pr := getWindowRect(parent)
-	x := (pr.Left + pr.Right - w) / 2
-	y := (pr.Top + pr.Bottom - h) / 2
-	moveWindow(dlg, x, y, w, h)
-}
-
 // centerWindowOver repositions dlg so it is centered over parent, reading dlg's
-// current size from its window rect. Call after the window has been created but
-// before it is shown.
+// actual outer size from its window rect. Call after the window has been created
+// but before it is shown. Prefer this over centerOnParent to avoid passing
+// nominal dimensions that may differ from the actual window size.
 func centerWindowOver(dlg, parent HWND) {
+	pr := getWindowRect(parent)
 	dr := getWindowRect(dlg)
 	w := dr.Right - dr.Left
 	h := dr.Bottom - dr.Top
-	centerOnParent(dlg, parent, w, h)
+	moveWindow(dlg, (pr.Left+pr.Right-w)/2, (pr.Top+pr.Bottom-h)/2, w, h)
 }
 
 func utf16(s string) *uint16 {
@@ -961,6 +955,21 @@ func getCursorPos() POINT {
 
 func destroyMenu(menu HMENU) {
 	procDestroyMenu.Call(uintptr(menu))
+}
+
+// createCtrl is a shorthand for plain child controls (STATIC, BUTTON, EDIT, etc.).
+// It calls createWindowEx with exStyle=0. Identical to createWindowEx(0, ...) but
+// omits the error return for callers that don't need it.
+func createCtrl(class, title string, style uint32, x, y, w, h int32, parent HWND, id uintptr, inst HINSTANCE) HWND {
+	hwnd, _ := createWindowEx(0, class, title, style, x, y, w, h, parent, HMENU(id), inst)
+	return hwnd
+}
+
+// screenToClient converts the screen-coordinate point pt to client coordinates
+// relative to hwnd. Returns the converted point.
+func screenToClient(hwnd HWND, pt POINT) POINT {
+	procScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
+	return pt
 }
 
 func getFocus() HWND {

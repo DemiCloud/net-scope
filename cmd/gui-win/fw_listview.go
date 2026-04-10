@@ -602,6 +602,36 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 }
 
 // ---------------------------------------------------------------------------
+// Alternating row background
+// ---------------------------------------------------------------------------
+
+// lvRowBg returns the alternating-row COLORREF background for the given row
+// index. Even rows: white (0x00FFFFFF); odd rows: very light gray (0x00F5F5F5).
+// Use this constant source in NM_CUSTOMDRAW handlers and any helper that
+// computes row background colours, so the palette is defined in one place.
+func lvRowBg(row int32) uint32 {
+	if row%2 == 0 {
+		return 0x00FFFFFF
+	}
+	return 0x00F5F5F5
+}
+
+// ---------------------------------------------------------------------------
+// ListView hit-test at cursor
+// ---------------------------------------------------------------------------
+
+// listViewHitTestAtCursor captures the current cursor position, converts it to
+// client coordinates relative to hwnd, and performs a ListView hit-test.
+// Returns the row index under the cursor (−1 if none) and the screen-space
+// POINT (for positioning a subsequent context-menu call).
+func listViewHitTestAtCursor(hwnd HWND) (row int32, screenPt POINT) {
+	screenPt = getCursorPos()
+	ht := LVHITTESTINFO{Pt: screenToClient(hwnd, screenPt)}
+	row = int32(sendMessage(hwnd, LVM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
+	return
+}
+
+// ---------------------------------------------------------------------------
 // Column header right-click context menu
 // ---------------------------------------------------------------------------
 
@@ -611,9 +641,7 @@ func subclassListViewManaged(hwnd HWND, colTitles []string, colVis []bool, defWi
 // helper uses HDM_HITTEST with the current cursor position instead.
 func headerHitColumn(hdrHwnd HWND) int32 {
 	pt := getCursorPos()
-	cpt := POINT{X: pt.X, Y: pt.Y}
-	procScreenToClient.Call(uintptr(hdrHwnd), uintptr(unsafe.Pointer(&cpt)))
-	ht := HDHITTESTINFO{Pt: cpt}
+	ht := HDHITTESTINFO{Pt: screenToClient(hdrHwnd, pt)}
 	return int32(sendMessage(hdrHwnd, HDM_HITTEST, 0, uintptr(unsafe.Pointer(&ht))))
 }
 
