@@ -257,7 +257,7 @@ func RunServiceConn(conn net.Conn) error {
 				if already {
 					continue
 				}
-				name := reverseDNS(net.ParseIP(ip), time.Second)
+				name := reverseDNS(connCtx, net.ParseIP(ip), time.Second)
 				if name != "" {
 					_ = safeSend(ServiceMsg{PTRUpdate: &PTRResult{IP: ip, Hostname: name}})
 				}
