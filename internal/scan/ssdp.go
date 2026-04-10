@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,8 +80,16 @@ func streamSSDP(ctx context.Context, timeout time.Duration, cb func(net.IP, Serv
 		seen[key] = true
 
 		details := []string{}
+		var locationPort int
 		if loc := headers["location"]; loc != "" {
 			details = append(details, "location:"+loc)
+			if u, err := url.Parse(loc); err == nil {
+				if _, portStr, err := net.SplitHostPort(u.Host); err == nil {
+					if p, _ := strconv.Atoi(portStr); p > 0 {
+						locationPort = p
+					}
+				}
+			}
 		}
 		if server := headers["server"]; server != "" {
 			details = append(details, "server:"+server)
@@ -89,6 +99,7 @@ func streamSSDP(ctx context.Context, timeout time.Duration, cb func(net.IP, Serv
 			Source:  "ssdp",
 			Name:    headers["server"],
 			Type:    headers["st"],
+			Port:    locationPort,
 			Details: details,
 		})
 	}

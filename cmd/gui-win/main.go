@@ -163,6 +163,7 @@ func Run(v, target string) {
 
 	hHosts := createPopupMenu()
 	appendMenu(hHosts, MF_STRING, IDM_HOSTS_VIEW_HOST, "&Hosts\u2026")
+	appendMenu(hHosts, MF_STRING, IDM_SERVICES_VIEW_ALL, "&Services\u2026")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")
 
 	hHelp := createPopupMenu()

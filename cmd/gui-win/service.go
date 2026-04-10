@@ -199,6 +199,14 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingBcast = append(pendingBcast, bcastEntry{m.BcastIP, *m.BcastSvc})
 				pendingBcastMu.Unlock()
 				postMessage(hwnd, WM_BCAST_SVC, uintptr(idx), 0)
+			} else if m.PTRUpdate != nil {
+				if m.PTRUpdate.Hostname != "" {
+					pendingEnrichMu.Lock()
+					idx := len(pendingEnriches)
+					pendingEnriches = append(pendingEnriches, enrichEvent{ip: m.PTRUpdate.IP, hostname: m.PTRUpdate.Hostname})
+					pendingEnrichMu.Unlock()
+					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+				}
 			} else if m.ARPEntry != nil {
 				mac, _ := net.ParseMAC(m.ARPEntry.MAC)
 				if mac != nil {

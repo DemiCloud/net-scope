@@ -399,6 +399,12 @@ func RunServiceConn(conn net.Conn) error {
 				ListenBroadcast(ctx, bl, func(ip string, svc ServiceInfo) {
 					svcCopy := svc
 					_ = safeSend(ServiceMsg{BcastSvc: &svcCopy, BcastIP: ip})
+					// Queue IP for background PTR lookup so discovery-only hosts
+					// get a DNS hostname without requiring a full scan.
+					select {
+					case ptrQueue <- ip:
+					default:
+					}
 				})
 			}()
 

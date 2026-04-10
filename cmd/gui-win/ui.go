@@ -205,11 +205,12 @@ func allHostIPs() []string {
 	return ips
 }
 
-// enrichEvent carries a NetBIOS name and/or MAC for an existing Hosts row.
+// enrichEvent carries a NetBIOS name or MAC or PTR hostname for an existing Hosts row.
 type enrichEvent struct {
-	ip      string
-	netbios string
-	mac     net.HardwareAddr
+	ip       string
+	netbios  string
+	mac      net.HardwareAddr
+	hostname string // PTR-resolved hostname (empty when not a PTR update)
 }
 
 // hostEntry is the persistent record for a host seen across any source.
@@ -1004,6 +1005,23 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingEnrichMu.Unlock()
 		if e.ip == "" {
 			return 0
+		}
+		// PTR hostname enrichment may arrive for IPs that have no Hosts-tab row
+		// (broadcast-only hosts not yet scanned).  Apply registry + Services tab
+		// updates unconditionally, then fall through to row-level updates.
+		if e.hostname != "" {
+			en := ensureHostEntry(e.ip)
+			if en.Result.Hostname == "" {
+				en.Result.Hostname = e.hostname
+				en.LastSeen = time.Now()
+				servicesTabUpdateHostname(e.ip, e.hostname)
+				// Update the Hosts-tab row if it exists.
+				if row, ok := ipRowMap[e.ip]; ok {
+					if cur := listViewGetCellText(hwndList, row, colHost); cur == "\u2014" || cur == "" {
+						setSubItem(hwndList, row, colHost, e.hostname)
+					}
+				}
+			}
 		}
 		row, ok := ipRowMap[e.ip]
 		if !ok {
@@ -1808,7 +1826,7 @@ func startScan(hwnd HWND) {
 	} else {
 		svcTabMinConf = 60
 	}
-	clearServicesTab()
+	clearScanServicesFromTab()
 	showWindow(hwndServicesPlaceholder, SW_SHOW)
 
 	// Pre-populate every IP with a "Pending" row so they appear in order.
