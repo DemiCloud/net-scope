@@ -31,6 +31,23 @@ type ServiceInfo struct {
 	Details []string // TXT records, SSDP headers, etc.
 }
 
+// WorkItemState is the lifecycle phase of a single host probe job tracked by
+// the sensor service. The service emits a WorkItemUpdate for each transition.
+type WorkItemState string
+
+const (
+	WorkQueued   WorkItemState = "queued"   // waiting for a scanner slot
+	WorkRunning  WorkItemState = "running"  // liveness + deep probe in progress
+	WorkDone     WorkItemState = "done"     // probe complete, host alive
+	WorkDead     WorkItemState = "dead"     // probe complete, host did not respond
+)
+
+// WorkItem describes the current state of a single host in the scan queue.
+type WorkItem struct {
+	IP    string        `json:"ip"`
+	State WorkItemState `json:"state"`
+}
+
 // Observation records a single evidence fact contributed by a specific source.
 type Observation struct {
 	Source string `json:"src"` // "banner", "mdns", "ssdp", "wsd"

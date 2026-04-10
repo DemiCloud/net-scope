@@ -95,6 +95,9 @@ type ServiceMsg struct {
 	// SvcUpdate carries a unified Service with updated evidence. Emitted after
 	// every port-probe or broadcast-discovery upsert into the session registry.
 	SvcUpdate *Service `json:"svc_update,omitempty"`
+	// WorkUpdate carries a host probe state transition (queued → running → done/dead).
+	// Emitted by the service throughout a scan so the GUI can display a live queue.
+	WorkUpdate *WorkItem `json:"work_update,omitempty"`
 }
 
 // ARPResult carries a single ARP table entry streamed from service to GUI.
@@ -447,6 +450,19 @@ func RunServiceConn(conn net.Conn) error {
 			scanCancel = cancel
 			scanID := cmd.ScanID
 
+			// Expand the target now so we can pre-emit "queued" states for
+			// every host before the scanner starts. ExpandTarget is
+			// inexpensive (no I/O) and the worst-case /16 is 65535 items.
+			// Failure here falls through gracefully — sc.Scan will also fail
+			// and send the proper error message.
+			if hosts, expandErr := ExpandTarget(cmd.Target); expandErr == nil {
+				for _, ip := range hosts {
+					ipStr := ip.String()
+					wi := WorkItem{IP: ipStr, State: WorkQueued}
+					_ = safeSend(ServiceMsg{WorkUpdate: &wi, ScanID: scanID})
+				}
+			}
+
 			sc := NewScanner(*cmd.Config)
 			ch, err := sc.Scan(ctx, cmd.Target)
 			if err != nil {
@@ -459,17 +475,32 @@ func RunServiceConn(conn net.Conn) error {
 			go func() {
 				for r := range ch {
 					rCopy := r
-					if werr := safeSend(ServiceMsg{Result: &rCopy, ScanID: scanID}); werr != nil {
+					ipStr := rCopy.IP.String()
+					// Derive work-item state from result shape:
+					//   Partial:true  → host is alive; deep probe still in progress
+					//   Partial:false, Alive:true  → probe complete
+					//   Partial:false, Alive:false → host did not respond
+					var wiState WorkItemState
+					switch {
+					case rCopy.Partial && rCopy.Alive:
+						wiState = WorkRunning
+					case !rCopy.Partial && rCopy.Alive:
+						wiState = WorkDone
+					default:
+						wiState = WorkDead
+					}
+					wi := WorkItem{IP: ipStr, State: wiState}
+					if werr := safeSend(ServiceMsg{Result: &rCopy, WorkUpdate: &wi, ScanID: scanID}); werr != nil {
 						return
 					}
 					// Upsert each discovered PortService into the session registry.
 					for _, ps := range rCopy.PortServices {
-						upsertPortSvc(rCopy.IP.String(), ps)
+						upsertPortSvc(ipStr, ps)
 					}
 					// Queue hosts without hostnames for background PTR resolution.
 					if rCopy.Hostname == "" && rCopy.IP != nil {
 						select {
-						case ptrQueue <- rCopy.IP.String():
+						case ptrQueue <- ipStr:
 						default: // queue full; skip rather than block
 						}
 					}

@@ -205,6 +205,12 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingSvcUpdates = append(pendingSvcUpdates, *m.SvcUpdate)
 				pendingSvcUpdatesMu.Unlock()
 				postMessage(hwnd, WM_SVC_UPDATE, uintptr(idx), 0)
+			} else if m.WorkUpdate != nil {
+				pendingWorkUpdatesMu.Lock()
+				idx := len(pendingWorkUpdates)
+				pendingWorkUpdates = append(pendingWorkUpdates, *m.WorkUpdate)
+				pendingWorkUpdatesMu.Unlock()
+				postMessage(hwnd, WM_WORK_UPDATE, uintptr(idx), 0)
 			} else if m.PTRUpdate != nil {
 				if m.PTRUpdate.Hostname != "" {
 					pendingEnrichMu.Lock()
