@@ -1529,6 +1529,13 @@ func svcTabInsertRow(e svcTabEntry) {
 	setSubItem(hwndListServices, row, 4, ver)
 	setSubItem(hwndListServices, row, 5, fmt.Sprintf("%d%%", e.ps.Confidence))
 	banner := e.ps.Banner
+	if summary := svcDetailSummary(e.ps.Details); summary != "" {
+		if banner != "" {
+			banner += "  ·  " + summary
+		} else {
+			banner = summary
+		}
+	}
 	if banner == "" {
 		banner = "—"
 	}
@@ -1554,9 +1561,50 @@ func repopulateServicesTab(filter string) {
 }
 
 func svcTabEntryMatchesFilter(e svcTabEntry, filter string) bool {
-	return strings.Contains(strings.ToLower(e.ip), filter) ||
+	if strings.Contains(strings.ToLower(e.ip), filter) ||
 		strings.Contains(strings.ToLower(e.hostname), filter) ||
 		strings.Contains(strings.ToLower(e.ps.Product), filter) ||
 		strings.Contains(strings.ToLower(e.ps.Version), filter) ||
-		strings.Contains(strings.ToLower(e.ps.Banner), filter)
+		strings.Contains(strings.ToLower(e.ps.Banner), filter) {
+		return true
+	}
+	for _, v := range e.ps.Details {
+		if strings.Contains(strings.ToLower(v), filter) {
+			return true
+		}
+	}
+	return false
+}
+
+// svcDetailSummary formats PortService.Details into a compact one-line string
+// for display in the Banner column of the Services tab.
+// Returns an empty string when d is nil or empty.
+func svcDetailSummary(d map[string]string) string {
+	if len(d) == 0 {
+		return ""
+	}
+	var parts []string
+	if v := d["smb_dialect"]; v != "" {
+		s := v
+		if d["smb1"] == "true" {
+			s += " (v1: on)"
+		}
+		parts = append(parts, s)
+	}
+	if v := d["dns_server"]; v != "" {
+		parts = append(parts, v)
+	} else if d["dns_recursion"] != "" {
+		rec := "no"
+		if d["dns_recursion"] == "true" {
+			rec = "yes"
+		}
+		parts = append(parts, "recursion: "+rec)
+	}
+	if v := d["ldap_domain"]; v != "" {
+		parts = append(parts, v)
+	}
+	if v := d["mqtt_anon"]; v != "" {
+		parts = append(parts, "anon: "+v)
+	}
+	return strings.Join(parts, " · ")
 }
