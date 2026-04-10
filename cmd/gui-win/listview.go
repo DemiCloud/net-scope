@@ -1495,7 +1495,7 @@ var svcTabIDToRow = map[string]int32{}
 // services. Refreshed from appConfig when a scan starts or settings change.
 var svcTabMinConf uint8 = 60
 
-// svcEntryDisplayName returns the human-visible name for a service.
+// svcEntryDisplayName returns the base service name without host context.
 func svcEntryDisplayName(s scan.Service) string {
 	if s.Name != "" {
 		return s.Name
@@ -1504,6 +1504,23 @@ func svcEntryDisplayName(s scan.Service) string {
 		return "port/" + strconv.Itoa(s.Port)
 	}
 	return "—"
+}
+
+// svcFriendlyName returns the display name in "service@shortname" format.
+// shortname is the first DNS label of the resolved hostname, or the IP.
+func svcFriendlyName(s scan.Service) string {
+	base := svcEntryDisplayName(s)
+	short := s.IP
+	if en, ok := hostRegistry[s.IP]; ok {
+		if h := en.Result.Hostname; h != "" {
+			if dot := strings.IndexByte(h, byte(0x2e)); dot > 0 {
+				short = h[:dot]
+			} else {
+				short = h
+			}
+		}
+	}
+	return base + "@" + short
 }
 
 // svcEntryVersion returns a display string for the version column.
@@ -1537,12 +1554,6 @@ func svcDisplayHostname(s scan.Service) string {
 			return h + " (NetBIOS)"
 		}
 	}
-	// Fall back to the mDNS instance name from observations.
-	for _, obs := range s.Obs {
-		if obs.Key == "instance" && obs.Value != "" {
-			return obs.Value
-		}
-	}
 	return ""
 }
 
@@ -1558,7 +1569,7 @@ func clearServicesTab() {
 // svcTabInsertRow appends one row to hwndListServices for s.
 // Columns: Service Name | IP | Hostname | Version | Port
 func svcTabInsertRow(s scan.Service) {
-	name := svcEntryDisplayName(s)
+	name := svcFriendlyName(s)
 	namePtr := utf16(name)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: namePtr}
 	row := int32(sendMessage(hwndListServices, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
@@ -1580,7 +1591,7 @@ func svcTabInsertRow(s scan.Service) {
 // svcTabRefreshRow updates every column of an existing Services tab row in-place.
 func svcTabRefreshRow(row int32, s scan.Service) {
 	svcTabRowEntry[row] = s
-	setSubItem(hwndListServices, row, 0, svcEntryDisplayName(s))
+	setSubItem(hwndListServices, row, 0, svcFriendlyName(s))
 	setSubItem(hwndListServices, row, 1, s.IP)
 	hn := svcDisplayHostname(s)
 	if hn == "" {
@@ -1611,7 +1622,7 @@ func servicesTabUpsert(s scan.Service) {
 	}
 
 	// Apply confidence filter for banner-only services.
-	if s.Port > 0 && s.Confidence > 0 && s.Confidence <= svcTabMinConf {
+	if s.Port > 0 && s.Confidence < svcTabMinConf {
 		// Below threshold: store in backing store for View All, but keep hidden
 		// in the main listview unless it already has a row (meaning confidence rose).
 		if _, exists := svcTabIDToRow[s.ID]; !exists {
