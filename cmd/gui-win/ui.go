@@ -805,6 +805,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
 		return 0
 
+	case WM_HOST_RESCAN:
+		// Triggered by the Host detail dialog's "Scan" button. The dialog has
+		// already written the target IP into hwndTarget. Run a targeted rescan
+		// without clearing the Scanner listview.
+		rescanSingleHost(HWND(hwnd), getWindowText(hwndTarget))
+		return 0
+
 	case WM_BCAST_SVC:
 		pendingBcastMu.Lock()
 		var e bcastEntry
@@ -843,8 +850,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_SCAN_RESULT:
-		// Discard results from a superseded scan (rapid Stop → Scan race).
-		if uint64(lParam) != scanGeneration {
+		// Accept results from the current scan or from a host-dialog rescan.
+		// Stale results from superseded scans are discarded.
+		scanGen := uint64(lParam)
+		isHostRescan := scanGen == hostRescanScanID
+		if !isHostRescan && scanGen != scanGeneration {
 			return 0
 		}
 		pendingMu.Lock()
@@ -870,12 +880,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			listViewUpdateRow(hwndList, row, r)
 			rowResultMap[row] = r
 			if r.Alive {
-				liveCount++
+				if !isHostRescan {
+					liveCount++
+				}
 				if !listHasHosts {
 					listHasHosts = true
 					showWindow(hwndListPlaceholder, SW_HIDE)
 				}
-				setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
+				if !isHostRescan {
+					setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
+				}
 			} else if activeOnlyFilter {
 				// Filter is active: immediately remove dead row from the display.
 				listViewDeleteRowAndFixMaps(row)
@@ -886,12 +900,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			ipRowMap[ipStr] = row
 			listViewUpdateRow(hwndList, row, r)
 			rowResultMap[row] = r
-			liveCount++
+			if !isHostRescan {
+				liveCount++
+			}
 			if !listHasHosts {
 				listHasHosts = true
 				showWindow(hwndListPlaceholder, SW_HIDE)
 			}
-			setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
+			if !isHostRescan {
+				setWindowText(hwndScanStatus, fmt.Sprintf("Scanning\u2026 \u00b7 %d found", liveCount))
+			}
 			// Broadcast-only hosts skip per-host probing; request enrichment.
 			if r.Hostname == "" && r.NetBIOS == "" {
 				kickNetBIOSProbe(ipStr)
@@ -1772,6 +1790,56 @@ func startScan(hwnd HWND) {
 		lastStats = sc.Stats
 		pendingMu.Unlock()
 		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
+	}()
+}
+
+// hostRescanScanID is a sentinel ScanID used exclusively for targeted rescans
+// launched from the Host detail dialog. It is safely distinct from scanGeneration
+// (which starts at 0 and increments by 1), so WM_SCAN_COMPLETE messages carrying
+// this ID are discarded by the existing generation guard and do not disturb the
+// main scan UI state.
+const hostRescanScanID uint64 = ^uint64(0)
+
+// rescanSingleHost sends a targeted scan for ip through the service (or the
+// in-process fallback) without clearing or resetting the Scanner listview.
+// Results arrive via the normal WM_SCAN_RESULT path tagged with hostRescanScanID;
+// liveCount and the scan status bar are left untouched.
+// Called from the UI thread only (via WM_HOST_RESCAN).
+func rescanSingleHost(hwnd HWND, ip string) {
+	if ip == "" {
+		return
+	}
+	appCfg, _, _ := config.Load()
+	scanCfg := appCfg.ToScanConfig()
+	scanCfg.BroadcastListen = 0
+	if !proxyEnabled {
+		scanCfg.SOCKSProxy = ""
+	}
+
+	if serviceRunning() {
+		sendScanViaService(hwnd, ip, scanCfg, hostRescanScanID)
+		return
+	}
+
+	// Fallback: in-process scan goroutine.
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				writeCrashLog(hwnd, p)
+			}
+		}()
+		sc := scan.NewScanner(scanCfg)
+		ch, err := sc.Scan(context.Background(), ip)
+		if err != nil {
+			return
+		}
+		for r := range ch {
+			pendingMu.Lock()
+			idx := len(pendingResults)
+			pendingResults = append(pendingResults, r)
+			pendingMu.Unlock()
+			postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(hostRescanScanID))
+		}
 	}()
 }
 
