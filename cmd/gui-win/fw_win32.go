@@ -121,6 +121,7 @@ const (
 	WM_LBUTTONDOWN    = 0x0201
 	WM_LBUTTONUP      = 0x0202
 	WM_RBUTTONUP      = 0x0205
+	WM_CONTEXTMENU    = 0x007B
 	WM_CAPTURECHANGED = 0x0215
 	WM_CTLCOLOREDIT   = 0x0133
 	WM_CTLCOLORSTATIC = 0x0138
@@ -595,6 +596,7 @@ var (
 	procGetCursorPos                 = modUser32.NewProc("GetCursorPos")
 	procDestroyMenu                  = modUser32.NewProc("DestroyMenu")
 	procScreenToClient               = modUser32.NewProc("ScreenToClient")
+	procClientToScreen               = modUser32.NewProc("ClientToScreen")
 	procGetFocus                     = modUser32.NewProc("GetFocus")
 	procGetSysColorBrush             = modUser32.NewProc("GetSysColorBrush")
 	procFillRect                     = modUser32.NewProc("FillRect")
@@ -969,6 +971,12 @@ func createCtrl(class, title string, style uint32, x, y, w, h int32, parent HWND
 // relative to hwnd. Returns the converted point.
 func screenToClient(hwnd HWND, pt POINT) POINT {
 	procScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
+	return pt
+}
+
+// clientToScreen converts the client-coordinate point pt to screen coordinates.
+func clientToScreen(hwnd HWND, pt POINT) POINT {
+	procClientToScreen.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
 	return pt
 }
 

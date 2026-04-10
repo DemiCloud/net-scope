@@ -1211,7 +1211,7 @@ func createControls(hwnd HWND) {
 	sendMessage(hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
 	subclassListViewManaged(hwndList, hostsColTitles[:], colVisible[:], colDefaultLogicalWidths[:],
-		func(_ HWND, col int32, asc bool) { applyHostsSort(col, asc) })
+		func(_ HWND, col int32, asc bool) { applyHostsSort(col, asc) }, nil)
 	headerHwnd = HWND(sendMessage(hwndList, LVM_GETHEADER, 0, 0))
 	// Columns come from hostsColTitles + colDefaultLogicalWidths (single source of truth).
 	for i, title := range hostsColTitles {
@@ -1233,7 +1233,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_MDNS, inst)
 	sendMessage(hwndListMDNS, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewManaged(hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths, applyMDNSSort)
+	subclassListViewManaged(hwndListMDNS, mdnsColTitles, mdnsColVis, mdnsDefWidths, applyMDNSSort, nil)
 	for i, title := range mdnsColTitles {
 		listViewAddColumn(hwndListMDNS, int32(i), title, scale(mdnsDefWidths[i]))
 	}
@@ -1250,7 +1250,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SSDP, inst)
 	sendMessage(hwndListSSDP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewManaged(hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths, applySSDPSort)
+	subclassListViewManaged(hwndListSSDP, ssdpColTitles, ssdpColVis, ssdpDefWidths, applySSDPSort, nil)
 	for i, title := range ssdpColTitles {
 		listViewAddColumn(hwndListSSDP, int32(i), title, scale(ssdpDefWidths[i]))
 	}
@@ -1267,7 +1267,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_WSD, inst)
 	sendMessage(hwndListWSD, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewManaged(hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths, applyWSDSort)
+	subclassListViewManaged(hwndListWSD, wsdColTitles, wsdColVis, wsdDefWidths, applyWSDSort, nil)
 	for i, title := range wsdColTitles {
 		listViewAddColumn(hwndListWSD, int32(i), title, scale(wsdDefWidths[i]))
 	}
@@ -1284,7 +1284,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_DHCP, inst)
 	sendMessage(hwndListDHCP, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewManaged(hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths, applyDHCPSort)
+	subclassListViewManaged(hwndListDHCP, dhcpColTitles, dhcpColVis, dhcpDefWidths, applyDHCPSort, nil)
 	for i, title := range dhcpColTitles {
 		listViewAddColumn(hwndListDHCP, int32(i), title, scale(dhcpDefWidths[i]))
 	}

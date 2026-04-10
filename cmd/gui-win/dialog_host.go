@@ -510,7 +510,7 @@ func createHostDetailControls(hwnd HWND) {
 		pad, y, cW-pad*2, obsListH, hwnd, HMENU(idHostProbeList), inst)
 	sendMessage(hwndHostProbeList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
-	subclassListViewManaged(hwndHostProbeList, []string{"Type", "Target", "Source", "Result"}, nil, nil, nil)
+	subclassListViewManaged(hwndHostProbeList, []string{"Type", "Target", "Source", "Result"}, nil, nil, nil, nil)
 	listViewAddColumn(hwndHostProbeList, 0, "Type", colTypeW)
 	listViewAddColumn(hwndHostProbeList, 1, "Target", colTargetW)
 	listViewAddColumn(hwndHostProbeList, 2, "Source", colSourceW)
@@ -1333,7 +1333,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			pad, pad, cW-pad*2, listH, HWND(hwnd), HMENU(idAllHostsList), inst)
 		sendMessage(hwndAllHostsList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
-		subclassListViewManaged(hwndAllHostsList, []string{"IP", "Hostname"}, nil, nil, nil)
+		subclassListViewManaged(hwndAllHostsList, []string{"IP", "Hostname"}, nil, nil, nil, nil)
 		listViewAddColumn(hwndAllHostsList, 0, "IP", 140)
 		listViewAddColumn(hwndAllHostsList, 1, "Hostname", cW-pad*2-140-4)
 
@@ -1725,7 +1725,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			pad, listTop, cW-pad*2, listH, HWND(hwnd), HMENU(idPickHostList), inst)
 		sendMessage(hwndPickList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-		subclassListViewManaged(hwndPickList, []string{"IP", "Hostname"}, nil, nil, nil)
+		subclassListViewManaged(hwndPickList, []string{"IP", "Hostname"}, nil, nil, nil, nil)
 		listViewAddColumn(hwndPickList, 0, "IP", 140)
 		listViewAddColumn(hwndPickList, 1, "Hostname", cW-pad*2-140-4)
 

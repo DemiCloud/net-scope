@@ -1070,7 +1070,7 @@ func createConnHandlersControls(hwnd HWND) {
 		pad, pad, cW-pad*2, lvH, hwnd, 0, inst)
 	sendMessage(hwndLV, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
-	subclassListViewManaged(hwndLV, []string{"Protocol", "Port", "Will launch"}, nil, nil, nil)
+	subclassListViewManaged(hwndLV, []string{"Protocol", "Port", "Will launch"}, nil, nil, nil, nil)
 	const (
 		protoW int32 = 120
 		portW  int32 = 60
