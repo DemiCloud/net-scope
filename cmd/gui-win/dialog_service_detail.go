@@ -315,11 +315,15 @@ func buildSvcSummary(s scan.Service) string {
 // View All Services dialog — all sources, all confidence levels.
 // ---------------------------------------------------------------------------
 
-const idAllSvcsDlgClose = 750
+const (
+	idAllSvcsDlgClose  = 750
+	idAllSvcsDlgFilter = 752
+)
 
 var (
-	hwndAllSvcsDlgList HWND
-	allSvcsDlgEntries  = map[int32]scan.Service{} // row → service
+	hwndAllSvcsDlgList   HWND
+	hwndAllSvcsDlgFilter HWND
+	allSvcsDlgEntries    = map[int32]scan.Service{} // row → service
 )
 
 func allSvcsDlgHeaders() []string {
@@ -345,12 +349,23 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		const pad int32 = 10
 		const hintH int32 = 16
 		const btnH int32 = 26
+		const filterH int32 = 24
+		const filterGap int32 = 6
 
-		listH := cH - pad - hintH - pad - btnH - pad
+		// Filter edit box.
+		filt, _ := createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+			WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,
+			pad, pad, cW-pad*2, filterH, HWND(hwnd), HMENU(idAllSvcsDlgFilter), inst)
+		cueText := utf16("Filter\u2026")
+		sendMessage(filt, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(cueText)))
+		hwndAllSvcsDlgFilter = filt
+
+		listY := pad + filterH + filterGap
+		listH := cH - listY - filterGap - hintH - pad - btnH - pad
 
 		lv, _ := createWindowEx(0, WC_LISTVIEW, "",
 			WS_CHILD|WS_VISIBLE|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS|LVS_SINGLESEL,
-			pad, pad, cW-pad*2, listH, HWND(hwnd), HMENU(idAllSvcsDlgClose+1), inst)
+			pad, listY, cW-pad*2, listH, HWND(hwnd), HMENU(idAllSvcsDlgClose+1), inst)
 		sendMessage(lv, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 			LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP)
 		hdrs := allSvcsDlgHeaders()
@@ -359,9 +374,9 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		for i, h := range hdrs {
 			listViewAddColumn(lv, int32(i), h, widths[i])
 		}
-		allSvcsDlgPopulate(lv)
+		allSvcsDlgPopulate(lv, "")
 
-		hintY := pad + listH + pad/2
+		hintY := listY + listH + filterGap
 		createWindowEx(0, "STATIC",
 			"Double-click or Enter to open service details  \u00b7  all sources and confidence levels",
 			WS_CHILD|WS_VISIBLE,
@@ -377,8 +392,14 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		return ctlColorDialog(wParam)
 
 	case WM_COMMAND:
-		if loword(wParam) == idAllSvcsDlgClose {
+		switch loword(wParam) {
+		case idAllSvcsDlgClose:
 			closeModal(HWND(hwnd))
+		case idAllSvcsDlgFilter:
+			if hiword(wParam) == EN_CHANGE {
+				f := strings.ToLower(getWindowText(hwndAllSvcsDlgFilter))
+				allSvcsDlgPopulate(hwndAllSvcsDlgList, f)
+			}
 		}
 		return 0
 
@@ -405,15 +426,39 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-func allSvcsDlgPopulate(sv HWND) {
+func allSvcsDlgPopulate(sv HWND, filter string) {
 	allSvcsDlgEntries = map[int32]scan.Service{}
 	sendMessage(sv, LVM_DELETEALLITEMS, 0, 0)
 	for _, s := range svcTabData {
+		if filter != "" && !allSvcsDlgMatchesFilter(s, filter) {
+			continue
+		}
 		row := allSvcsDlgInsertRow(sv, s)
 		if row >= 0 {
 			allSvcsDlgEntries[row] = s
 		}
 	}
+}
+
+func allSvcsDlgMatchesFilter(s scan.Service, f string) bool {
+	src := ""
+	for _, obs := range s.Obs {
+		src = obs.Source
+		break
+	}
+	fields := []string{
+		svcEntryDisplayName(s),
+		s.IP,
+		svcDisplayHostname(s),
+		svcEntryVersion(s),
+		src,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), f) {
+			return true
+		}
+	}
+	return false
 }
 
 func allSvcsDlgInsertRow(sv HWND, s scan.Service) int32 {
