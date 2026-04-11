@@ -47,6 +47,11 @@ fetch-oui: ## Download OUI JSON database for embedding (requires internet)
 	else \
 		echo "OUI: using cached internal/scan/oui.json ($$(wc -c < internal/scan/oui.json) bytes)"; \
 	fi
+	@if [ ! -f internal/scan/oui.json.gz ] || [ internal/scan/oui.json -nt internal/scan/oui.json.gz ]; then \
+		echo "OUI: compressing → oui.json.gz…"; \
+		gzip -kf internal/scan/oui.json; \
+		echo "OUI: $$(wc -c < internal/scan/oui.json.gz) bytes compressed"; \
+	fi
 
 gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
 	go run ./cmd/gen-ico/ -o cmd/gui-win/icon.ico
