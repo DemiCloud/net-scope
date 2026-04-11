@@ -1112,6 +1112,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		return 0
 
+	case WM_WORK_EXPIRE:
+		pendingExpiriesMu.Lock()
+		var ip string
+		if int(wParam) < len(pendingExpiries) {
+			ip = pendingExpiries[int(wParam)]
+		}
+		pendingExpiriesMu.Unlock()
+		if ip != "" {
+			workerQueueExpire(ip)
+		}
+		return 0
+
 	case WM_DESTROY:
 		// Persist UI state before tearing down.
 		if stateDirPath != "" {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/demicloud/net-scope/internal/scan"
@@ -53,11 +54,20 @@ var (
 	wqMu    sync.Mutex
 	wqItems map[string]scan.WorkItemState // ip → current state
 
+	// Expiry queue — IPs scheduled for removal; written by AfterFunc goroutines,
+	// read by the WM_WORK_EXPIRE handler on the UI thread.
+	pendingExpiriesMu sync.Mutex
+	pendingExpiries   []string
+
 	// Dialog-local row maps — valid only while the dialog window is open.
 	wqWorkerRowByName map[string]int32
 	wqRowByIP         map[string]int32
 	wqIPByRow         map[int32]string
 )
+
+// wqExpireDelay is how long a finished (Done / No response) item stays visible
+// in the Scan Queue before being removed automatically.
+const wqExpireDelay = 10 * time.Second
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -326,6 +336,55 @@ func workerQueueUpsert(wi scan.WorkItem) {
 		workerQueueApply(wi)
 		wqUpdateSummary()
 	}
+
+	// Schedule automatic removal for terminal states.
+	if wi.State == scan.WorkDone || wi.State == scan.WorkDead {
+		ip := wi.IP
+		time.AfterFunc(wqExpireDelay, func() {
+			pendingExpiriesMu.Lock()
+			idx := len(pendingExpiries)
+			pendingExpiries = append(pendingExpiries, ip)
+			pendingExpiriesMu.Unlock()
+			postMessage(hwndMain, WM_WORK_EXPIRE, uintptr(idx), 0)
+		})
+	}
+}
+
+// workerQueueExpire removes a finished item from the scan queue.
+// Called on the UI thread from the WM_WORK_EXPIRE handler.
+func workerQueueExpire(ip string) {
+	wqMu.Lock()
+	st, present := wqItems[ip]
+	if present && (st == scan.WorkDone || st == scan.WorkDead) {
+		delete(wqItems, ip)
+	} else {
+		// State changed (e.g. re-queued by a new scan) — leave it alone.
+		present = false
+	}
+	wqMu.Unlock()
+
+	if !present {
+		return
+	}
+
+	if hwndWorkerQueueDlg != 0 && hwndWQList != 0 {
+		row, exists := wqRowByIP[ip]
+		if exists {
+			sendMessage(hwndWQList, LVM_DELETEITEM, uintptr(row), 0)
+			delete(wqRowByIP, ip)
+			delete(wqIPByRow, row)
+			// Renumber rows that shifted up after the deletion.
+			for otherIP, otherRow := range wqRowByIP {
+				if otherRow > row {
+					wqRowByIP[otherIP] = otherRow - 1
+					wqIPByRow[otherRow-1] = otherIP
+					delete(wqIPByRow, otherRow)
+				}
+			}
+		}
+	}
+
+	wqUpdateSummary()
 }
 
 // workerQueueApply inserts or updates a single row in hwndWQList.
