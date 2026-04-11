@@ -43,6 +43,10 @@ const (
 	WM_CACHE_OP        = WM_APP + 31 // sensor service: cache operation result (arp-delete/clear, dns-delete/clear, route-delete)
 	WM_ROUTE_SNAP_ENTRY = WM_APP + 32 // sensor service: one routing-table entry arrived
 	WM_ROUTE_SNAP_DONE  = WM_APP + 33 // sensor service: route-snapshot stream complete
+	WM_SOCKET_SNAP_ENTRY = WM_APP + 34 // sensor service: one socket entry arrived
+	WM_SOCKET_SNAP_DONE  = WM_APP + 35 // sensor service: socket-snapshot stream complete
+	WM_HOSTS_SNAP_ENTRY  = WM_APP + 36 // sensor service: one hosts-file entry arrived
+	WM_HOSTS_SNAP_DONE   = WM_APP + 37 // sensor service: hosts-snapshot stream complete
 )
 
 // ---------------------------------------------------------------------------
@@ -105,6 +109,8 @@ const (
 	IDM_TOOLS_ARP_CACHE       = 218 // Tools > ARP Cache…
 	IDM_TOOLS_DNS_CACHE       = 219 // Tools > DNS Cache…
 	IDM_TOOLS_ROUTE_TABLE     = 220 // Tools > Route Table…
+	IDM_TOOLS_CONNECTIONS     = 221 // Tools > Active Connections…
+	IDM_TOOLS_HOSTS           = 222 // Tools > Hosts File…
 )
 
 // ---------------------------------------------------------------------------

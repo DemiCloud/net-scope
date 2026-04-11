@@ -233,6 +233,16 @@ var (
 	pendingRouteSnap   []scan.RouteEntry
 	pendingRouteSnapMu sync.Mutex
 
+	// pendingSocketSnap carries socket entries from the sensor service
+	// to the Active Connections dialog via WM_SOCKET_SNAP_ENTRY.
+	pendingSocketSnap   []scan.SocketEntry
+	pendingSocketSnapMu sync.Mutex
+
+	// pendingHostsSnap carries hosts-file entries from the sensor service
+	// to the Hosts File dialog via WM_HOSTS_SNAP_ENTRY.
+	pendingHostsSnap   []scan.HostsEntry
+	pendingHostsSnapMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -859,6 +869,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showDNSCacheDialog(HWND(hwnd))
 		case IDM_TOOLS_ROUTE_TABLE:
 			showRouteTableDialog(HWND(hwnd))
+		case IDM_TOOLS_CONNECTIONS:
+			showConnectionsDialog(HWND(hwnd))
+		case IDM_TOOLS_HOSTS:
+			showHostsDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1266,6 +1280,38 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_ROUTE_SNAP_DONE:
 		routeTableDialogLoadingDone()
+		return 0
+
+	case WM_SOCKET_SNAP_ENTRY:
+		pendingSocketSnapMu.Lock()
+		var entry scan.SocketEntry
+		if int(wParam) < len(pendingSocketSnap) {
+			entry = pendingSocketSnap[int(wParam)]
+		}
+		pendingSocketSnapMu.Unlock()
+		if entry.Proto != "" {
+			connDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_SOCKET_SNAP_DONE:
+		connDialogLoadingDone()
+		return 0
+
+	case WM_HOSTS_SNAP_ENTRY:
+		pendingHostsSnapMu.Lock()
+		var entry scan.HostsEntry
+		if int(wParam) < len(pendingHostsSnap) {
+			entry = pendingHostsSnap[int(wParam)]
+		}
+		pendingHostsSnapMu.Unlock()
+		if entry.IP != "" {
+			hostsDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_HOSTS_SNAP_DONE:
+		houstsDialogLoadingDone()
 		return 0
 
 	case WM_CACHE_OP:
@@ -2832,6 +2878,8 @@ func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 		dnsCacheDialogRefresh()
 	case "route-delete":
 		routeTableDialogRefresh()
+	case "hosts-add", "hosts-delete":
+		houstsDialogRefresh()
 	}
 }
 

@@ -32,6 +32,8 @@ type ServiceCmd struct {
 	// "arp-snapshot", "arp-delete", "arp-clear",
 	// "dns-snapshot", "dns-delete", "dns-clear",
 	// "route-snapshot", "route-delete",
+	// "socket-snapshot",
+	// "hosts-snapshot", "hosts-add", "hosts-delete",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -48,6 +50,8 @@ type ServiceCmd struct {
 	BcastListen string    `json:"bcast_listen,omitempty"`
 	// DataDir is the filesystem path for outputs that need it ("oui-update").
 	DataDir     string    `json:"data_dir,omitempty"`
+	// HostsAdd carries parameters for the "hosts-add" command.
+	HostsAdd    *HostsAddParams `json:"hosts_add,omitempty"`
 }
 
 // ServiceMsg is sent by the service to the GUI.
@@ -96,6 +100,14 @@ type ServiceMsg struct {
 	RouteEntry   *RouteEntry `json:"route_entry,omitempty"`
 	// RouteSnapDone signals the end of a "route-snapshot" stream.
 	RouteSnapDone bool       `json:"route_snap_done,omitempty"`
+	// SocketEntry carries a single socket from a "socket-snapshot" stream.
+	SocketEntry   *SocketEntry `json:"socket_entry,omitempty"`
+	// SocketSnapDone signals the end of a "socket-snapshot" stream.
+	SocketSnapDone bool        `json:"socket_snap_done,omitempty"`
+	// HostsEntry carries a single hosts-file entry from a "hosts-snapshot" stream.
+	HostsEntry    *HostsEntry `json:"hosts_entry,omitempty"`
+	// HostsSnapDone signals the end of a "hosts-snapshot" stream.
+	HostsSnapDone bool        `json:"hosts_snap_done,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -155,6 +167,31 @@ type RouteEntry struct {
 	Protocol string `json:"protocol,omitempty"`
 	Type     string `json:"type,omitempty"`
 	Policy   uint32 `json:"policy,omitempty"`
+}
+
+// SocketEntry carries a single TCP or UDP socket entry streamed from service to GUI.
+type SocketEntry struct {
+	Proto      string `json:"proto"`               // TCP, TCP6, UDP, UDP6
+	LocalAddr  string `json:"local_addr"`
+	LocalPort  uint16 `json:"local_port"`
+	RemoteAddr string `json:"remote_addr,omitempty"`
+	RemotePort uint16 `json:"remote_port,omitempty"`
+	State      string `json:"state,omitempty"`     // TCP only
+	PID        uint32 `json:"pid,omitempty"`
+	Process    string `json:"process,omitempty"`
+}
+
+// HostsEntry carries a single hosts-file entry streamed from service to GUI.
+type HostsEntry struct {
+	IP        string   `json:"ip"`
+	Hostnames []string `json:"hostnames"`
+	Comment   string   `json:"comment,omitempty"`
+}
+
+// HostsAddParams carries the parameters for a "hosts-add" command.
+type HostsAddParams struct {
+	IP        string   `json:"ip"`
+	Hostnames []string `json:"hostnames"`
 }
 
 // NetBIOSMsg carries the result of a NetBIOS name query.
@@ -817,6 +854,54 @@ func RunServiceConn(conn net.Conn) error {
 			go func() {
 				err := DeleteRouteEntry(target)
 				op := &CacheOpResult{Op: "route-delete", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
+
+		case "socket-snapshot":
+			// One-shot: stream all TCP/UDP sockets and signal completion.
+			for _, e := range ReadSockets() {
+				entry := e
+				if werr := safeSend(ServiceMsg{SocketEntry: &entry}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{SocketSnapDone: true})
+
+		case "hosts-snapshot":
+			// One-shot: stream all hosts-file entries and signal completion.
+			for _, e := range ReadHostsFile() {
+				entry := e
+				if werr := safeSend(ServiceMsg{HostsEntry: &entry}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{HostsSnapDone: true})
+
+		case "hosts-add":
+			if cmd.HostsAdd == nil {
+				continue
+			}
+			ha := cmd.HostsAdd
+			go func() {
+				err := AddHostsEntry(ha.IP, ha.Hostnames)
+				op := &CacheOpResult{Op: "hosts-add", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
+
+		case "hosts-delete":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				err := DeleteHostsEntry(target)
+				op := &CacheOpResult{Op: "hosts-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
 				}
