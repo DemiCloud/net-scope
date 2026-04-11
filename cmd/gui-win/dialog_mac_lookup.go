@@ -18,13 +18,22 @@ const (
 	idMACEdit   = 1301
 	idMACLookup = 1302
 	idMACResult = 1303
-	idMACClose  = 1304
 )
 
 var (
-	hwndMACEdit   HWND
-	hwndMACResult HWND
+	hwndMACEdit      HWND
+	hwndMACResult    HWND
+	macEditOrigProc  uintptr
 )
+
+// macEditSubclassCb intercepts VK_ESCAPE so pressing Escape closes the dialog.
+var macEditSubclassCb = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
+	if uint32(msg) == WM_KEYDOWN && wParam == VK_ESCAPE {
+		closeModal(getParent(HWND(hwnd)))
+		return 0
+	}
+	return callWindowProc(macEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
+})
 
 var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch uint32(msg) {
@@ -39,8 +48,6 @@ var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		switch loword(wParam) {
 		case idMACLookup:
 			doMACLookup(HWND(hwnd))
-		case idMACClose:
-			closeModal(HWND(hwnd))
 		}
 		return 0
 
@@ -54,12 +61,17 @@ var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 func createMACLookupControls(hwnd HWND) {
 	inst := getModuleHandle()
 	const (
-		pad  int32 = 14
-		cw   int32 = 352 // client width
-		lblW int32 = 90
-		editW int32 = 170
+		pad   int32 = 14
+		cw    int32 = 380  // client width
+		lblW  int32 = 90
 		btnW  int32 = 70
+		gapLbl int32 = 6  // label → edit
+		gapBtn int32 = 8  // edit → button
 	)
+	// Edit fills the space between label and button, with pad on both sides.
+	editX := pad + lblW + gapLbl
+	btnX  := cw - pad - btnW
+	editW := btnX - gapBtn - editX
 
 	y := pad
 
@@ -69,25 +81,21 @@ func createMACLookupControls(hwnd HWND) {
 
 	hwndMACEdit, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
-		pad+lblW+4, y, editW, 22, hwnd, HMENU(idMACEdit), inst)
+		editX, y, editW, 22, hwnd, HMENU(idMACEdit), inst)
 
 	createCtrl("BUTTON", "Look Up",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-		pad+lblW+4+editW+6, y, btnW, 22, hwnd, idMACLookup, inst)
+		btnX, y, btnW, 22, hwnd, idMACLookup, inst)
 
-	y += 32
+	y += 36
 
-	// Row 2: result label (spans full width)
+	// Row 2: result label (spans full width minus padding)
 	hwndMACResult, _ = createWindowEx(0, "STATIC", "",
 		WS_CHILD|WS_VISIBLE,
 		pad, y, cw-pad*2, 36, hwnd, HMENU(idMACResult), inst)
 
-	y += 46
-
-	// Close button — right-aligned
-	createCtrl("BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-		cw-pad-btnW, y, btnW, 24, hwnd, idMACClose, inst)
+	// Subclass edit to close on Escape.
+	macEditOrigProc = setWindowLongPtr(hwndMACEdit, GWLP_WNDPROC, macEditSubclassCb)
 }
 
 func doMACLookup(hwnd HWND) {
@@ -131,8 +139,8 @@ func doMACLookup(hwnd HWND) {
 // showMACLookupDialog opens the MAC Vendor Lookup tool dialog.
 func showMACLookupDialog(parent HWND) {
 	const (
-		clientW int32 = 352
-		clientH int32 = 110
+		clientW int32 = 380
+		clientH int32 = 86  // pad + row + gap + result + pad
 		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
 	)
