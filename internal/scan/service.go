@@ -299,10 +299,36 @@ func RunServiceConn(conn net.Conn) error {
 	type svcRegKey struct {
 		ip   string
 		port int    // 0 for discovery-only services
-		sub  string // "source:type" for port-0 discovery services (empty for port services)
+		sub  string // service-type key for port-0 discovery services; source-agnostic
 	}
 	svcReg := map[svcRegKey]*Service{}
 	var svcRegMu sync.Mutex
+
+	// normalizeIP canonicalises the IP string so that IPv4 addresses compare
+	// equal regardless of whether they arrived from a 4-byte or 16-byte net.IP.
+	normalizeIP := func(ip string) string {
+		if p := net.ParseIP(ip); p != nil {
+			if p4 := p.To4(); p4 != nil {
+				return p4.String()
+			}
+			return p.String()
+		}
+		return ip
+	}
+
+	// mergeConf accumulates confidence from a new evidence source. The higher
+	// value is used as the base; the lower contributes a quarter of its value
+	// as a corroboration bonus. Result is capped at 100.
+	mergeConf := func(current, add uint8) uint8 {
+		if add > current {
+			current, add = add, current
+		}
+		sum := uint16(current) + uint16(add)/4
+		if sum > 100 {
+			return 100
+		}
+		return uint8(sum)
+	}
 
 	// upsertObs inserts or replaces a single observation by source+key.
 	upsertObs := func(obs []Observation, src, key, val string) []Observation {
@@ -320,6 +346,7 @@ func RunServiceConn(conn net.Conn) error {
 
 	// upsertPortSvc merges a PortService into the registry and emits SvcUpdate.
 	upsertPortSvc := func(ip string, ps PortService) {
+		ip = normalizeIP(ip)
 		key := svcRegKey{ip: ip, port: ps.Port}
 		now := time.Now()
 		svcRegMu.Lock()
@@ -337,9 +364,7 @@ func RunServiceConn(conn net.Conn) error {
 		if ps.Version != "" {
 			s.Version = ps.Version
 		}
-		if ps.Confidence > s.Confidence {
-			s.Confidence = ps.Confidence
-		}
+		s.Confidence = mergeConf(s.Confidence, ps.Confidence)
 		s.Obs = upsertObs(s.Obs, "banner", "name", ps.Name)
 		s.Obs = upsertObs(s.Obs, "banner", "version", ps.Version)
 		s.Obs = upsertObs(s.Obs, "banner", "banner", ps.Banner)
@@ -363,11 +388,15 @@ func RunServiceConn(conn net.Conn) error {
 
 	// upsertDiscoverySvc merges a ServiceInfo into the registry and emits SvcUpdate.
 	upsertDiscoverySvc := func(ip string, svc ServiceInfo) {
+		ip = normalizeIP(ip)
 		key := svcRegKey{ip: ip}
 		if svc.Port > 0 {
 			key.port = svc.Port
 		} else {
-			key.sub = svc.Source + ":" + svc.Type
+			// Source-agnostic: mDNS and SSDP reporting the same type without a
+			// port both map to the same entry. Port-0 entries cannot be merged
+			// with port-N entries; they represent device-level advertisements.
+			key.sub = svc.Type
 		}
 		now := time.Now()
 		friendlyName := ServiceFriendlyName(svc.Type)
@@ -390,8 +419,8 @@ func RunServiceConn(conn net.Conn) error {
 				FirstSeen:  now,
 			}
 			svcReg[key] = s
-		} else if conf > s.Confidence {
-			s.Confidence = conf
+		} else {
+			s.Confidence = mergeConf(s.Confidence, conf)
 		}
 		s.LastSeen = now
 		// Prefer the friendly protocol/type name; never overwrite a name
