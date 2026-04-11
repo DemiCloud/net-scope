@@ -35,7 +35,6 @@ import (
 const (
 	idWQWorkerList = 800
 	idWQList       = 801
-	idWQClose      = 802
 )
 
 var (
@@ -43,7 +42,6 @@ var (
 	hwndWQWorkerList   HWND // top section: named service workers
 	hwndWQList         HWND // bottom section: per-host scan queue
 	hwndWQSummary      HWND
-	hwndWQClose        HWND
 
 	// Named worker state — persists across dialog open/close; UI thread only.
 	wqWorkerMu     sync.Mutex
@@ -75,8 +73,6 @@ const wqExpireDelay = 10 * time.Second
 
 const (
 	wqPad         int32 = 8
-	wqBtnH        int32 = 28
-	wqBtnPad      int32 = 10
 	wqLblH        int32 = 16
 	wqWorkerListH int32 = 130 // fixed height for the Service Workers list (~5 rows)
 	wqSumH        int32 = 18
@@ -100,10 +96,13 @@ var wqWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uint
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
 
-	case WM_COMMAND:
-		if loword(wParam) == idWQClose {
+	case WM_KEYDOWN:
+		if wParam == VK_ESCAPE {
 			closeWorkerQueueDialog()
 		}
+		return 0
+
+	case WM_COMMAND:
 		return 0
 
 	case WM_SIZE:
@@ -153,8 +152,7 @@ func createWQControls(hwnd HWND) {
 		wqPad, y, cW-wqPad*2, wqLblH, hwnd, 0, inst)
 	y += wqLblH + 2
 
-	btnY := cH - wqBtnPad - wqBtnH
-	sumY := btnY - 4 - wqSumH
+	sumY := cH - wqPad - wqSumH
 	listH := sumY - 4 - y
 	if listH < 40 {
 		listH = 40
@@ -172,10 +170,6 @@ func createWQControls(hwnd HWND) {
 	hwndWQSummary, _ = createWindowEx(0, "STATIC", "No scan in progress.",
 		WS_CHILD|WS_VISIBLE|SS_LEFT,
 		wqPad, sumY, cW-wqPad*2, wqSumH, hwnd, 0, inst)
-
-	// Close button.
-	hwndWQClose = makePushButton(hwnd, "Close", idWQClose,
-		cW-wqPad-80, btnY, 80, wqBtnH)
 }
 
 func resizeWQControls(hwnd HWND) {
@@ -186,8 +180,7 @@ func resizeWQControls(hwnd HWND) {
 	cW, cH := r.Right, r.Bottom
 
 	scanTop := wqScanListTop()
-	btnY := cH - wqBtnPad - wqBtnH
-	sumY := btnY - 4 - wqSumH
+	sumY := cH - wqPad - wqSumH
 	listH := sumY - 4 - scanTop
 	if listH < 40 {
 		listH = 40
@@ -199,8 +192,6 @@ func resizeWQControls(hwnd HWND) {
 		wqPad, scanTop, cW-wqPad*2, listH, SWP_NOZORDER|SWP_NOACTIVATE)
 	setWindowPos(hwndWQSummary, 0,
 		wqPad, sumY, cW-wqPad*2, wqSumH, SWP_NOZORDER|SWP_NOACTIVATE)
-	setWindowPos(hwndWQClose, 0,
-		cW-wqPad-80, btnY, 80, wqBtnH, SWP_NOZORDER|SWP_NOACTIVATE)
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +254,6 @@ func closeWorkerQueueDialog() {
 		hwndWQWorkerList = 0
 		hwndWQList = 0
 		hwndWQSummary = 0
-		hwndWQClose = 0
 		wqWorkerRowByName = nil
 		wqRowByIP = nil
 		wqIPByRow = nil
