@@ -3,6 +3,7 @@
 package guiwin
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -39,6 +40,8 @@ const (
 	idSvcDetailClose    = 740
 	idSvcDetailViewHost = 741
 	idSvcDetailObsList  = 742 // listview control ID
+	idSvcDetailCopy     = 743 // Copy ▾ footer button
+	idSvcDetailCopyFP   = 744 // popup menu: service fingerprint
 )
 
 // Dialog-local handles.
@@ -46,6 +49,7 @@ var (
 	hwndSvcSummary HWND // identity body EDIT
 	hwndSvcObsList HWND // observations listview
 	hwndSvcObsHint HWND // "No observations" overlay
+	hwndSvcCopyBtn HWND // Copy ▾ footer button
 )
 
 // currentSvcDetail holds the service currently shown in the service detail dialog.
@@ -71,6 +75,10 @@ var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		switch loword(wParam) {
 		case idSvcDetailClose:
 			closeModal(HWND(hwnd))
+		case idSvcDetailCopy:
+			if !shouldSuppressDropdown(HWND(lParam)) {
+				showSvcCopyMenu(HWND(hwnd))
+			}
 		case idSvcDetailViewHost:
 			ip := currentSvcDetail.IP
 			closeModal(HWND(hwnd))
@@ -139,9 +147,7 @@ func createSvcDetailControls(hwnd HWND) {
 	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
 	y += 10
 
-	// ── Section 3: Observations ───────────────────────────────────────────
-	createCtrl("STATIC", "Observations", WS_CHILD|WS_VISIBLE, pad, y+2, 110, 14, hwnd, 0, inst)
-	y += 20
+	// Attributes listview
 
 	const btnRowH int32 = pad + 28 + pad
 	obsH := cH - y - btnRowH
@@ -165,6 +171,9 @@ func createSvcDetailControls(hwnd HWND) {
 	// Footer.
 	btnY := cH - pad - 28
 	makePushButton(hwnd, "View Host", idSvcDetailViewHost, pad, btnY, 90, 28)
+	hwndSvcCopyBtn, _ = createWindowEx(0, "BUTTON", "Copy \u25be",
+		WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+		pad+90+8, btnY, 80, 28, hwnd, HMENU(idSvcDetailCopy), inst)
 	makePushButton(hwnd, "Close", idSvcDetailClose, cW-pad-80, btnY, 80, 28)
 }
 
@@ -224,6 +233,27 @@ func svcDetailPopulateObservations(s scan.Service) {
 	if s.ID != "" {
 		svcDetailAddObsRow("Service ID", s.ID)
 	}
+}
+
+// showSvcCopyMenu shows a dropdown from the service detail Copy ▾ button.
+func showSvcCopyMenu(hwnd HWND) {
+	menu := createPopupMenu()
+	appendMenu(menu, MF_STRING, idSvcDetailCopyFP, "Service Fingerprint")
+	cmd := popupMenuFromButton(hwnd, menu, hwndSvcCopyBtn)
+	destroyMenu(menu)
+	if int32(cmd) == idSvcDetailCopyFP {
+		svcDetailCopyFP(hwnd)
+	}
+}
+
+// svcDetailCopyFP serialises all service evidence for the current service
+// as JSON and puts it on the clipboard. Intended for developer diagnostics.
+func svcDetailCopyFP(hwnd HWND) {
+	b, err := json.MarshalIndent(currentSvcDetail, "", "    ")
+	if err != nil {
+		return
+	}
+	copyToClipboard(hwnd, string(b))
 }
 
 // obsKeyLabel maps an observation key to a human-readable column label.
