@@ -52,6 +52,25 @@ func listViewSetColumnHeader(hwnd HWND, idx int32, title string) {
 // Row / cell access
 // ---------------------------------------------------------------------------
 
+// listViewAppendRow inserts a new row at the end of hwnd populated with the
+// given column texts. cols[0] is the primary item text; cols[1:] are set as
+// sub-items. Returns the new row index, or -1 on failure.
+func listViewAppendRow(hwnd HWND, cols []string) int32 {
+	if len(cols) == 0 {
+		return -1
+	}
+	p := utf16(cols[0])
+	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
+	row := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	if row < 0 {
+		return -1
+	}
+	for c, text := range cols[1:] {
+		setSubItem(hwnd, row, int32(c+1), text)
+	}
+	return row
+}
+
 // setSubItem sets the text for column col of an existing row.
 func setSubItem(hwnd HWND, row, col int32, text string) {
 	t := utf16(text)
@@ -319,12 +338,7 @@ func lvTextSort(hwnd HWND, numCols int32, col int32, asc bool) {
 	})
 	sendMessage(hwnd, LVM_DELETEALLITEMS, 0, 0)
 	for _, rowData := range rows {
-		p := utf16(rowData[0])
-		item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
-		newRow := int32(sendMessage(hwnd, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-		for c := int32(1); c < numCols; c++ {
-			setSubItem(hwnd, newRow, c, rowData[c])
-		}
+		listViewAppendRow(hwnd, rowData)
 	}
 }
 
