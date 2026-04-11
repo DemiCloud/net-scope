@@ -98,15 +98,17 @@ var arpCacheWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndARPList, row, int32(len(arpColTitles))))
 			}
 		case idARPDelete:
-			ip := listViewSelectedText(hwndARPList, 0)
-			if ip != "" && ip != "\u2014" {
-				if !serviceElevated {
-					messageBox(HWND(hwnd),
-						"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar to restart the sensor with admin rights.",
-						"ARP Cache", MB_ICONINFORMATION)
-					return 0
+			if !serviceElevated {
+				messageBox(HWND(hwnd),
+					"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar to restart the sensor with admin rights.",
+					"ARP Cache", MB_ICONINFORMATION)
+				return 0
+			}
+			for _, r := range listViewGetSelectedRows(hwndARPList) {
+				ip := listViewGetCellText(hwndARPList, r, 0)
+				if ip != "" && ip != "\u2014" {
+					requestARPDelete(ip)
 				}
-				requestARPDelete(ip)
 			}
 		}
 		return 0
@@ -260,15 +262,17 @@ func showARPContextMenu(parent HWND, row int32, pt POINT) {
 			copyToClipboard(parent, listViewGetRowTSV(hwndARPList, row, int32(len(arpColTitles))))
 		}
 	case idARPDelete:
-		ip := listViewSelectedText(hwndARPList, 0)
-		if ip != "" && ip != "\u2014" {
-			if !serviceElevated {
-				messageBox(parent,
-					"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar.",
-					"ARP Cache", MB_ICONINFORMATION)
-				return
+		if !serviceElevated {
+			messageBox(parent,
+				"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar.",
+				"ARP Cache", MB_ICONINFORMATION)
+			return
+		}
+		for _, r := range listViewGetSelectedRows(hwndARPList) {
+			ip := listViewGetCellText(hwndARPList, r, 0)
+			if ip != "" && ip != "\u2014" {
+				requestARPDelete(ip)
 			}
-			requestARPDelete(ip)
 		}
 	default:
 		rows := listViewGetSelectedRows(hwndARPList)

@@ -39,9 +39,10 @@ const (
 	idDNSClearAll = 1503
 
 	// Right-click context menu IDs.
-	idDNSCopyName = 1510
-	idDNSCopyType = 1511
-	idDNSCopyRow  = 1512
+	idDNSCopyName    = 1510
+	idDNSCopyType    = 1511
+	idDNSCopyRow     = 1512
+	idDNSDeleteEntry = 1513
 )
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,21 @@ var dnsCacheWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			row := int32(sendMessage(hwndDNSList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
 			if row >= 0 {
 				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndDNSList, row, int32(len(dnsColTitles))))
+			}
+		case idDNSDeleteEntry:
+			rows := listViewGetSelectedRows(hwndDNSList)
+			if len(rows) == 0 {
+				break
+			}
+			if !serviceRunning() {
+				messageBox(HWND(hwnd), "Sensor service is not running. Start the sensor and try again.", "DNS Cache", MB_ICONINFORMATION)
+				break
+			}
+			for _, r := range rows {
+				name := listViewGetCellText(hwndDNSList, r, 0)
+				if name != "" {
+					requestDNSDelete(name)
+				}
 			}
 		}
 		return 0
@@ -228,6 +244,8 @@ func showDNSContextMenu(parent HWND, row int32, pt POINT) {
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 	appendCopyAsSubmenu(menu)
 	appendMenu(menu, MF_SEPARATOR, 0, "")
+	appendMenu(menu, mf(MF_STRING), idDNSDeleteEntry, "Delete Entry")
+	appendMenu(menu, MF_SEPARATOR, 0, "")
 	appendMenu(menu, MF_STRING, idDNSClearAll, "Clear All Cache")
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, pt.X, pt.Y, parent)
@@ -239,6 +257,20 @@ func showDNSContextMenu(parent HWND, row int32, pt POINT) {
 	case idDNSCopyRow:
 		if row >= 0 {
 			copyToClipboard(parent, listViewGetRowTSV(hwndDNSList, row, int32(len(dnsColTitles))))
+		}
+	case idDNSDeleteEntry:
+		selRows := listViewGetSelectedRows(hwndDNSList)
+		if len(selRows) > 0 {
+			if !serviceRunning() {
+				messageBox(parent, "Sensor service is not running. Start the sensor and try again.", "DNS Cache", MB_ICONINFORMATION)
+			} else {
+				for _, r := range selRows {
+					name := listViewGetCellText(hwndDNSList, r, 0)
+					if name != "" {
+						requestDNSDelete(name)
+					}
+				}
+			}
 		}
 	case idDNSClearAll:
 		dnsConfirmClearAll(parent)

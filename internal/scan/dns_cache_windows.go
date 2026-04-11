@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	dnsapiDLL                 = syscall.NewLazyDLL("dnsapi.dll")
-	kernel32DLL               = syscall.NewLazyDLL("kernel32.dll")
-	procDnsGetCacheDataTable  = dnsapiDLL.NewProc("DnsGetCacheDataTable")
-	procDnsFlushResolverCache = dnsapiDLL.NewProc("DnsFlushResolverCache")
-	procLocalFree             = kernel32DLL.NewProc("LocalFree")
+	dnsapiDLL                      = syscall.NewLazyDLL("dnsapi.dll")
+	kernel32DLL                     = syscall.NewLazyDLL("kernel32.dll")
+	procDnsGetCacheDataTable        = dnsapiDLL.NewProc("DnsGetCacheDataTable")
+	procDnsFlushResolverCache       = dnsapiDLL.NewProc("DnsFlushResolverCache")
+	procDnsFlushResolverCacheEntryW = dnsapiDLL.NewProc("DnsFlushResolverCacheEntry_W")
+	procLocalFree                   = kernel32DLL.NewProc("LocalFree")
 )
 
 // dnsCacheEntryW mirrors the DNS_CACHE_ENTRY structure returned by
@@ -110,6 +111,27 @@ func FlushDNSCache() error {
 	r, _, _ := procDnsFlushResolverCache.Call()
 	if r == 0 {
 		return fmt.Errorf("DnsFlushResolverCache failed (may require elevation)")
+	}
+	return nil
+}
+
+// DeleteDNSCacheEntry removes the resolver-cache entries for a single DNS
+// name. Requires the DNS Client service to be running; usually does not
+// require administrator privileges.
+func DeleteDNSCacheEntry(name string) error {
+	if err := procDnsFlushResolverCacheEntryW.Find(); err != nil {
+		return fmt.Errorf("DnsFlushResolverCacheEntry_W not available: %w", err)
+	}
+	ptr, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return fmt.Errorf("invalid DNS name %q: %w", name, err)
+	}
+	r, _, lastErr := procDnsFlushResolverCacheEntryW.Call(uintptr(unsafe.Pointer(ptr)))
+	if r == 0 {
+		if lastErr != nil && lastErr != syscall.Errno(0) {
+			return fmt.Errorf("DnsFlushResolverCacheEntry_W(%q): %w", name, lastErr)
+		}
+		return fmt.Errorf("DnsFlushResolverCacheEntry_W(%q) failed", name)
 	}
 	return nil
 }

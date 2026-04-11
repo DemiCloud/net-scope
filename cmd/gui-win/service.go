@@ -536,6 +536,12 @@ func requestDNSSnapshot() bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "dns-snapshot"})
 }
 
+// requestDNSDelete asks the (elevated) service to remove the DNS cache entry
+// for the given hostname. The result arrives as WM_CACHE_OP.
+func requestDNSDelete(name string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "dns-delete", Target: name})
+}
+
 // requestDNSClear asks the service to flush the DNS resolver cache.
 // The result arrives as WM_CACHE_OP posted to hwndDNSCacheDialogAtomic.
 func requestDNSClear() bool {
