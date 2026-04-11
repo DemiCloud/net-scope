@@ -2,6 +2,8 @@ package scan
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -150,8 +152,16 @@ func loadOUI(dataDir string) (map[string]string, string) {
 			}
 		}
 	}
-	// Fall back to embedded data.
-	return parseOUIJSONReader(strings.NewReader(string(embeddedOUI))), "embedded"
+	// Fall back to embedded data (gzip-compressed in with_oui builds).
+	var r io.Reader = bytes.NewReader(embeddedOUI)
+	if len(embeddedOUI) >= 2 && embeddedOUI[0] == 0x1f && embeddedOUI[1] == 0x8b {
+		gr, err := gzip.NewReader(r)
+		if err == nil {
+			defer gr.Close()
+			r = gr
+		}
+	}
+	return parseOUIJSONReader(r), "embedded"
 }
 
 // ouiEntry matches the maclookup.app JSON schema.
