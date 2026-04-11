@@ -37,6 +37,37 @@ var svcTypeFriendly = map[string]string{
 	"_xmpp-client._tcp":    "XMPP",
 }
 
+// svcTypeWellKnownPort maps mDNS/DNS-SD service type strings to their standard
+// TCP/UDP port numbers. Used by upsertDiscoverySvc to merge port-0 mDNS
+// announcements (partial entries without an SRV record yet) into the same
+// registry key as banner-scanned or SRV-resolved entries on the same host.
+// Only types that reliably correspond to a single well-known port are listed.
+var svcTypeWellKnownPort = map[string]int{
+	"_ftp._tcp":          21,
+	"_ssh._tcp":          22,
+	"_telnet._tcp":       23,
+	"_smtp._tcp":         25,
+	"_http._tcp":         80,
+	"_ldap._tcp":         389,
+	"_https._tcp":        443,
+	"_smb._tcp":          445,
+	"_afp._tcp":          548,
+	"_ipp._tcp":          631,
+	"_printer._tcp":      631,
+	"_daap._tcp":         3689,
+	"_xmpp-client._tcp":  5222,
+	"_amqp._tcp":         5672,
+	"_mqtt._tcp":         1883,
+	"_nfs._tcp":          2049,
+}
+
+// SvcTypeWellKnownPort returns the standard port for a mDNS service type, or
+// 0 if no reliable single-port mapping exists.
+func SvcTypeWellKnownPort(svcType string) int {
+	t := strings.TrimSuffix(strings.TrimSuffix(svcType, ".local."), ".")
+	return svcTypeWellKnownPort[t]
+}
+
 // ServiceFriendlyName returns a human-readable display name for the given
 // service type identifier. Works for:
 //   - mDNS/DNS-SD types: "_airplay._tcp" → "AirPlay"
