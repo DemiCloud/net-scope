@@ -224,9 +224,14 @@ var (
 	pendingDNSSnapMu sync.Mutex
 
 	// pendingCacheOps carries cache operation results (arp-delete/clear,
-	// dns-clear) from the service to the relevant dialog via WM_CACHE_OP.
+	// dns-delete/clear, route-delete) from the service to the relevant dialog via WM_CACHE_OP.
 	pendingCacheOps   []scan.CacheOpResult
 	pendingCacheOpMu  sync.Mutex
+
+	// pendingRouteSnap carries routing-table entries from the sensor service
+	// to the Route Table dialog via WM_ROUTE_SNAP_ENTRY.
+	pendingRouteSnap   []scan.RouteEntry
+	pendingRouteSnapMu sync.Mutex
 
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
@@ -852,6 +857,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showARPCacheDialog(HWND(hwnd))
 		case IDM_TOOLS_DNS_CACHE:
 			showDNSCacheDialog(HWND(hwnd))
+		case IDM_TOOLS_ROUTE_TABLE:
+			showRouteTableDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1243,6 +1250,22 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DNS_SNAP_DONE:
 		dnsCacheDialogLoadingDone()
+		return 0
+
+	case WM_ROUTE_SNAP_ENTRY:
+		pendingRouteSnapMu.Lock()
+		var entry scan.RouteEntry
+		if int(wParam) < len(pendingRouteSnap) {
+			entry = pendingRouteSnap[int(wParam)]
+		}
+		pendingRouteSnapMu.Unlock()
+		if entry.Dest != "" {
+			routeTableDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_ROUTE_SNAP_DONE:
+		routeTableDialogLoadingDone()
 		return 0
 
 	case WM_CACHE_OP:
@@ -2807,6 +2830,8 @@ func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 		arpCacheDialogRefresh()
 	case "dns-delete", "dns-clear":
 		dnsCacheDialogRefresh()
+	case "route-delete":
+		routeTableDialogRefresh()
 	}
 }
 
