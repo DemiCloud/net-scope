@@ -196,6 +196,15 @@ Do **not** push automatically; only commit locally unless the user explicitly as
   control layout, font application, message routing, etc.), add it to `fw_win32.go`
   or `fw_dialog.go` first and consume it from there. Standardise and deduplicate
   rather than copy-pasting into individual dialogs or WndProcs.
+- **Use existing framework interfaces — never reimplement them.** Before writing
+  raw Win32 calls (e.g. `LVITEM` / `LVM_INSERTITEM` / `setSubItem` sequences,
+  `LVM_SETITEM`, `LVM_HITTEST`, etc.) check whether a helper already exists in
+  `fw_listview.go` or `fw_win32.go` that covers the pattern. Examples:
+  `listViewAppendRow`, `listViewGetCellText`, `listViewGetSelectedRows`,
+  `listViewAddColumn`, `subclassListViewManaged`, `setSubItem`, `lvTextSort`,
+  `runModal` / `closeModal`, `registerDialogClass`, `ctlColorDialog`.
+  If a helper is missing but the pattern appears in more than one place, add it
+  to the appropriate `fw_*.go` file and use it from both sites.
 - The modal dialog pattern uses `runModal` / `closeModal` in `fw_dialog.go`.
   `enableWindow(parent, true)` must be called **before** `destroyWindow` to
   avoid focus going to the desktop.
