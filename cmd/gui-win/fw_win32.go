@@ -261,6 +261,18 @@ const (
 	// Header control messages.
 	HDM_HITTEST = 0x1206 // HDM_FIRST(0x1200) + 6
 
+	// Tooltip control
+	TOOLTIPS_CLASS     = "tooltips_class32"
+	TTS_ALWAYSTIP      = 0x0001 // show tip even when owner is not active
+	TTS_NOPREFIX       = 0x0002 // do not strip '&' accelerator prefixes
+	TTM_ACTIVATE       = 0x0401 // WM_USER + 1 : enable/disable tooltip
+	TTM_SETDELAYTIME   = 0x0403 // WM_USER + 3 : set one of the delay times
+	TTM_ADDTOOL        = 0x0432 // WM_USER + 50 (W): register a tool
+	TTM_SETMAXTIPWIDTH = 0x0418 // WM_USER + 24: set line-wrap width
+	TTDT_AUTOPOP       = 2      // SETDELAYTIME selector: how long tip stays
+	TTF_IDISHWND       = 0x0001 // uId in TOOLINFO is an HWND
+	TTF_SUBCLASS       = 0x0010 // tooltip auto-subclasses the tool window
+
 	// StatusBar
 	SB_SETTEXT    = 0x040B
 	SB_SETPARTS   = 0x0404
@@ -519,6 +531,31 @@ type WINDOWPLACEMENT struct {
 
 // HMONITOR is the handle type for a display monitor.
 type HMONITOR uintptr
+
+// TOOLINFO (TTTOOLINFOW) is the structure passed to TTM_ADDTOOL.
+//
+// Memory layout on x64 (72 bytes):
+//
+//	offset  0  CbSize     uint32
+//	offset  4  UFlags     uint32
+//	offset  8  Hwnd       HWND      (uintptr)
+//	offset 16  UId        uintptr
+//	offset 24  Rect       RECT      (4×int32)
+//	offset 40  HInst      HINSTANCE (uintptr)
+//	offset 48  LpszText   *uint16
+//	offset 56  LParam     uintptr
+//	offset 64  LpReserved uintptr
+type TOOLINFO struct {
+	CbSize     uint32
+	UFlags     uint32
+	Hwnd       HWND
+	UId        uintptr
+	Rect       RECT
+	HInst      HINSTANCE
+	LpszText   *uint16
+	LParam     uintptr
+	LpReserved uintptr
+}
 
 // OPENFILENAME is the structure passed to GetSaveFileNameW.
 type OPENFILENAME struct {
@@ -1396,4 +1433,80 @@ func regReadOpenCommand(scheme string) string {
 	}
 	// Step 2: system-level fallback.
 	return regReadStringValue(HKEY_CLASSES_ROOT, scheme+`\shell\open\command`, "")
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip
+// ---------------------------------------------------------------------------
+
+// Tooltip is a thin wrapper around the Win32 tooltip control window handle.
+//
+// Usage:
+//
+//	tt := newTooltip(hwndParent)
+//	tt.add(hwndButton1, "Export current results")
+//	tt.add(hwndButton2, "Open settings")
+//	// … in WM_DESTROY:
+//	tt.destroy()
+type Tooltip HWND
+
+// newTooltip creates a tooltip control window owned by parent.
+//
+// The window is created with WS_EX_TOPMOST so the tip floats above all
+// other content.  TTS_ALWAYSTIP ensures tips appear even when the owning
+// window is not the active foreground window.  TTS_NOPREFIX prevents
+// stripping '&' characters that may appear in button labels used as tips.
+//
+// A maximum tip width of 300 px is set immediately so long strings wrap
+// instead of producing a single unreadable horizontal line.
+//
+// Returns 0 if CreateWindowEx fails (treat like a nil handle — add and
+// destroy are no-ops on a zero Tooltip).
+func newTooltip(parent HWND) Tooltip {
+	tt, _ := createWindowEx(
+		WS_EX_TOPMOST,
+		TOOLTIPS_CLASS, "",
+		WS_POPUP|TTS_ALWAYSTIP|TTS_NOPREFIX,
+		0, 0, 0, 0,
+		parent, 0, getModuleHandle(),
+	)
+	if tt == 0 {
+		return 0
+	}
+	sendMessage(tt, TTM_ACTIVATE, 1, 0)
+	sendMessage(tt, TTM_SETMAXTIPWIDTH, 0, 300)
+	return Tooltip(tt)
+}
+
+// add registers tool as a tooltip target with the given text.
+//
+// TTF_IDISHWND tells the tooltip that uId is a window handle rather than an
+// application-defined integer, so it tracks the entire client area of tool.
+// TTF_SUBCLASS makes the tooltip install a WH_GETMESSAGE hook on tool so
+// callers do not need to relay WM_MOUSEMOVE / WM_LBUTTONDOWN messages.
+//
+// The TOOLINFO.hwnd field is set to tool's parent window as required by the
+// Win32 specification when TTF_IDISHWND is used.
+//
+// add is a no-op when tt == 0.
+func (tt Tooltip) add(tool HWND, text string) {
+	if tt == 0 {
+		return
+	}
+	ti := TOOLINFO{
+		UFlags:   TTF_IDISHWND | TTF_SUBCLASS,
+		Hwnd:     getParent(tool),
+		UId:      uintptr(tool),
+		LpszText: utf16(text),
+	}
+	ti.CbSize = uint32(unsafe.Sizeof(ti))
+	sendMessage(HWND(tt), TTM_ADDTOOL, 0, uintptr(unsafe.Pointer(&ti)))
+}
+
+// destroy tears down the tooltip window.  Call once from the owning window's
+// WM_DESTROY handler.  Safe to call on a zero Tooltip.
+func (tt Tooltip) destroy() {
+	if tt != 0 {
+		destroyWindow(HWND(tt))
+	}
 }

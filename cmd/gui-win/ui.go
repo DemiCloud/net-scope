@@ -88,6 +88,10 @@ var (
 	// across all tabs.  Both are direct children of the main window.
 	hwndSearchEdit  HWND
 	hwndSearchClose HWND
+
+	// mainTooltip provides hover tips for toolbar buttons in the main window.
+	// Created in createControls; destroyed in WM_DESTROY.
+	mainTooltip Tooltip
 )
 
 // ---------------------------------------------------------------------------
@@ -1164,6 +1168,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			})
 		}
 		killTimer(HWND(hwnd), IDT_DECAY)
+		mainTooltip.destroy()
 		stopScan()
 		stopService()
 		stopBroadcastListener()
@@ -1510,6 +1515,14 @@ func createFindBar(parent HWND) {
 	sendMessage(hwndSearchClose, WM_SETFONT, uintptr(appFont), 1)
 	// Subclass the edit to intercept Escape.
 	searchEditOrigProc = setWindowLongPtr(hwndSearchEdit, GWLP_WNDPROC, uintptr(searchEditSubclassCb))
+
+	// ---- tooltips for toolbar buttons ----
+	mainTooltip = newTooltip(parent)
+	mainTooltip.add(hwndServiceBtn, "Relaunch the sensor service as Administrator to enable DHCP capture and raw-socket port scanning")
+	mainTooltip.add(hwndProxyCheck, "Route all scans through the configured SOCKS5 proxy — multicast listeners (mDNS, SSDP, WSD, DHCP) are disabled in this mode")
+	mainTooltip.add(hwndDetect, "Auto-fill the Target field with your local subnet (e.g. 192.168.1.0/24) by detecting the machine\u2019s primary network interface")
+	mainTooltip.add(hwndActiveOnly, "Hide hosts that did not respond to probing — uncheck to show every scanned address")
+	mainTooltip.add(hwndSearchClose, "Close find bar (Esc)")
 }
 
 // showFindBar makes the find bar visible for the currently active tab
