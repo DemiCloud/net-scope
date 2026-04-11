@@ -31,6 +31,7 @@ type ServiceCmd struct {
 	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
 	// "arp-snapshot", "arp-delete", "arp-clear",
 	// "dns-snapshot", "dns-delete", "dns-clear",
+	// "route-snapshot", "route-delete",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -88,8 +89,13 @@ type ServiceMsg struct {
 	DNSEntry   *DNSCacheEntry `json:"dns_entry,omitempty"`
 	// DNSSnapDone signals the end of a "dns-snapshot" stream.
 	DNSSnapDone bool          `json:"dns_snap_done,omitempty"`
-	// CacheOp carries the result of an "arp-delete", "arp-clear", or "dns-clear" command.
+	// CacheOp carries the result of an "arp-delete", "arp-clear", "dns-delete",
+	// "dns-clear", or "route-delete" command.
 	CacheOp    *CacheOpResult `json:"cache_op,omitempty"`
+	// RouteEntry carries a single routing-table entry ("route-snapshot" stream).
+	RouteEntry   *RouteEntry `json:"route_entry,omitempty"`
+	// RouteSnapDone signals the end of a "route-snapshot" stream.
+	RouteSnapDone bool       `json:"route_snap_done,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -132,11 +138,23 @@ type DNSCacheEntry struct {
 }
 
 // CacheOpResult carries the result of a cache-manipulation command:
-// "arp-delete", "arp-clear", "dns-delete", or "dns-clear".
+// "arp-delete", "arp-clear", "dns-delete", "dns-clear", or "route-delete".
 type CacheOpResult struct {
 	Op  string `json:"op"`
 	OK  bool   `json:"ok"`
 	Err string `json:"err,omitempty"`
+}
+
+// RouteEntry carries a single IPv4 routing-table entry streamed from service to GUI.
+type RouteEntry struct {
+	Dest     string `json:"dest"`
+	Mask     string `json:"mask"`
+	Gateway  string `json:"gateway"`
+	IfIndex  uint32 `json:"if_index,omitempty"`
+	Metric   uint32 `json:"metric,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Policy   uint32 `json:"policy,omitempty"`
 }
 
 // NetBIOSMsg carries the result of a NetBIOS name query.
@@ -775,6 +793,30 @@ func RunServiceConn(conn net.Conn) error {
 			go func() {
 				err := FlushDNSCache()
 				op := &CacheOpResult{Op: "dns-clear", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
+
+		case "route-snapshot":
+			// One-shot: stream the full routing table and signal completion.
+			for _, e := range ReadRouteTable() {
+				entry := e
+				if werr := safeSend(ServiceMsg{RouteEntry: &entry}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{RouteSnapDone: true})
+
+		case "route-delete":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				err := DeleteRouteEntry(target)
+				op := &CacheOpResult{Op: "route-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
 				}

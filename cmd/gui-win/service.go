@@ -52,6 +52,10 @@ var (
 	// hwndDNSCacheDialogAtomic holds the HWND of the currently-open DNS
 	// Cache dialog, or 0. Used to route dns-snapshot and cache-op messages.
 	hwndDNSCacheDialogAtomic uintptr
+
+	// hwndRouteTableDialogAtomic holds the HWND of the currently-open Route
+	// Table dialog, or 0. Used to route route-snapshot and cache-op messages.
+	hwndRouteTableDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -283,10 +287,23 @@ func spawnService(hwnd HWND, elevated bool) {
 				idx := len(pendingCacheOps)
 				pendingCacheOps = append(pendingCacheOps, *m.CacheOp)
 				pendingCacheOpMu.Unlock()
-				// Route to main window (handler in ui.go) if either cache dialog is open.
+				// Route to main window (handler in ui.go) if any cache dialog is open.
 				if atomic.LoadUintptr(&hwndARPCacheDialogAtomic) != 0 ||
-					atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 {
+					atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 ||
+					atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 {
 					postMessage(hwnd, WM_CACHE_OP, uintptr(idx), 0)
+				}
+			} else if m.RouteEntry != nil {
+				if atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 {
+					pendingRouteSnapMu.Lock()
+					idx := len(pendingRouteSnap)
+					pendingRouteSnap = append(pendingRouteSnap, *m.RouteEntry)
+					pendingRouteSnapMu.Unlock()
+					postMessage(hwnd, WM_ROUTE_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.RouteSnapDone {
+				if atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 {
+					postMessage(hwnd, WM_ROUTE_SNAP_DONE, 0, 0)
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
@@ -546,4 +563,18 @@ func requestDNSDelete(name string) bool {
 // The result arrives as WM_CACHE_OP posted to hwndDNSCacheDialogAtomic.
 func requestDNSClear() bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "dns-clear"})
+}
+
+// requestRouteSnapshot sends a "route-snapshot" command; entries arrive as
+// WM_ROUTE_SNAP_ENTRY posted to the main window, followed by WM_ROUTE_SNAP_DONE.
+// Returns false if the service is not running.
+func requestRouteSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "route-snapshot"})
+}
+
+// requestRouteDelete asks the (elevated) service to remove a routing-table
+// entry. target is "dest|mask|gateway" in dotted-decimal notation.
+// The result arrives as WM_CACHE_OP.
+func requestRouteDelete(target string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "route-delete", Target: target})
 }

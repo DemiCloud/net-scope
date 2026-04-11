@@ -40,7 +40,9 @@ const (
 	WM_ARP_SNAP_DONE   = WM_APP + 28 // sensor service: ARP snapshot stream complete
 	WM_DNS_SNAP_ENTRY  = WM_APP + 29 // sensor service: one DNS cache entry arrived
 	WM_DNS_SNAP_DONE   = WM_APP + 30 // sensor service: DNS snapshot stream complete
-	WM_CACHE_OP        = WM_APP + 31 // sensor service: cache operation result (arp-delete/clear, dns-clear)
+	WM_CACHE_OP        = WM_APP + 31 // sensor service: cache operation result (arp-delete/clear, dns-delete/clear, route-delete)
+	WM_ROUTE_SNAP_ENTRY = WM_APP + 32 // sensor service: one routing-table entry arrived
+	WM_ROUTE_SNAP_DONE  = WM_APP + 33 // sensor service: route-snapshot stream complete
 )
 
 // ---------------------------------------------------------------------------
@@ -102,6 +104,7 @@ const (
 	IDM_TOOLS_MAC_LOOKUP      = 217 // Tools > MAC Vendor Lookup…
 	IDM_TOOLS_ARP_CACHE       = 218 // Tools > ARP Cache…
 	IDM_TOOLS_DNS_CACHE       = 219 // Tools > DNS Cache…
+	IDM_TOOLS_ROUTE_TABLE     = 220 // Tools > Route Table…
 )
 
 // ---------------------------------------------------------------------------
