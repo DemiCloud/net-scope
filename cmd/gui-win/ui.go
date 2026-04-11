@@ -1454,7 +1454,7 @@ func createControls(hwnd HWND) {
 		0, otherTop, 1160, 600, hwnd, IDC_LIST_SERVICES, inst)
 	sendMessage(hwndListServices, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
 		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
-	subclassListViewManaged(hwndListServices, svcTabColTitles, svcTabColVis, svcTabDefWidths, nil, nil)
+	subclassListViewManaged(hwndListServices, svcTabColTitles, svcTabColVis, svcTabDefWidths, applySvcTabSort, nil)
 	for i, title := range svcTabColTitles {
 		if i == 4 { // Port: right-align
 			listViewAddColumnFmt(hwndListServices, int32(i), title, scale(svcTabDefWidths[i]), LVCFMT_RIGHT)

@@ -1340,6 +1340,34 @@ func applyDHCPSort(_ HWND, col int32, asc bool) {
 	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), col, asc)
 }
 
+// applySvcTabSort sorts the Services listview and rebuilds svcTabIDToRow and
+// svcTabRowEntry so that upsert and double-click remain correct after a sort.
+func applySvcTabSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
+		return
+	}
+	// Snapshot name+ip → service before row indices change.
+	type nameIPKey struct{ name, ip string }
+	keyToSvc := make(map[nameIPKey]scan.Service, len(svcTabRowEntry))
+	for _, s := range svcTabRowEntry {
+		keyToSvc[nameIPKey{svcFriendlyName(s), s.IP}] = s
+	}
+	lvTextSort(hwndListServices, int32(len(svcTabColTitles)), col, asc)
+	count := int32(sendMessage(hwndListServices, LVM_GETITEMCOUNT, 0, 0))
+	newIDToRow := make(map[string]int32, count)
+	newRowEntry := make(map[int32]scan.Service, count)
+	for i := int32(0); i < count; i++ {
+		name := listViewGetCellText(hwndListServices, i, 0)
+		ip := listViewGetCellText(hwndListServices, i, 1)
+		if s, ok := keyToSvc[nameIPKey{name, ip}]; ok {
+			newIDToRow[s.ID] = i
+			newRowEntry[i] = s
+		}
+	}
+	svcTabIDToRow = newIDToRow
+	svcTabRowEntry = newRowEntry
+}
+
 // ---------------------------------------------------------------------------
 // Column-state persistence (snapshot → State / State → restore)
 // ---------------------------------------------------------------------------
@@ -1569,23 +1597,22 @@ func clearServicesTab() {
 // svcTabInsertRow appends one row to hwndListServices for s.
 // Columns: Service Name | IP | Hostname | Version | Port
 func svcTabInsertRow(s scan.Service) {
-	name := svcFriendlyName(s)
-	namePtr := utf16(name)
-	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: namePtr}
-	row := int32(sendMessage(hwndListServices, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
+	hn := svcDisplayHostname(s)
+	if hn == "" {
+		hn = "—"
+	}
+	row := listViewAppendRow(hwndListServices, []string{
+		svcFriendlyName(s),
+		s.IP,
+		hn,
+		svcEntryVersion(s),
+		svcEntryPortStr(s),
+	})
 	if row < 0 {
 		return
 	}
 	svcTabRowEntry[row] = s
 	svcTabIDToRow[s.ID] = row
-	setSubItem(hwndListServices, row, 1, s.IP)
-	hn := svcDisplayHostname(s)
-	if hn == "" {
-		hn = "—"
-	}
-	setSubItem(hwndListServices, row, 2, hn)
-	setSubItem(hwndListServices, row, 3, svcEntryVersion(s))
-	setSubItem(hwndListServices, row, 4, svcEntryPortStr(s))
 }
 
 // svcTabRefreshRow updates every column of an existing Services tab row in-place.
