@@ -48,6 +48,16 @@ type WorkItem struct {
 	State WorkItemState `json:"state"`
 }
 
+// WorkerStatus describes the running state of a named background goroutine
+// managed by the sensor service (broadcast listener, DHCP capture, ARP poll,
+// PTR resolver, port scanner).  The service emits one message each time a
+// worker starts or stops so the GUI can display a live process list.
+type WorkerStatus struct {
+	Name    string `json:"worker_name"`    // human-readable worker name
+	Running bool   `json:"running"`        // true = active, false = idle/stopped
+	Detail  string `json:"detail,omitempty"` // optional: error message or context
+}
+
 // Observation records a single evidence fact contributed by a specific source.
 type Observation struct {
 	Source string `json:"src"` // "banner", "mdns", "ssdp", "wsd"
