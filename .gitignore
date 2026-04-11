@@ -5,6 +5,10 @@
 # Downloaded data files (fetched at build time, not tracked)
 internal/sweep/oui.json
 
+# Generated OUI binary — derived from oui.json at build time
+internal/scan/oui.bin
+internal/scan/oui.bin.gz
+
 # GitHub Wiki (separate companion repo, cloned locally)
 .wiki/
 

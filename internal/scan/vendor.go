@@ -25,12 +25,56 @@ const (
 )
 
 var (
-	ouiDB    map[string]string
+	ouiDB    map[uint32]string
 	ouiMu    sync.RWMutex
 	ouiReady = make(chan struct{}) // closed when DB is loaded (or load has failed)
 	ouiOnce  sync.Once
 	ouiFrom  string // "embedded" or absolute path of the file used
 )
+
+// macKey packs a 3-byte MAC OUI prefix into a uint32 for map lookup.
+// Bits 23–0 hold the three prefix bytes; the upper byte is always zero.
+func macKey(b0, b1, b2 byte) uint32 {
+	return uint32(b0)<<16 | uint32(b1)<<8 | uint32(b2)
+}
+
+// ouiPrefixKey parses a MAC prefix string ("AA:BB:CC" or "AA-BB-CC") into a
+// uint32 key. Only exact 3-octet MA-L prefixes are accepted; longer
+// MA-M/MA-S prefixes return false so they are silently dropped.
+func ouiPrefixKey(prefix string) (uint32, bool) {
+	s := strings.ToUpper(strings.ReplaceAll(prefix, "-", ":"))
+	parts := strings.Split(s, ":")
+	if len(parts) != 3 {
+		return 0, false
+	}
+	b0, ok0 := hexByte(parts[0])
+	b1, ok1 := hexByte(parts[1])
+	b2, ok2 := hexByte(parts[2])
+	if !ok0 || !ok1 || !ok2 {
+		return 0, false
+	}
+	return macKey(b0, b1, b2), true
+}
+
+func hexByte(s string) (byte, bool) {
+	if len(s) != 2 {
+		return 0, false
+	}
+	hi, ok1 := hexNibble(s[0])
+	lo, ok2 := hexNibble(s[1])
+	return hi<<4 | lo, ok1 && ok2
+}
+
+func hexNibble(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
+}
 
 // InitVendorDB starts loading the OUI database in the background.
 // dataDir is the directory where a user-downloaded oui.json may exist.
@@ -135,15 +179,15 @@ func lookupVendor(mac net.HardwareAddr) string {
 	default:
 		return ""
 	}
-	prefix := fmt.Sprintf("%02X:%02X:%02X", mac[0], mac[1], mac[2])
+	key := macKey(mac[0], mac[1], mac[2])
 	ouiMu.RLock()
-	v := ouiDB[prefix]
+	v := ouiDB[key]
 	ouiMu.RUnlock()
 	return v
 }
 
-func loadOUI(dataDir string) (map[string]string, string) {
-	// Prefer user-downloaded file if it exists.
+func loadOUI(dataDir string) (map[uint32]string, string) {
+	// Prefer user-downloaded JSON file if it exists.
 	if dataDir != "" {
 		p := filepath.Join(dataDir, OUIFileName)
 		if _, err := os.Stat(p); err == nil {
@@ -152,7 +196,7 @@ func loadOUI(dataDir string) (map[string]string, string) {
 			}
 		}
 	}
-	// Fall back to embedded data (gzip-compressed in with_oui builds).
+	// Fall back to embedded compact binary (gzip-compressed in with_oui builds).
 	var r io.Reader = bytes.NewReader(embeddedOUI)
 	if len(embeddedOUI) >= 2 && embeddedOUI[0] == 0x1f && embeddedOUI[1] == 0x8b {
 		gr, err := gzip.NewReader(r)
@@ -161,7 +205,7 @@ func loadOUI(dataDir string) (map[string]string, string) {
 			r = gr
 		}
 	}
-	return parseOUIJSONReader(r), "embedded"
+	return parseOUIBin(r), "embedded"
 }
 
 // ouiEntry matches the maclookup.app JSON schema.
@@ -170,7 +214,7 @@ type ouiEntry struct {
 	VendorName string `json:"vendorName"`
 }
 
-func parseOUIJSON(path string) (map[string]string, string) {
+func parseOUIJSON(path string) (map[uint32]string, string) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, ""
@@ -179,17 +223,45 @@ func parseOUIJSON(path string) (map[string]string, string) {
 	return parseOUIJSONReader(f), path
 }
 
-func parseOUIJSONReader(r io.Reader) map[string]string {
+func parseOUIJSONReader(r io.Reader) map[uint32]string {
 	var entries []ouiEntry
 	if err := json.NewDecoder(r).Decode(&entries); err != nil {
 		return nil
 	}
-	db := make(map[string]string, len(entries))
+	db := make(map[uint32]string, len(entries))
 	for _, e := range entries {
-		prefix := strings.ToUpper(e.MacPrefix)
-		if e.VendorName != "" {
-			db[prefix] = e.VendorName
+		if e.VendorName == "" {
+			continue
 		}
+		if key, ok := ouiPrefixKey(e.MacPrefix); ok {
+			db[key] = e.VendorName
+		}
+	}
+	return db
+}
+
+// parseOUIBin decodes the compact binary OUI format produced by scripts/gen-oui-bin.py.
+//
+// Record layout (no header, packed end-to-end):
+//
+//	[3 bytes MAC prefix][1 byte name length N][N bytes vendor name UTF-8]
+func parseOUIBin(r io.Reader) map[uint32]string {
+	data, err := io.ReadAll(r)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	db := make(map[uint32]string, len(data)/27) // ~27 bytes average per record
+	for i := 0; i+4 <= len(data); {
+		b0, b1, b2 := data[i], data[i+1], data[i+2]
+		nlen := int(data[i+3])
+		i += 4
+		if i+nlen > len(data) {
+			break
+		}
+		if nlen > 0 {
+			db[macKey(b0, b1, b2)] = string(data[i : i+nlen])
+		}
+		i += nlen
 	}
 	return db
 }
@@ -198,14 +270,14 @@ func parseOUIJSONReader(r io.Reader) map[string]string {
 // Legacy oui.txt parser — kept for user-supplied files in the old IEEE format.
 // ---------------------------------------------------------------------------
 
-func parseOUIFile(path string) (map[string]string, error) {
+func parseOUIFile(path string) (map[uint32]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	db := make(map[string]string, 40000)
+	db := make(map[uint32]string, 40000)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -216,12 +288,10 @@ func parseOUIFile(path string) (map[string]string, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		// Convert XX-XX-XX → XX:XX:XX for uniform key format.
 		raw := strings.ToUpper(strings.TrimSpace(strings.Fields(parts[0])[0]))
-		prefix := strings.ReplaceAll(raw, "-", ":")
 		vendor := strings.TrimSpace(parts[1])
-		if len(prefix) == 8 {
-			db[prefix] = vendor
+		if key, ok := ouiPrefixKey(raw); ok {
+			db[key] = vendor
 		}
 	}
 	return db, scanner.Err()

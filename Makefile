@@ -38,7 +38,7 @@ windows: gen-resources fetch-oui ## Cross-compile unified binary for windows/amd
 	GOOS=windows GOARCH=amd64 go build \
 		-tags with_oui -ldflags "$(DEV_LDFLAGS)" -o $(call cli_out,windows,amd64) ./cmd/net-scope
 
-fetch-oui: ## Download OUI JSON database for embedding (requires internet)
+fetch-oui: ## Download OUI JSON database and convert to compact binary for embedding
 	@if [ ! -f internal/scan/oui.json ] || [ $$(wc -c < internal/scan/oui.json) -lt 1000 ]; then \
 		echo "Fetching OUI database…"; \
 		curl -fsSL --max-time 60 '$(OUI_URL)' -o internal/scan/oui.json \
@@ -47,10 +47,11 @@ fetch-oui: ## Download OUI JSON database for embedding (requires internet)
 	else \
 		echo "OUI: using cached internal/scan/oui.json ($$(wc -c < internal/scan/oui.json) bytes)"; \
 	fi
-	@if [ ! -f internal/scan/oui.json.gz ] || [ internal/scan/oui.json -nt internal/scan/oui.json.gz ]; then \
-		echo "OUI: compressing → oui.json.gz…"; \
-		gzip -kf internal/scan/oui.json; \
-		echo "OUI: $$(wc -c < internal/scan/oui.json.gz) bytes compressed"; \
+	@if [ ! -f internal/scan/oui.bin ] || [ internal/scan/oui.json -nt internal/scan/oui.bin ]; then \
+		echo "OUI: converting JSON → compact binary…"; \
+		python3 scripts/gen-oui-bin.py internal/scan/oui.json internal/scan/oui.bin; \
+		gzip -kf internal/scan/oui.bin; \
+		echo "OUI: embedded size $$(wc -c < internal/scan/oui.bin.gz) bytes (was $$(wc -c < internal/scan/oui.json) bytes JSON)"; \
 	fi
 
 gen-resources: ## Generate icon.ico + resource_windows_amd64.syso for GUI
@@ -109,5 +110,5 @@ clean: ## Remove build/ and dist/
 	rm -rf build dist
 
 refresh-oui: ## Force re-download of OUI database (ignores cached file)
-	rm -f internal/scan/oui.json
+	rm -f internal/scan/oui.json internal/scan/oui.bin internal/scan/oui.bin.gz
 	$(MAKE) fetch-oui
