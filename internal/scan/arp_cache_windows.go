@@ -107,6 +107,60 @@ func sendARPRequest(target uint32) net.HardwareAddr {
 	return mac
 }
 
+// ReadARPTableFull returns all valid ARP table entries including type and
+// interface-index metadata. Entries with invalid MACs or type=invalid are
+// skipped. Returns nil on any error.
+func ReadARPTableFull() []ARPResult {
+	var size uint32
+	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
+	const errInsufficientBuffer = 122
+	if r != 0 && r != errInsufficientBuffer {
+		return nil
+	}
+	if size == 0 {
+		return nil
+	}
+	buf := make([]byte, size)
+	r, _, _ = procGetIpNetTable.Call(
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+	)
+	if r != 0 {
+		return nil
+	}
+	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
+	rowSize := unsafe.Sizeof(mibIPNetRow{})
+	out := make([]ARPResult, 0, numEntries)
+	for i := uint32(0); i < numEntries; i++ {
+		off := uintptr(4) + uintptr(i)*rowSize
+		if off+rowSize > uintptr(len(buf)) {
+			break
+		}
+		row := (*mibIPNetRow)(unsafe.Pointer(&buf[off]))
+		if row.Type == 2 || row.PhysAddrLen != 6 {
+			continue // skip invalid entries and non-Ethernet MACs
+		}
+		ip := net.IP{byte(row.Addr), byte(row.Addr >> 8), byte(row.Addr >> 16), byte(row.Addr >> 24)}
+		mac := make(net.HardwareAddr, 6)
+		copy(mac, row.PhysAddr[:6])
+		arpType := "other"
+		switch row.Type {
+		case 3:
+			arpType = "dynamic"
+		case 4:
+			arpType = "static"
+		}
+		out = append(out, ARPResult{
+			IP:      ip.String(),
+			MAC:     mac.String(),
+			Type:    arpType,
+			IfIndex: row.Index,
+		})
+	}
+	return out
+}
+
 // ReadARPTable returns a snapshot of the Windows ARP neighbour table as
 // IPv4-string → MAC. Only valid (type 3 dynamic, type 4 static) Ethernet
 // entries are included. Returns nil on any error.

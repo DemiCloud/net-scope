@@ -29,6 +29,8 @@ import (
 type ServiceCmd struct {
 	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop",
 	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
+	// "arp-snapshot", "arp-delete", "arp-clear",
+	// "dns-snapshot", "dns-clear",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -75,8 +77,19 @@ type ServiceMsg struct {
 	BcastSvc   *ServiceInfo `json:"bcast_svc,omitempty"`
 	BcastIP    string       `json:"bcast_ip,omitempty"`
 
-	// ARPEntry carries a single ARP table entry (from "arp-start" polling).
-	ARPEntry   *ARPResult   `json:"arp_entry,omitempty"`
+	// ARPEntry carries a single ARP table entry.
+	// When ARPSnapshot is true the entry came from an "arp-snapshot" one-shot
+	// command; without it the entry came from the continuous "arp-start" poll.
+	ARPEntry    *ARPResult `json:"arp_entry,omitempty"`
+	ARPSnapshot bool       `json:"arp_snapshot,omitempty"`
+	// ARPSnapDone signals the end of an "arp-snapshot" stream.
+	ARPSnapDone bool       `json:"arp_snap_done,omitempty"`
+	// DNSEntry carries a single DNS resolver cache entry ("dns-snapshot" stream).
+	DNSEntry   *DNSCacheEntry `json:"dns_entry,omitempty"`
+	// DNSSnapDone signals the end of a "dns-snapshot" stream.
+	DNSSnapDone bool          `json:"dns_snap_done,omitempty"`
+	// CacheOp carries the result of an "arp-delete", "arp-clear", or "dns-clear" command.
+	CacheOp    *CacheOpResult `json:"cache_op,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -106,8 +119,24 @@ type ServiceMsg struct {
 
 // ARPResult carries a single ARP table entry streamed from service to GUI.
 type ARPResult struct {
-	IP  string `json:"ip"`
-	MAC string `json:"mac"`
+	IP      string `json:"ip"`
+	MAC     string `json:"mac"`
+	Type    string `json:"type,omitempty"`    // "dynamic", "static", "other"; set on arp-snapshot
+	IfIndex uint32 `json:"if_index,omitempty"` // interface index; set on arp-snapshot
+}
+
+// DNSCacheEntry carries a single Windows DNS resolver cache entry.
+type DNSCacheEntry struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "A", "AAAA", "CNAME", "PTR", "MX", etc.
+}
+
+// CacheOpResult carries the result of a cache-manipulation command:
+// "arp-delete", "arp-clear", or "dns-clear".
+type CacheOpResult struct {
+	Op  string `json:"op"`
+	OK  bool   `json:"ok"`
+	Err string `json:"err,omitempty"`
 }
 
 // NetBIOSMsg carries the result of a NetBIOS name query.
@@ -683,6 +712,60 @@ func RunServiceConn(conn net.Conn) error {
 				arpCancel = nil
 				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "ARP Poll", Running: false}})
 			}
+
+		case "arp-snapshot":
+			// One-shot: stream the full ARP table and signal completion.
+			for _, e := range ReadARPTableFull() {
+				entry := e
+				if werr := safeSend(ServiceMsg{ARPEntry: &entry, ARPSnapshot: true}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{ARPSnapDone: true})
+
+		case "arp-delete":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				err := DeleteARPEntry(target)
+				op := &CacheOpResult{Op: "arp-delete", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
+
+		case "arp-clear":
+			go func() {
+				err := FlushARPCache(0)
+				op := &CacheOpResult{Op: "arp-clear", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
+
+		case "dns-snapshot":
+			// One-shot: stream the full DNS resolver cache and signal completion.
+			for _, e := range ReadDNSCache() {
+				entry := e
+				if werr := safeSend(ServiceMsg{DNSEntry: &entry}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{DNSSnapDone: true})
+
+		case "dns-clear":
+			go func() {
+				err := FlushDNSCache()
+				op := &CacheOpResult{Op: "dns-clear", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
 
 		case "netbios":
 			if cmd.Target == "" {

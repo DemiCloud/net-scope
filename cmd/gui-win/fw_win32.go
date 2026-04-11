@@ -144,13 +144,14 @@ const (
 	SWP_NOMOVE     = 0x0002
 
 	// MessageBox flags and return values
-	MB_OK           = 0x00000000
-	MB_YESNO        = 0x00000004
-	MB_ICONWARNING  = 0x00000030
-	MB_ICONQUESTION = 0x00000020
-	MB_ICONERROR    = 0x00000010
-	IDYES           = 6
-	IDNO            = 7
+	MB_OK               = 0x00000000
+	MB_YESNO            = 0x00000004
+	MB_ICONWARNING      = 0x00000030
+	MB_ICONQUESTION     = 0x00000020
+	MB_ICONERROR        = 0x00000010
+	MB_ICONINFORMATION  = 0x00000040
+	IDYES               = 6
+	IDNO                = 7
 
 	WM_DRAWITEM         = 0x002B // owner-draw control/menu needs painting
 

@@ -213,6 +213,21 @@ var (
 	pendingWorkerStatuses   []scan.WorkerStatus
 	pendingWorkerStatusesMu sync.Mutex
 
+	// pendingARPSnap carries ARP snapshot entries from the sensor service
+	// to the ARP Cache dialog via WM_ARP_SNAP_ENTRY.
+	pendingARPSnap   []scan.ARPResult
+	pendingARPSnapMu sync.Mutex
+
+	// pendingDNSSnap carries DNS cache snapshot entries from the sensor service
+	// to the DNS Cache dialog via WM_DNS_SNAP_ENTRY.
+	pendingDNSSnap   []scan.DNSCacheEntry
+	pendingDNSSnapMu sync.Mutex
+
+	// pendingCacheOps carries cache operation results (arp-delete/clear,
+	// dns-clear) from the service to the relevant dialog via WM_CACHE_OP.
+	pendingCacheOps   []scan.CacheOpResult
+	pendingCacheOpMu  sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -833,6 +848,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWorkerQueueDialog(HWND(hwnd))
 		case IDM_TOOLS_MAC_LOOKUP:
 			showMACLookupDialog(HWND(hwnd))
+		case IDM_TOOLS_ARP_CACHE:
+			showARPCacheDialog(HWND(hwnd))
+		case IDM_TOOLS_DNS_CACHE:
+			showDNSCacheDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1191,6 +1210,50 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingExpiriesMu.Unlock()
 		if ip != "" {
 			workerQueueExpire(ip)
+		}
+		return 0
+
+	case WM_ARP_SNAP_ENTRY:
+		pendingARPSnapMu.Lock()
+		var entry scan.ARPResult
+		if int(wParam) < len(pendingARPSnap) {
+			entry = pendingARPSnap[int(wParam)]
+		}
+		pendingARPSnapMu.Unlock()
+		if entry.IP != "" {
+			arpCacheDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_ARP_SNAP_DONE:
+		arpCacheDialogLoadingDone()
+		return 0
+
+	case WM_DNS_SNAP_ENTRY:
+		pendingDNSSnapMu.Lock()
+		var entry scan.DNSCacheEntry
+		if int(wParam) < len(pendingDNSSnap) {
+			entry = pendingDNSSnap[int(wParam)]
+		}
+		pendingDNSSnapMu.Unlock()
+		if entry.Name != "" {
+			dnsCacheDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_DNS_SNAP_DONE:
+		dnsCacheDialogLoadingDone()
+		return 0
+
+	case WM_CACHE_OP:
+		pendingCacheOpMu.Lock()
+		var op scan.CacheOpResult
+		if int(wParam) < len(pendingCacheOps) {
+			op = pendingCacheOps[int(wParam)]
+		}
+		pendingCacheOpMu.Unlock()
+		if op.Op != "" {
+			handleCacheOpResult(HWND(hwnd), op)
 		}
 		return 0
 
@@ -2724,6 +2787,26 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 		copyToClipboard(parent, ip)
 	case IDM_CTX_VIEW_DETAILS:
 		showHostDetailDialog(parent, ip)
+	}
+}
+
+// handleCacheOpResult handles the result of an arp-delete / arp-clear / dns-clear
+// command routed from the sensor service. It notifies the relevant dialog and
+// triggers a refresh on success.
+func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
+	if !op.OK {
+		errMsg := op.Err
+		if errMsg == "" {
+			errMsg = "Unknown error"
+		}
+		messageBox(hwnd, "Operation failed:\n"+errMsg, "Cache", MB_ICONERROR)
+		return
+	}
+	switch op.Op {
+	case "arp-delete", "arp-clear":
+		arpCacheDialogRefresh()
+	case "dns-clear":
+		dnsCacheDialogRefresh()
 	}
 }
 

@@ -167,6 +167,9 @@ func Run(v, target string) {
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_MAC_LOOKUP, "&MAC Vendor Lookup\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_ARP_CACHE, "&ARP Cache\u2026")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_DNS_CACHE, "&DNS Cache\u2026")
+	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_WORKER_QUEUE, "&Background Workers\u2026")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")
 
