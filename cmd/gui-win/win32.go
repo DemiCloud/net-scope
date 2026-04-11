@@ -63,8 +63,9 @@ const (
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status strip
 	IDC_SERVICE_BTN  = 113 // "Elevate scan service" button
-	IDC_LIST_NETWORK  = 114 // Network tab text pane
-	IDC_DETECT        = 115 // detect local subnet button
+	IDC_LIST_NETWORK    = 114 // Network tab header pane
+	IDC_NET_EVENTLOG    = 122 // Network tab event-log ListView
+	IDC_DETECT          = 115 // detect local subnet button
 	IDC_PROXY_CHECK   = 117 // "Proxy Mode" checkbox in global options bar
 	IDC_ACTIVE_ONLY   = 118 // "Active only" checkbox in scan bar
 	IDC_SEARCH_EDIT   = 119 // Ctrl+F find bar — text input
