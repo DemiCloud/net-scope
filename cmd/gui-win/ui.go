@@ -75,9 +75,8 @@ var (
 	hwndListSSDP   HWND // SSDP tab
 	hwndListWSD    HWND // WS-Discovery tab
 	hwndListDHCP   HWND // DHCP tab
-	hwndListNetwork HWND // Network tab — live broadcast stats
-	hwndListHealth        HWND // Scan Report tab
-	hwndHealthPlaceholder HWND // empty-state overlay for Scan Report tab
+	netView    infoView // Network tab — stats header + event-log ListView
+	healthView infoView // Scan Report tab — stats header only
 	hwndListServices       HWND // Services tab
 	hwndServicesPlaceholder HWND // empty-state overlay for Services tab
 	scanEverCompleted     bool // true once the first scan has completed
@@ -132,6 +131,36 @@ var (
 	// dhcpAllEvents is the backing store for DHCP filter repopulation.
 	// Every DHCP event is appended here when received, before being rendered.
 	dhcpAllEvents []scan.DHCPEvent
+
+	// netEvents is the chronological event log shown in the Network tab body.
+	// Appended on the UI thread inside the WM_BCAST_SVC handler; never cleared.
+	netEvents []netEvent
+
+	// bcastLastSeen tracks the most recent arrival time per broadcast source.
+	// Keys: "mdns", "ssdp", "wsd", "dhcp".
+	bcastLastSeen = map[string]time.Time{}
+)
+
+// ---------------------------------------------------------------------------
+// Network-tab event log
+// ---------------------------------------------------------------------------
+
+// netEvent represents a single broadcast/discovery event shown in the
+// Network tab's chronological event-log ListView.
+type netEvent struct {
+	T       time.Time
+	Source  string // "mDNS", "SSDP", "WSD", "DHCP"
+	IP      string
+	Name    string
+	Details string // service type, SSDP ST, WSD types, etc.
+}
+
+// netEvtColTitles and netEvtColWidths define the event-log ListView columns.
+// These are defined here (application code) and passed into the framework
+// factory (createInfoView) so both creation and rendering share one definition.
+var (
+	netEvtColTitles = []string{"Time", "Source", "IP", "Name", "Details"}
+	netEvtColWidths = []int32{68, 52, 120, 200, 0} // 0 = auto-fill via LVSCW_AUTOSIZE_USEHEADER
 )
 
 // ---------------------------------------------------------------------------
@@ -429,6 +458,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showWindow(hwndDHCPPlaceholder, SW_HIDE)
 		}
 		bcastDHCP++
+		bcastLastSeen["dhcp"] = time.Now()
 		// Cross-enrich the Hosts tab: if the DHCP IP matches a scanned row,
 		// fill in hostname (opt 12) and/or MAC (chaddr) if currently blank.
 		enrichIP := evt.OfferedIP
@@ -868,6 +898,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingBcastMu.Unlock()
 		if e.ip != "" {
+			now := time.Now()
 			switch e.svc.Source {
 			case "ssdp":
 				listViewAddSSDPRow(hwndListSSDP, e.ip, e.svc)
@@ -875,24 +906,48 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 					showWindow(hwndSSDPPlaceholder, SW_HIDE)
 				}
 				bcastSSDP++
+				bcastLastSeen["ssdp"] = now
 			case "wsd":
 				listViewAddWSDRow(hwndListWSD, e.ip, e.svc)
 				if bcastWSD == 0 {
 					showWindow(hwndWSDPlaceholder, SW_HIDE)
 				}
 				bcastWSD++
+				bcastLastSeen["wsd"] = now
 			default:
 				listViewAddMDNSRow(hwndListMDNS, e.ip, e.svc)
 				if bcastMDNS == 0 {
 					showWindow(hwndMDNSPlaceholder, SW_HIDE)
 				}
 				bcastMDNS++
+				bcastLastSeen["mdns"] = now
 			}
 			bcastCount++
+			// Append to the Network tab event log.
+			srcLabel := map[string]string{
+				"mdns": "mDNS", "ssdp": "SSDP", "wsd": "WSD",
+			}[e.svc.Source]
+			if srcLabel == "" {
+				srcLabel = e.svc.Source
+			}
+			evt := netEvent{
+				T: now, Source: srcLabel, IP: e.ip,
+				Name: e.svc.Name, Details: e.svc.Type,
+			}
+			netEvents = append(netEvents, evt)
+			if netView.hwndList != 0 {
+				listViewAppendRow(netView.hwndList, []string{
+					now.Format("15:04:05"),
+					srcLabel,
+					e.ip,
+					e.svc.Name,
+					e.svc.Type,
+				})
+			}
 			updateNetworkTab()
 			// Registry: append service to the host's ExtraServices list.
 			en := ensureHostEntry(e.ip)
-			en.LastSeen = time.Now()
+			en.LastSeen = now
 			en.ExtraServices = append(en.ExtraServices, e.svc)
 			// Services tab is populated via WM_SVC_UPDATE from the sensor registry.
 		}
@@ -1201,9 +1256,8 @@ func activateTab(hwnd HWND, tab int32) {
 	showWindow(hwndWSDPlaceholder, SW_HIDE)
 	showWindow(hwndListDHCP, SW_HIDE)
 	showWindow(hwndDHCPPlaceholder, SW_HIDE)
-	showWindow(hwndListNetwork, SW_HIDE)
-	showWindow(hwndListHealth, SW_HIDE)
-	showWindow(hwndHealthPlaceholder, SW_HIDE)
+	hideInfoView(netView)
+	hideInfoView(healthView)
 	showWindow(hwndListServices, SW_HIDE)
 	showWindow(hwndServicesPlaceholder, SW_HIDE)
 	// Show/hide scan bar and reposition Hosts listview accordingly.
@@ -1266,11 +1320,11 @@ func activateTab(hwnd HWND, tab int32) {
 				showWindow(hwndDHCPPlaceholder, SW_SHOW)
 			}
 		case 6:
-			showWindow(hwndListNetwork, SW_SHOW)
+			showInfoView(netView)
 		case 7:
-			showWindow(hwndListHealth, SW_SHOW)
-			if !scanEverCompleted {
-				showWindow(hwndHealthPlaceholder, SW_SHOW)
+			showInfoView(healthView)
+			if !scanEverCompleted && healthView.hwndPlaceholder != 0 {
+				showWindow(healthView.hwndPlaceholder, SW_SHOW)
 			}
 		}
 	}
@@ -1435,23 +1489,23 @@ func createControls(hwnd HWND) {
 	}
 	hwndDHCPPlaceholder = createEmptyStateOverlay(hwnd, dhcpPlaceholderText(), 0, otherTop+200, 1160, scale(20))
 
-	// ---- network text area (hidden initially) ----
-	networkInitialText := "Waiting for broadcast traffic…"
-	if proxyEnabled {
-		networkInitialText = "Not available in proxy mode  (network-layer traffic cannot be captured over SOCKS5)"
+	// ---- Network tab: stats header + chronological event-log ListView ----
+	var netEvtCols []string
+	var netEvtWidths []int32
+	if !proxyEnabled {
+		netEvtCols = netEvtColTitles
+		netEvtWidths = netEvtColWidths
 	}
-	hwndListNetwork, _ = createWindowEx(
-		WS_EX_CLIENTEDGE, "EDIT", networkInitialText,
-		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-		0, otherTop, 1160, 600, hwnd, IDC_LIST_NETWORK, inst)
+	netView = createInfoView(hwnd, inst, IDC_LIST_NETWORK, IDC_NET_EVENTLOG,
+		netEvtCols, netEvtWidths, "")
+	if proxyEnabled {
+		setInfoHeader(netView,
+			"Not available in proxy mode  (network-layer traffic cannot be captured over SOCKS5)")
+	}
 
-	// ---- scan report text area (hidden initially) ----
-	hwndListHealth, _ = createWindowEx(
-		WS_EX_CLIENTEDGE, "EDIT", "",
-		WS_CHILD|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-		0, otherTop, 1160, 600, hwnd, 0, inst)
-	hwndHealthPlaceholder = createEmptyStateOverlay(hwnd, "Run a scan to populate this report",
-		0, otherTop+200, 1160, scale(20))
+	// ---- Scan Report tab: stats header only (no list body) ----
+	healthView = createInfoView(hwnd, inst, 0, 0, nil, nil,
+		"Run a scan to populate this report")
 
 	// ---- Services listview (hidden initially) ----
 	hwndListServices, _ = createWindowEx(0, WC_LISTVIEW, "",
@@ -1486,10 +1540,12 @@ func createControls(hwnd HWND) {
 	appFont = createUIFont(currentDPI)
 	setFontAllChildren(hwnd, appFont)
 
-	// Apply Consolas to the two text-report panes so aligned columns line up.
+	// Apply Consolas to the two stat-header panes so aligned columns line up.
+	// The event-log ListView body uses the general appFont (applied above by
+	// setFontAllChildren) which is already correct.
 	monoFont := createMonoFont()
-	sendMessage(hwndListNetwork, WM_SETFONT, uintptr(monoFont), 1)
-	sendMessage(hwndListHealth, WM_SETFONT, uintptr(monoFont), 1)
+	infoViewSetFont(netView, monoFont, 0) // list body keeps appFont
+	infoViewSetFont(healthView, monoFont, 0)
 
 	// Find bar: created last so appFont is already set.
 	createFindBar(hwnd)
@@ -1579,9 +1635,13 @@ func activeContentPane() HWND {
 	case 5:
 		return hwndListDHCP
 	case 6:
-		return hwndListNetwork
+		// Prefer the event-log list; fall back to the header.
+		if netView.hwndList != 0 {
+			return netView.hwndList
+		}
+		return netView.hwndHeader
 	case 7:
-		return hwndListHealth
+		return healthView.hwndHeader
 	}
 	return 0
 }
@@ -1723,9 +1783,11 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndWSDPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 	moveWindow(hwndListDHCP, 0, otherTop, width, otherH)
 	moveWindow(hwndDHCPPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
-	moveWindow(hwndListNetwork, 0, otherTop, width, otherH)
-	moveWindow(hwndListHealth, 0, otherTop, width, otherH)
-	moveWindow(hwndHealthPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
+	// Network tab: fixed header height + event-log body.
+	netHdrH := scale(120) // ~7 text lines at Consolas 9pt, 96 DPI
+	resizeInfoView(netView, 0, otherTop, width, otherH, netHdrH)
+	// Scan Report tab: header fills the full area (no list body).
+	resizeInfoView(healthView, 0, otherTop, width, otherH, otherH)
 	moveWindow(hwndListServices, 0, otherTop, width, otherH)
 	moveWindow(hwndServicesPlaceholder, 0, otherTop+(otherH-scale(20))/2, width, scale(20))
 
@@ -2078,7 +2140,7 @@ func applyProxyMode(hwnd HWND, enable bool) {
 		return "Listening \u2014 no WS-Discovery traffic detected yet"
 	}())
 	setWindowText(hwndDHCPPlaceholder, dhcpPlaceholderText())
-	setWindowText(hwndListNetwork, func() string {
+	setInfoHeader(netView, func() string {
 		if enable {
 			return proxyMsg + "  (network-layer traffic cannot be captured over SOCKS5)"
 		}
@@ -2230,64 +2292,247 @@ func setStatusPart(part uintptr, s string) {
 	sendMessage(hwndStatus, SB_SETTEXT, part, uintptr(unsafe.Pointer(p)))
 }
 
-// updateNetworkTab refreshes the Network tab with live broadcast stats.
+// relativeTime formats a time.Time as a human-readable relative string
+// ("just now", "30s ago", "5 mins ago", "2h ago").
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	d := time.Since(t)
+	switch {
+	case d < 5*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+}
+
+// updateNetworkTab refreshes the Network tab header with live broadcast stats.
 // Called on the UI thread whenever a broadcast entry arrives or service state changes.
 func updateNetworkTab() {
-	text := fmt.Sprintf(
-		"NetScope — Live Network Activity\r\n"+
-			"══════════════════════════════════════════\r\n\r\n"+
-			"  Sensor                 : %s\r\n\r\n"+  
-			"  Broadcast listeners    : mDNS + SSDP (running since app start)\r\n"+
-			"  mDNS services seen     : %d\r\n"+
-			"  SSDP devices seen      : %d\r\n"+
-			"  Total broadcast events : %d\r\n\r\n"+
-			"══════════════════════════════════════════\r\n"+
-			"Notes:\r\n"+
-			"  • mDNS and SSDP rows are listed in detail on their respective tabs.\r\n"+
-			"  • Counts accumulate continuously; they are not reset between scans.\r\n"+
-			"  • Elevating the service enables ARP + ICMP for richer scan results.\r\n",
-		statusForService(),
-		bcastMDNS,
-		bcastSSDP,
-		bcastCount,
-	)
-	setWindowText(hwndListNetwork, text)
+	const sep = "  ─────────────────────────────────────────────────\r\n"
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "  NetScope  ·  Live Network Activity\r\n")
+	fmt.Fprintf(&b, sep)
+	fmt.Fprintf(&b, "  Sensor           :  %s\r\n", statusForService())
+	fmt.Fprintf(&b, sep)
+	fmt.Fprintf(&b, "  %-12s  %7s   %s\r\n", "Source", "Events", "Last Seen")
+	fmt.Fprintf(&b, "  ────────────     ───────   ──────────────────\r\n")
+
+	type srcRow struct{ name, key string; n int }
+	rows := []srcRow{
+		{"mDNS", "mdns", bcastMDNS},
+		{"SSDP", "ssdp", bcastSSDP},
+		{"WSD", "wsd", bcastWSD},
+		{"DHCP", "dhcp", bcastDHCP},
+	}
+	for _, r := range rows {
+		ls := relativeTime(bcastLastSeen[r.key])
+		fmt.Fprintf(&b, "  %-12s  %7d   %s\r\n", r.name, r.n, ls)
+	}
+	fmt.Fprintf(&b, sep)
+	fmt.Fprintf(&b, "  Total events     :  %d\r\n", bcastCount)
+
+	setInfoHeader(netView, b.String())
 }
 
 // updateHealthTab fills the Scan Report tab with stats from the last scan.
 func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
-	showWindow(hwndHealthPlaceholder, SW_HIDE)
-	arpLine := "None detected."
-	if stats.ARPAnomalies > 0 {
-		arpLine = fmt.Sprintf("%d — same IP seen with different MACs (possible duplicate IP or ARP spoofing). Investigate with 'arp -a'.", stats.ARPAnomalies)
+	if healthView.hwndPlaceholder != 0 {
+		showWindow(healthView.hwndPlaceholder, SW_HIDE)
 	}
 
-	text := fmt.Sprintf(
-		"NetScope — Scan Report\r\n"+
-			"══════════════════════════════════════════\r\n\r\n"+
-			"  Scan duration           : %.1f s\r\n"+
-			"  Hosts found             : %d\r\n"+
-			"  Packets sent            : %d\r\n"+
-			"  Replies received        : %d\r\n"+
-			"  Timeouts                : %d\r\n"+
-			"  Average latency         : %.2f ms\r\n\r\n"+
-			"  Hosts without PTR       : %d\r\n"+
-			"  ARP anomalies           : %s\r\n\r\n"+
-			"══════════════════════════════════════════\r\n"+
-			"Notes:\r\n"+
-			"  • Hosts without PTR: many networks have no reverse DNS. This is\r\n"+
-			"    normal and does not indicate a problem with the host.\r\n"+
-			"  • ARP anomalies are genuinely unusual and worth investigating.\r\n",
-		duration.Seconds(),
-		liveCount,
-		stats.PacketsSent,
-		stats.RepliesReceived,
-		stats.Timeouts,
-		stats.AvgLatencyMS(),
-		stats.DNSFailures,
-		arpLine,
-	)
-	setWindowText(hwndListHealth, text)
+	const sep = "  ══════════════════════════════════════════════════\r\n"
+	const thin = "  ──────────────────────────────────────────────────\r\n"
+	var b strings.Builder
+	now := time.Now().Format("2 Jan 2006  15:04")
+
+	// Title
+	fmt.Fprintf(&b, "  NetScope  ·  Scan Report  ·  %s\r\n", now)
+	fmt.Fprintf(&b, sep)
+
+	// ── Reachability ──────────────────────────────────────────────────────
+	var pct float64
+	if stats.PacketsSent > 0 {
+		pct = float64(stats.RepliesReceived) / float64(stats.PacketsSent) * 100
+	}
+	fmt.Fprintf(&b, "  ── Reachability\r\n")
+	fmt.Fprintf(&b, thin)
+	fmt.Fprintf(&b, "  %-28s  %5d\r\n", "Hosts found", liveCount)
+	fmt.Fprintf(&b, "  %-28s  %5.1f%%  (%d of %d replied)\r\n",
+		"Response rate", pct, stats.RepliesReceived, stats.PacketsSent)
+	fmt.Fprintf(&b, "  %-28s  %5.2f ms\r\n", "Average latency", stats.AvgLatencyMS())
+	fmt.Fprintf(&b, "  %-28s  %5d  /  %d  (%d timeout)\r\n",
+		"Packets sent / received",
+		stats.PacketsSent, stats.RepliesReceived, stats.Timeouts)
+	fmt.Fprintf(&b, "\r\n")
+
+	// ── Identity ──────────────────────────────────────────────────────────
+	fmt.Fprintf(&b, "  ── Identity\r\n")
+	fmt.Fprintf(&b, thin)
+	withPTR := liveCount - int(stats.DNSFailures)
+	if withPTR < 0 {
+		withPTR = 0
+	}
+	var ptrPct float64
+	if liveCount > 0 {
+		ptrPct = float64(withPTR) / float64(liveCount) * 100
+	}
+	fmt.Fprintf(&b, "  %-28s  %5d  (%4.1f%%)\r\n", "Hosts with hostname", withPTR, ptrPct)
+	fmt.Fprintf(&b, "  %-28s  %5d\r\n", "Hosts without PTR", stats.DNSFailures)
+	if stats.ARPAnomalies > 0 {
+		fmt.Fprintf(&b, "  %-28s  %5d  ← same IP, different MACs — investigate\r\n",
+			"ARP anomalies", stats.ARPAnomalies)
+	} else {
+		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "ARP anomalies")
+	}
+	fmt.Fprintf(&b, "\r\n")
+
+	// Pull a snapshot of rowResultMap for breakdowns.
+	results := make([]scan.Result, 0, len(rowResultMap))
+	for _, r := range rowResultMap {
+		if r.Alive {
+			results = append(results, r)
+		}
+	}
+
+	// ── Top Vendors ───────────────────────────────────────────────────────
+	fmt.Fprintf(&b, "  ── Top Vendors\r\n")
+	fmt.Fprintf(&b, thin)
+	if len(results) > 0 {
+		vendorCount := map[string]int{}
+		for _, r := range results {
+			v := r.Vendor
+			if v == "" {
+				v = "Unknown"
+			}
+			vendorCount[v]++
+		}
+		type kv struct{ k string; v int }
+		vendors := make([]kv, 0, len(vendorCount))
+		for k, v := range vendorCount {
+			vendors = append(vendors, kv{k, v})
+		}
+		sort.Slice(vendors, func(i, j int) bool {
+			if vendors[i].v != vendors[j].v {
+				return vendors[i].v > vendors[j].v
+			}
+			return vendors[i].k < vendors[j].k
+		})
+		max := 8
+		if len(vendors) < max {
+			max = len(vendors)
+		}
+		for i, kv := range vendors[:max] {
+			vpct := float64(kv.v) / float64(len(results)) * 100
+			fmt.Fprintf(&b, "  %2d.  %-30s  %4d  (%4.1f%%)\r\n", i+1, kv.k, kv.v, vpct)
+		}
+	} else {
+		fmt.Fprintf(&b, "  No vendor data available.\r\n")
+	}
+	fmt.Fprintf(&b, "\r\n")
+
+	// ── OS Distribution ───────────────────────────────────────────────────
+	fmt.Fprintf(&b, "  ── OS Distribution\r\n")
+	fmt.Fprintf(&b, thin)
+	if len(results) > 0 {
+		osCount := map[scan.OSHint]int{}
+		for _, r := range results {
+			os := r.OS
+			if os == "" {
+				os = "Unknown"
+			}
+			osCount[os]++
+		}
+		type kv struct {
+			k scan.OSHint
+			v int
+		}
+		oss := make([]kv, 0, len(osCount))
+		for k, v := range osCount {
+			oss = append(oss, kv{k, v})
+		}
+		sort.Slice(oss, func(i, j int) bool {
+			if oss[i].v != oss[j].v {
+				return oss[i].v > oss[j].v
+			}
+			return string(oss[i].k) < string(oss[j].k)
+		})
+		for _, kv := range oss {
+			vpct := float64(kv.v) / float64(len(results)) * 100
+			fmt.Fprintf(&b, "  %-30s  %4d  (%4.1f%%)\r\n", string(kv.k), kv.v, vpct)
+		}
+	} else {
+		fmt.Fprintf(&b, "  No OS data available.\r\n")
+	}
+	fmt.Fprintf(&b, "\r\n")
+
+	// ── Port Frequency ────────────────────────────────────────────────────
+	fmt.Fprintf(&b, "  ── Open Port Frequency\r\n")
+	fmt.Fprintf(&b, thin)
+	if len(results) > 0 {
+		portCount := map[int]int{}
+		for _, r := range results {
+			for _, p := range r.OpenPorts {
+				portCount[p]++
+			}
+		}
+		if len(portCount) == 0 {
+			fmt.Fprintf(&b, "  No open ports found.\r\n")
+		} else {
+			type kv struct{ k, v int }
+			ports := make([]kv, 0, len(portCount))
+			for k, v := range portCount {
+				ports = append(ports, kv{k, v})
+			}
+			sort.Slice(ports, func(i, j int) bool {
+				if ports[i].v != ports[j].v {
+					return ports[i].v > ports[j].v
+				}
+				return ports[i].k < ports[j].k
+			})
+			max := 12
+			if len(ports) < max {
+				max = len(ports)
+			}
+			for _, kv := range ports[:max] {
+				ppct := float64(kv.v) / float64(len(results)) * 100
+				label := portLabel(kv.k)
+				fmt.Fprintf(&b, "  %5d  %-22s  %4d hosts  (%4.1f%%)\r\n", kv.k, label, kv.v, ppct)
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "  No port data available.\r\n")
+	}
+	fmt.Fprintf(&b, "\r\n")
+	fmt.Fprintf(&b, sep)
+	fmt.Fprintf(&b, "  ARP anomalies are genuinely unusual and worth investigating.\r\n")
+	fmt.Fprintf(&b, "  Hosts without PTR: no reverse DNS is normal on many networks.\r\n")
+
+	setInfoHeader(healthView, b.String())
+}
+
+// portLabel returns a short service name for a port number (e.g. 80 → "HTTP").
+func portLabel(port int) string {
+	labels := map[int]string{
+		21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+		80: "HTTP", 110: "POP3", 143: "IMAP", 161: "SNMP/UDP",
+		389: "LDAP", 443: "HTTPS", 445: "SMB", 465: "SMTPS",
+		587: "SMTP", 636: "LDAPS", 993: "IMAPS", 995: "POP3S",
+		1433: "MSSQL", 1521: "Oracle DB", 3306: "MySQL", 3389: "RDP",
+		5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
+		8080: "HTTP-alt", 8443: "HTTPS-alt",
+		9200: "Elasticsearch", 27017: "MongoDB",
+	}
+	if l, ok := labels[port]; ok {
+		return l
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
