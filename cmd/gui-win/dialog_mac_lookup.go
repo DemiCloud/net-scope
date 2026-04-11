@@ -44,6 +44,9 @@ var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
 
+	case WM_CTLCOLOREDIT:
+		return ctlColorDlgBody(wParam)
+
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idMACLookup:
@@ -61,21 +64,21 @@ var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 func createMACLookupControls(hwnd HWND) {
 	inst := getModuleHandle()
 	const (
-		pad   int32 = 14
-		cw    int32 = 380  // client width
-		lblW  int32 = 90
-		btnW  int32 = 70
-		gapLbl int32 = 6  // label → edit
-		gapBtn int32 = 8  // edit → button
+		pad    int32 = 14
+		cw     int32 = 380 // client width
+		lblW   int32 = 90
+		btnW   int32 = 70
+		gapLbl int32 = 6 // label → edit
+		gapBtn int32 = 8 // edit → button
 	)
 	// Edit fills the space between label and button, with pad on both sides.
 	editX := pad + lblW + gapLbl
-	btnX  := cw - pad - btnW
+	btnX := cw - pad - btnW
 	editW := btnX - gapBtn - editX
 
 	y := pad
 
-	// Row 1: label + edit + Look Up button
+	// ── Row 1: MAC input ────────────────────────────────────────────────────
 	createCtrl("STATIC", "MAC address:", WS_CHILD|WS_VISIBLE,
 		pad, y+4, lblW, 18, hwnd, 0, inst)
 
@@ -87,12 +90,20 @@ func createMACLookupControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
 		btnX, y, btnW, 22, hwnd, idMACLookup, inst)
 
-	y += 36
+	y += 32
 
-	// Row 2: result label (spans full width minus padding)
-	hwndMACResult, _ = createWindowEx(0, "STATIC", "",
-		WS_CHILD|WS_VISIBLE,
-		pad, y, cw-pad*2, 36, hwnd, HMENU(idMACResult), inst)
+	// ── Separator ───────────────────────────────────────────────────────────
+	createDlgSeparator(hwnd, inst, pad, y, cw-pad*2)
+	y += 14
+
+	// ── Row 2: Vendor result ─────────────────────────────────────────────────
+	createCtrl("STATIC", "Vendor:", WS_CHILD|WS_VISIBLE,
+		pad, y, lblW, 18, hwnd, 0, inst)
+	y += 22
+
+	hwndMACResult, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|WS_VISIBLE|ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL,
+		pad, y, cw-pad*2, 28, hwnd, HMENU(idMACResult), inst)
 
 	// Subclass edit to close on Escape.
 	macEditOrigProc = setWindowLongPtr(hwndMACEdit, GWLP_WNDPROC, macEditSubclassCb)
@@ -140,7 +151,7 @@ func doMACLookup(hwnd HWND) {
 func showMACLookupDialog(parent HWND) {
 	const (
 		clientW int32 = 380
-		clientH int32 = 86  // pad + row + gap + result + pad
+		clientH int32 = 132 // pad + input row + sep section + vendor label + result box + pad
 		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
 	)
