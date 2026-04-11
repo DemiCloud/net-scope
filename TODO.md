@@ -70,9 +70,13 @@
 
 - [ ] **Linux native GUI** — GTK3 via `gotk3`; CGo required; dynamically linked; only included in the `make linux-gui` build (tag: `linux,gui`); the standard static Linux binary (`make linux`) stays CGo-free with CLI+TUI only; the GTK GUI reuses the same sensor service IPC channel as the Win32 GUI; FreeBSD stays CLI/TUI only
 
-## Diff / Snapshot
+## Change Detection
 
 - [ ] **Diff / snapshot system** — capture a point-in-time snapshot of the host registry; compare against a later scan or a saved snapshot; surface added/removed/changed hosts; useful for change detection on monitored networks
+- [ ] **New / disappeared hosts** — between successive scans within a session, flag hosts that appeared for the first time or did not respond in the latest scan; surface in a "Changes" tab or Scan Report summary ("X new / Y removed")
+- [ ] **Service change tracking** — detect when a host gains or loses a service between scans (new port open, service stopped responding, service name/banner changed); show per-host change history in the host detail view
+- [ ] **IP ↔ MAC change detection** — flag when a previously known IP is now answered by a different MAC (possible DHCP churn, ARP spoofing, or device replacement); complements the existing MAC flapping item above; surface in the Changes tab and Scan Report
+- [ ] **OS confidence delta** — when a host's OS guess changes between scans (or confidence crosses a threshold), record the old and new guess and surface it in the change list
 
 ## Filter Language
 
@@ -91,3 +95,49 @@
   - Windows Firewall drop events (Security log, Event ID 5152 — requires audit policy enabled)
   - TLS/SChannel handshake failures (System, source `Schannel`, Event IDs 36871/36874)
   - Display as a listview: Timestamp | Source | Event ID | Summary; allow filtering by time range and source; Windows-only (stub out gracefully on Linux)
+
+## IPv6 Discovery
+
+- [ ] **Passive IPv6 mDNS** — join `ff02::fb` and process mDNS announcements on IPv6; correlate with existing IPv4 mDNS records per host; no modification to the active prober required
+- [ ] **Neighbor Discovery (NDP) listener** — passively receive ICMPv6 Neighbor Advertisement messages to build a link-local MAC→IPv6 mapping table; surface alongside the ARP table in the host registry
+- [ ] **Link-local IPv6 awareness** — when a host is discovered via any mechanism, record its link-local `fe80::/10` address where available; display alongside IPv4 in the host detail view
+- [ ] **IPv6 address correlation per host** — associate multiple IPv6 addresses (link-local, ULA, global) with the same host entry when MAC evidence links them; defer full IPv6 port scanning and large-range sweeps
+
+## Evidence / Confidence Surfacing
+
+- [ ] **OS guess breakdown** — in the host detail view, show each contributing signal (TTL, TCP fingerprint, mDNS service type, banner, DHCP options, etc.) with its individual weight and the combined confidence score; replaces the single-line OS guess string with an expandable evidence list
+- [ ] **Service confidence level** — display the number of independent sources that confirmed a service (e.g. "observed via 3 sources: banner, mDNS, SSDP"); surface in the Services tab detail view using the `Observation` evidence already collected
+- [ ] **Hover / expand evidence views** — in the Scanner and Services tabs, a hover tooltip or expand row shows the raw evidence (observation source + value) behind the displayed summary; no new data collection needed — only presentation
+
+## Scan Profiles
+
+- [ ] **Named scan profiles** — define saved configurations (e.g. Passive-only, Fast sweep, Privileged deep scan, SOCKS-safe remote scan, Production-safe); selectable from a toolbar dropdown or `Scan > Profile` menu; stored in `config.toml` under a `[[profiles]]` array; the active profile pre-fills all Scanner settings fields
+- [ ] **Profile editor dialog** — `Settings > Manage Profiles…`; list of profiles with add / edit / delete; each profile exposes the same fields as the main Settings dialog scoped to scan behaviour (timeout, concurrency, enabled probes, passive-only flag)
+
+## Timeline View
+
+- [ ] **Timeline tab** — time-ordered list of discovery events within the session: host first seen, service observed, DHCP lease event, mDNS/SSDP/WSD announcement, broadcast spike; columns: Timestamp | Event type | Host / IP | Detail; filterable by event type and host
+- [ ] **DHCP churn visualisation** — within the Timeline tab, highlight rapid DHCP lease/release cycles for the same MAC as a distinct event type; helps surface unstable clients or rogue DHCP behaviour
+
+## VLAN / Interface Awareness
+
+- [ ] **Record receiving interface per observation** — when a passive listener (ARP, mDNS, DHCP, SSDP, etc.) receives a packet, tag the resulting observation with the local interface name; store as an `Observation` field on the relevant host/service entry
+- [ ] **Subnet-based VLAN inference** — where the interface is bound to a specific subnet, label the host's inferred VLAN/segment in the host detail view (e.g. "likely VLAN 10 — 192.168.10.0/24"); no switch credentials required
+- [ ] **Interface column in Scanner tab** — optional column (hidden by default) showing which interface the host was reached on, derived from the receiving-interface tag; useful in multi-homed machines or machines with multiple NICs
+
+## Protocol-Aware UDP Probing
+
+- [ ] **DNS probe (UDP 53)** — send a well-formed DNS query (e.g. `A` for `version.bind` or a benign hostname) to port 53; record whether a valid DNS response is received; classify as DNS resolver in the Services tab; no generic UDP sweep
+- [ ] **NTP version check (UDP 123)** — send a minimal NTP request (mode 3 client); record stratum, reference ID, and NTP version from the response; surface in Services tab; avoid the monlist (REQ_MON_GETLIST) request that amplifies traffic
+- [ ] **TFTP detection (UDP 69)** — send a minimal RRQ for a non-existent file; classify port as TFTP if an error packet (opcode 5) is returned; a positive response is a security finding (unauthenticated TFTP); surface a warning badge
+
+## LLDP / CDP Passive Parsing
+
+- [ ] **LLDP listener** — passive capture on Ethernet type `0x88CC`; decode TLVs: Chassis ID, Port ID, TTL, System Name, System Description, Management Address, Port Description; add discovered peers to the host registry with source `lldp`; no probing required
+- [ ] **CDP passive parsing** — capture CDP frames (multicast `01:00:0c:cc:cc:cc`, SNAP `0x2000`); decode: Device ID, Addresses, Port ID, Capabilities, Platform, Software Version; surface in host detail; clearly mark as Cisco-proprietary; only decoded passively
+
+## TLS Fingerprinting (Passive)
+
+- [ ] **Passive TLS certificate capture** — when a TCP banner probe receives a TLS ServerHello, extract the certificate CN and SANs, issuer, validity period, and key type; store as `Observation` entries on the service; surface in the Services tab detail view
+- [ ] **Weak / self-signed cert detection** — flag services presenting self-signed, expired, or short-key certificates as a security finding; surface as a warning badge in the Services tab; no active TLS handshake initiation — only parse responses already received during banner probing
+- [ ] **Certificate reuse detection** — within a session, identify when the same certificate (same serial or same public key) is served from multiple IPs; surface in a Scan Report advisory; helps detect load balancers, misconfigured appliances, or shared credential abuse
