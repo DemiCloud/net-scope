@@ -242,13 +242,14 @@ func spawnService(hwnd HWND, elevated bool) {
 				}
 			} else if m.ARPEntry != nil {
 				if m.ARPSnapshot {
-					// Snapshot entry: route to the ARP Cache dialog.
-					pendingARPSnapMu.Lock()
-					idx := len(pendingARPSnap)
-					pendingARPSnap = append(pendingARPSnap, *m.ARPEntry)
-					pendingARPSnapMu.Unlock()
-					if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
-						postMessage(HWND(h), WM_ARP_SNAP_ENTRY, uintptr(idx), 0)
+					// Snapshot entry: route to main window (handler in ui.go) only
+					// when the ARP Cache dialog is open.
+					if atomic.LoadUintptr(&hwndARPCacheDialogAtomic) != 0 {
+						pendingARPSnapMu.Lock()
+						idx := len(pendingARPSnap)
+						pendingARPSnap = append(pendingARPSnap, *m.ARPEntry)
+						pendingARPSnapMu.Unlock()
+						postMessage(hwnd, WM_ARP_SNAP_ENTRY, uintptr(idx), 0)
 					}
 				} else {
 					// Poll entry: enrich the hosts list (existing behaviour).
@@ -262,32 +263,30 @@ func spawnService(hwnd HWND, elevated bool) {
 					}
 				}
 			} else if m.ARPSnapDone {
-				if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_ARP_SNAP_DONE, 0, 0)
+				if atomic.LoadUintptr(&hwndARPCacheDialogAtomic) != 0 {
+					postMessage(hwnd, WM_ARP_SNAP_DONE, 0, 0)
 				}
 			} else if m.DNSEntry != nil {
-				pendingDNSSnapMu.Lock()
-				idx := len(pendingDNSSnap)
-				pendingDNSSnap = append(pendingDNSSnap, *m.DNSEntry)
-				pendingDNSSnapMu.Unlock()
-				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_DNS_SNAP_ENTRY, uintptr(idx), 0)
+				if atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 {
+					pendingDNSSnapMu.Lock()
+					idx := len(pendingDNSSnap)
+					pendingDNSSnap = append(pendingDNSSnap, *m.DNSEntry)
+					pendingDNSSnapMu.Unlock()
+					postMessage(hwnd, WM_DNS_SNAP_ENTRY, uintptr(idx), 0)
 				}
 			} else if m.DNSSnapDone {
-				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_DNS_SNAP_DONE, 0, 0)
+				if atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 {
+					postMessage(hwnd, WM_DNS_SNAP_DONE, 0, 0)
 				}
 			} else if m.CacheOp != nil {
 				pendingCacheOpMu.Lock()
 				idx := len(pendingCacheOps)
 				pendingCacheOps = append(pendingCacheOps, *m.CacheOp)
 				pendingCacheOpMu.Unlock()
-				// Route to whichever cache dialog is open.
-				if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_CACHE_OP, uintptr(idx), 0)
-				}
-				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_CACHE_OP, uintptr(idx), 0)
+				// Route to main window (handler in ui.go) if either cache dialog is open.
+				if atomic.LoadUintptr(&hwndARPCacheDialogAtomic) != 0 ||
+					atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 {
+					postMessage(hwnd, WM_CACHE_OP, uintptr(idx), 0)
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
