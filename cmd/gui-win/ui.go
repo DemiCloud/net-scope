@@ -793,6 +793,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showAllServicesDialog(HWND(hwnd))
 		case IDM_TOOLS_WORKER_QUEUE:
 			showWorkerQueueDialog(HWND(hwnd))
+		case IDM_TOOLS_MAC_LOOKUP:
+			showMACLookupDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
