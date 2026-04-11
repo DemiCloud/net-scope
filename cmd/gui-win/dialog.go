@@ -78,7 +78,14 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 func showSettingsDialog(parent HWND) {
 	_, cfgPath, _ := config.Load()
 
-	dlg := createAndCenterDialog("NetScopeSettings", "Settings", 560, 470, settingsWndProc, parent)
+	// Compute outer dimensions from the desired client area so the window
+	// is correctly sized at any DPI scale.
+	rc := adjustWindowRectEx(
+		RECT{0, 0, 560, 460},
+		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
+		WS_EX_DLGMODALFRAME, false,
+	)
+	dlg := createAndCenterDialog("NetScopeSettings", "Settings", rc.Right-rc.Left, rc.Bottom-rc.Top, settingsWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -169,8 +176,9 @@ func createSettingsControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE,
 		lx, checkY+84, lw+ew, 40, hwnd, 0, inst)
 
-	// Protocol Handlers button + OK / Cancel — below path label + 8px gap
-	btnY := checkY + 132
+	// Protocol Handlers button + OK / Cancel — anchored to client bottom
+	cr := getClientRect(hwnd)
+	btnY := cr.Bottom - 12 - 26
 	makePushButton(hwnd, "Protocol Handlers\u2026", idSettProtoHandlers, lx, btnY, 140, 26)
 	makePushButton(hwnd, "OK", idSettOK, 306, btnY, 78, 26)
 	makePushButton(hwnd, "Cancel", idSettCancel, 392, btnY, 78, 26)
