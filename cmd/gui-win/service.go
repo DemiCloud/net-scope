@@ -173,6 +173,15 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingResults = append(pendingResults, *m.Result)
 				pendingMu.Unlock()
 				postMessage(hwnd, WM_SCAN_RESULT, uintptr(idx), uintptr(m.ScanID))
+				// WorkUpdate is often bundled with Result in the same message.
+				// Handle it here so state transitions aren't lost.
+				if m.WorkUpdate != nil {
+					pendingWorkUpdatesMu.Lock()
+					widx := len(pendingWorkUpdates)
+					pendingWorkUpdates = append(pendingWorkUpdates, *m.WorkUpdate)
+					pendingWorkUpdatesMu.Unlock()
+					postMessage(hwnd, WM_WORK_UPDATE, uintptr(widx), 0)
+				}
 			} else if m.DHCP != nil {
 				pendingDHCPMu.Lock()
 				idx := len(pendingDHCP)
