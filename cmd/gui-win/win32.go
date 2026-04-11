@@ -35,6 +35,7 @@ const (
 	WM_SVC_UPDATE      = WM_APP + 23 // sensor service: unified Service registry update (SvcUpdate message)
 	WM_WORK_UPDATE     = WM_APP + 24 // sensor service: host probe work-item state change (WorkUpdate message)
 	WM_WORKER_STATUS   = WM_APP + 25 // sensor service: named background worker started or stopped
+	WM_WORK_EXPIRE     = WM_APP + 26 // timer: remove a finished scan-queue item after its display window
 )
 
 // ---------------------------------------------------------------------------
