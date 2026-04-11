@@ -2790,9 +2790,9 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 	}
 }
 
-// handleCacheOpResult handles the result of an arp-delete / arp-clear / dns-clear
-// command routed from the sensor service. It notifies the relevant dialog and
-// triggers a refresh on success.
+// handleCacheOpResult handles the result of an arp-delete / arp-clear /
+// dns-delete / dns-clear command routed from the sensor service. It notifies
+// the relevant dialog and triggers a refresh on success.
 func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 	if !op.OK {
 		errMsg := op.Err
@@ -2805,7 +2805,7 @@ func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 	switch op.Op {
 	case "arp-delete", "arp-clear":
 		arpCacheDialogRefresh()
-	case "dns-clear":
+	case "dns-delete", "dns-clear":
 		dnsCacheDialogRefresh()
 	}
 }

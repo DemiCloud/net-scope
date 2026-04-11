@@ -30,7 +30,7 @@ type ServiceCmd struct {
 	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop",
 	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
 	// "arp-snapshot", "arp-delete", "arp-clear",
-	// "dns-snapshot", "dns-clear",
+	// "dns-snapshot", "dns-delete", "dns-clear",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -132,7 +132,7 @@ type DNSCacheEntry struct {
 }
 
 // CacheOpResult carries the result of a cache-manipulation command:
-// "arp-delete", "arp-clear", or "dns-clear".
+// "arp-delete", "arp-clear", "dns-delete", or "dns-clear".
 type CacheOpResult struct {
 	Op  string `json:"op"`
 	OK  bool   `json:"ok"`
@@ -756,6 +756,20 @@ func RunServiceConn(conn net.Conn) error {
 				}
 			}
 			_ = safeSend(ServiceMsg{DNSSnapDone: true})
+
+		case "dns-delete":
+			if cmd.Target == "" {
+				continue
+			}
+			target := cmd.Target
+			go func() {
+				err := DeleteDNSCacheEntry(target)
+				op := &CacheOpResult{Op: "dns-delete", OK: err == nil}
+				if err != nil {
+					op.Err = err.Error()
+				}
+				_ = safeSend(ServiceMsg{CacheOp: op})
+			}()
 
 		case "dns-clear":
 			go func() {
