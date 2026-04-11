@@ -356,6 +356,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			// Listener now includes DHCP via the elevated service.
 			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD · DHCP)")
 		}
+		// Update the DHCP tab placeholder to reflect whether we are listening.
+		setWindowText(hwndDHCPPlaceholder, dhcpPlaceholderText())
 		// Start broadcast listener via the newly connected service (if not proxy mode).
 		if !proxyEnabled {
 			startBroadcastListener(HWND(hwnd))
@@ -366,6 +368,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_SERVICE_DOWN:
 		// Update the service-state part of the status bar.
 		setStatusPart(statusPartService, statusForService())
+		// Reflect that DHCP is no longer active.
+		setWindowText(hwndDHCPPlaceholder, dhcpPlaceholderText())
 		// Broadcast listener ran inside the service — reset state so it will
 		// restart automatically when a new service connection is established.
 		bcastServiceActive = false
@@ -1424,12 +1428,7 @@ func createControls(hwnd HWND) {
 	for i, title := range dhcpColTitles {
 		listViewAddColumn(hwndListDHCP, int32(i), title, scale(dhcpDefWidths[i]))
 	}
-	hwndDHCPPlaceholder = createEmptyStateOverlay(hwnd, func() string {
-		if proxyEnabled {
-			return "Not available in proxy mode  (DHCP capture requires local network interface access)"
-		}
-		return "Listening — no DHCP traffic detected yet (requires elevation)"
-	}(), 0, otherTop+200, 1160, scale(20))
+	hwndDHCPPlaceholder = createEmptyStateOverlay(hwnd, dhcpPlaceholderText(), 0, otherTop+200, 1160, scale(20))
 
 	// ---- network text area (hidden initially) ----
 	networkInitialText := "Waiting for broadcast traffic…"
@@ -2065,12 +2064,7 @@ func applyProxyMode(hwnd HWND, enable bool) {
 		}
 		return "Listening \u2014 no WS-Discovery traffic detected yet"
 	}())
-	setWindowText(hwndDHCPPlaceholder, func() string {
-		if enable {
-			return proxyMsg + "  (DHCP capture requires local network interface access)"
-		}
-		return "Listening \u2014 no DHCP traffic detected yet (requires elevation)"
-	}())
+	setWindowText(hwndDHCPPlaceholder, dhcpPlaceholderText())
 	setWindowText(hwndListNetwork, func() string {
 		if enable {
 			return proxyMsg + "  (network-layer traffic cannot be captured over SOCKS5)"

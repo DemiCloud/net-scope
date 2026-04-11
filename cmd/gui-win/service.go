@@ -379,6 +379,18 @@ func startDHCPCapture(hwnd HWND) {
 	serviceEncMu.Unlock()
 }
 
+// dhcpPlaceholderText returns the correct empty-state message for the DHCP tab
+// based on the current proxy and elevation state.
+func dhcpPlaceholderText() string {
+	if proxyEnabled {
+		return "Not available in proxy mode \u2014 DHCP capture requires local network interface access"
+	}
+	if serviceElevated {
+		return "Listening \u2014 no DHCP traffic detected"
+	}
+	return "Not listening \u2014 sensor is running in user mode (requires elevation)"
+}
+
 // statusForService returns a short label for the service-state overlay.
 func statusForService() string {
 	serviceMu.Lock()
