@@ -56,6 +56,14 @@ var (
 	// hwndRouteTableDialogAtomic holds the HWND of the currently-open Route
 	// Table dialog, or 0. Used to route route-snapshot and cache-op messages.
 	hwndRouteTableDialogAtomic uintptr
+
+	// hwndConnectionsDialogAtomic holds the HWND of the currently-open Active
+	// Connections dialog, or 0.
+	hwndConnectionsDialogAtomic uintptr
+
+	// hwndHostsDialogAtomic holds the HWND of the currently-open Hosts File
+	// dialog, or 0.
+	hwndHostsDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -287,10 +295,11 @@ func spawnService(hwnd HWND, elevated bool) {
 				idx := len(pendingCacheOps)
 				pendingCacheOps = append(pendingCacheOps, *m.CacheOp)
 				pendingCacheOpMu.Unlock()
-				// Route to main window (handler in ui.go) if any cache dialog is open.
+				// Route to main window if any write-op dialog is open.
 				if atomic.LoadUintptr(&hwndARPCacheDialogAtomic) != 0 ||
 					atomic.LoadUintptr(&hwndDNSCacheDialogAtomic) != 0 ||
-					atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 {
+					atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 ||
+					atomic.LoadUintptr(&hwndHostsDialogAtomic) != 0 {
 					postMessage(hwnd, WM_CACHE_OP, uintptr(idx), 0)
 				}
 			} else if m.RouteEntry != nil {
@@ -304,6 +313,30 @@ func spawnService(hwnd HWND, elevated bool) {
 			} else if m.RouteSnapDone {
 				if atomic.LoadUintptr(&hwndRouteTableDialogAtomic) != 0 {
 					postMessage(hwnd, WM_ROUTE_SNAP_DONE, 0, 0)
+				}
+			} else if m.SocketEntry != nil {
+				if atomic.LoadUintptr(&hwndConnectionsDialogAtomic) != 0 {
+					pendingSocketSnapMu.Lock()
+					idx := len(pendingSocketSnap)
+					pendingSocketSnap = append(pendingSocketSnap, *m.SocketEntry)
+					pendingSocketSnapMu.Unlock()
+					postMessage(hwnd, WM_SOCKET_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.SocketSnapDone {
+				if atomic.LoadUintptr(&hwndConnectionsDialogAtomic) != 0 {
+					postMessage(hwnd, WM_SOCKET_SNAP_DONE, 0, 0)
+				}
+			} else if m.HostsEntry != nil {
+				if atomic.LoadUintptr(&hwndHostsDialogAtomic) != 0 {
+					pendingHostsSnapMu.Lock()
+					idx := len(pendingHostsSnap)
+					pendingHostsSnap = append(pendingHostsSnap, *m.HostsEntry)
+					pendingHostsSnapMu.Unlock()
+					postMessage(hwnd, WM_HOSTS_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.HostsSnapDone {
+				if atomic.LoadUintptr(&hwndHostsDialogAtomic) != 0 {
+					postMessage(hwnd, WM_HOSTS_SNAP_DONE, 0, 0)
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
@@ -577,4 +610,34 @@ func requestRouteSnapshot() bool {
 // The result arrives as WM_CACHE_OP.
 func requestRouteDelete(target string) bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "route-delete", Target: target})
+}
+
+// requestSocketSnapshot sends a "socket-snapshot" command; entries arrive as
+// WM_SOCKET_SNAP_ENTRY followed by WM_SOCKET_SNAP_DONE.
+// Returns false if the service is not running.
+func requestSocketSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "socket-snapshot"})
+}
+
+// requestHostsSnapshot sends a "hosts-snapshot" command; entries arrive as
+// WM_HOSTS_SNAP_ENTRY followed by WM_HOSTS_SNAP_DONE.
+// Returns false if the service is not running.
+func requestHostsSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "hosts-snapshot"})
+}
+
+// requestHostsAdd asks the service to append a new entry to the hosts file.
+// The result arrives as WM_CACHE_OP (op = "hosts-add").
+func requestHostsAdd(ip string, hostnames []string) bool {
+	return serviceCmd(scan.ServiceCmd{
+		Cmd:      "hosts-add",
+		HostsAdd: &scan.HostsAddParams{IP: ip, Hostnames: hostnames},
+	})
+}
+
+// requestHostsDelete asks the service to remove a hosts-file entry.
+// target is "IP\thostname1 hostname2..." as produced by hostsEntryTarget.
+// The result arrives as WM_CACHE_OP (op = "hosts-delete").
+func requestHostsDelete(target string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "hosts-delete", Target: target})
 }
