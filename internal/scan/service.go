@@ -393,10 +393,19 @@ func RunServiceConn(conn net.Conn) error {
 		if svc.Port > 0 {
 			key.port = svc.Port
 		} else {
-			// Source-agnostic: mDNS and SSDP reporting the same type without a
-			// port both map to the same entry. Port-0 entries cannot be merged
-			// with port-N entries; they represent device-level advertisements.
-			key.sub = svc.Type
+			// Port-0 discovery: the SRV record was not yet resolved (mDNS race)
+			// or the announcement genuinely has no listening port (e.g. Apple's
+			// _device-info._tcp). For service types that have a single well-known
+			// port, use that port as the key so the entry merges with any existing
+			// banner-scanned entry on the same host rather than creating a duplicate.
+			if wkp := SvcTypeWellKnownPort(svc.Type); wkp > 0 {
+				key.port = wkp
+			} else {
+				// Unknown type or metadata-only advertisement (no real listener,
+				// no reliable port). Key by type so all sources that emit the same
+				// type for the same IP agree on a single entry.
+				key.sub = svc.Type
+			}
 		}
 		now := time.Now()
 		friendlyName := ServiceFriendlyName(svc.Type)
@@ -414,7 +423,7 @@ func RunServiceConn(conn net.Conn) error {
 			s = &Service{
 				ID:         newPortServiceID(),
 				IP:         ip,
-				Port:       svc.Port,
+				Port:       key.port, // use resolved key port (may differ from svc.Port when port=0 + well-known fallback)
 				Confidence: conf,
 				FirstSeen:  now,
 			}

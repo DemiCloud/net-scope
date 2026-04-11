@@ -344,6 +344,11 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_SERVICE_UP:
 		// Update the service-state part of the status bar.
 		setStatusPart(statusPartService, statusForService())
+		// The new subprocess starts with a fresh service registry (new svcReg).
+		// Stale entries from the previous connection have different UUIDs and
+		// would appear as duplicates alongside fresh discoveries. Clear now so
+		// the tab is repopulated cleanly from the new connection's SvcUpdates.
+		clearServicesTab()
 		if serviceElevated {
 			enableWindow(hwndServiceBtn, false)
 			// Start passive DHCP capture in the elevated service.
