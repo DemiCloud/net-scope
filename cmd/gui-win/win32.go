@@ -36,6 +36,11 @@ const (
 	WM_WORK_UPDATE     = WM_APP + 24 // sensor service: host probe work-item state change (WorkUpdate message)
 	WM_WORKER_STATUS   = WM_APP + 25 // sensor service: named background worker started or stopped
 	WM_WORK_EXPIRE     = WM_APP + 26 // timer: remove a finished scan-queue item after its display window
+	WM_ARP_SNAP_ENTRY  = WM_APP + 27 // sensor service: one ARP snapshot entry arrived
+	WM_ARP_SNAP_DONE   = WM_APP + 28 // sensor service: ARP snapshot stream complete
+	WM_DNS_SNAP_ENTRY  = WM_APP + 29 // sensor service: one DNS cache entry arrived
+	WM_DNS_SNAP_DONE   = WM_APP + 30 // sensor service: DNS snapshot stream complete
+	WM_CACHE_OP        = WM_APP + 31 // sensor service: cache operation result (arp-delete/clear, dns-clear)
 )
 
 // ---------------------------------------------------------------------------
@@ -95,6 +100,8 @@ const (
 	IDM_HELP_CONN_HANDLERS    = 212 // Help > Connection Handlers…
 	IDM_TOOLS_WORKER_QUEUE    = 216 // Tools > Background Workers…
 	IDM_TOOLS_MAC_LOOKUP      = 217 // Tools > MAC Vendor Lookup…
+	IDM_TOOLS_ARP_CACHE       = 218 // Tools > ARP Cache…
+	IDM_TOOLS_DNS_CACHE       = 219 // Tools > DNS Cache…
 )
 
 // ---------------------------------------------------------------------------

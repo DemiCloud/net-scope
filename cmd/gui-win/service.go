@@ -44,6 +44,14 @@ var (
 	// (pick host) dialog, or 0 if none is open. Used to route ResolveResult
 	// messages back to the dialog that issued the "resolve" command.
 	hwndPickDialogAtomic uintptr
+
+	// hwndARPCacheDialogAtomic holds the HWND of the currently-open ARP
+	// Cache dialog, or 0. Used to route arp-snapshot and cache-op messages.
+	hwndARPCacheDialogAtomic uintptr
+
+	// hwndDNSCacheDialogAtomic holds the HWND of the currently-open DNS
+	// Cache dialog, or 0. Used to route dns-snapshot and cache-op messages.
+	hwndDNSCacheDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -233,13 +241,53 @@ func spawnService(hwnd HWND, elevated bool) {
 					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
 				}
 			} else if m.ARPEntry != nil {
-				mac, _ := net.ParseMAC(m.ARPEntry.MAC)
-				if mac != nil {
-					pendingEnrichMu.Lock()
-					idx := len(pendingEnriches)
-					pendingEnriches = append(pendingEnriches, enrichEvent{ip: m.ARPEntry.IP, mac: mac})
-					pendingEnrichMu.Unlock()
-					postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+				if m.ARPSnapshot {
+					// Snapshot entry: route to the ARP Cache dialog.
+					pendingARPSnapMu.Lock()
+					idx := len(pendingARPSnap)
+					pendingARPSnap = append(pendingARPSnap, *m.ARPEntry)
+					pendingARPSnapMu.Unlock()
+					if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
+						postMessage(HWND(h), WM_ARP_SNAP_ENTRY, uintptr(idx), 0)
+					}
+				} else {
+					// Poll entry: enrich the hosts list (existing behaviour).
+					mac, _ := net.ParseMAC(m.ARPEntry.MAC)
+					if mac != nil {
+						pendingEnrichMu.Lock()
+						idx := len(pendingEnriches)
+						pendingEnriches = append(pendingEnriches, enrichEvent{ip: m.ARPEntry.IP, mac: mac})
+						pendingEnrichMu.Unlock()
+						postMessage(hwnd, WM_HOST_ENRICH, uintptr(idx), 0)
+					}
+				}
+			} else if m.ARPSnapDone {
+				if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_ARP_SNAP_DONE, 0, 0)
+				}
+			} else if m.DNSEntry != nil {
+				pendingDNSSnapMu.Lock()
+				idx := len(pendingDNSSnap)
+				pendingDNSSnap = append(pendingDNSSnap, *m.DNSEntry)
+				pendingDNSSnapMu.Unlock()
+				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_DNS_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.DNSSnapDone {
+				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_DNS_SNAP_DONE, 0, 0)
+				}
+			} else if m.CacheOp != nil {
+				pendingCacheOpMu.Lock()
+				idx := len(pendingCacheOps)
+				pendingCacheOps = append(pendingCacheOps, *m.CacheOp)
+				pendingCacheOpMu.Unlock()
+				// Route to whichever cache dialog is open.
+				if h := atomic.LoadUintptr(&hwndARPCacheDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_CACHE_OP, uintptr(idx), 0)
+				}
+				if h := atomic.LoadUintptr(&hwndDNSCacheDialogAtomic); h != 0 {
+					postMessage(HWND(h), WM_CACHE_OP, uintptr(idx), 0)
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
@@ -461,4 +509,36 @@ func testProxyViaService(proxyAddr string) bool {
 // posted to hwndActiveDBDialogAtomic. Returns false if the service is not running.
 func downloadOUIViaService(dataDir string) bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "oui-update", DataDir: dataDir})
+}
+
+// requestARPSnapshot sends an "arp-snapshot" command; entries arrive as
+// WM_ARP_SNAP_ENTRY posted to hwndARPCacheDialogAtomic, followed by
+// WM_ARP_SNAP_DONE. Returns false if the service is not running.
+func requestARPSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "arp-snapshot"})
+}
+
+// requestARPDelete asks the (elevated) service to remove the ARP entry for ip.
+// The result arrives as WM_CACHE_OP posted to hwndARPCacheDialogAtomic.
+func requestARPDelete(ip string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "arp-delete", Target: ip})
+}
+
+// requestARPClear asks the (elevated) service to flush all dynamic ARP entries.
+// The result arrives as WM_CACHE_OP.
+func requestARPClear() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "arp-clear"})
+}
+
+// requestDNSSnapshot sends a "dns-snapshot" command; entries arrive as
+// WM_DNS_SNAP_ENTRY posted to hwndDNSCacheDialogAtomic, followed by
+// WM_DNS_SNAP_DONE. Returns false if the service is not running.
+func requestDNSSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "dns-snapshot"})
+}
+
+// requestDNSClear asks the service to flush the DNS resolver cache.
+// The result arrives as WM_CACHE_OP posted to hwndDNSCacheDialogAtomic.
+func requestDNSClear() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "dns-clear"})
 }
