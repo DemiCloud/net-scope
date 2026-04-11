@@ -210,8 +210,12 @@ func spawnService(hwnd HWND, elevated bool) {
 				idx := len(pendingWorkUpdates)
 				pendingWorkUpdates = append(pendingWorkUpdates, *m.WorkUpdate)
 				pendingWorkUpdatesMu.Unlock()
-				postMessage(hwnd, WM_WORK_UPDATE, uintptr(idx), 0)
-			} else if m.PTRUpdate != nil {
+				postMessage(hwnd, WM_WORK_UPDATE, uintptr(idx), 0)		} else if m.WorkerStatus != nil {
+			pendingWorkerStatusesMu.Lock()
+			idx := len(pendingWorkerStatuses)
+			pendingWorkerStatuses = append(pendingWorkerStatuses, *m.WorkerStatus)
+			pendingWorkerStatusesMu.Unlock()
+			postMessage(hwnd, WM_WORKER_STATUS, uintptr(idx), 0)			} else if m.PTRUpdate != nil {
 				if m.PTRUpdate.Hostname != "" {
 					pendingEnrichMu.Lock()
 					idx := len(pendingEnriches)

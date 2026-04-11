@@ -34,6 +34,7 @@ const (
 	WM_HOST_RESCAN     = WM_APP + 22 // host detail dialog: re-scan a single host without clearing the Scanner tab
 	WM_SVC_UPDATE      = WM_APP + 23 // sensor service: unified Service registry update (SvcUpdate message)
 	WM_WORK_UPDATE     = WM_APP + 24 // sensor service: host probe work-item state change (WorkUpdate message)
+	WM_WORKER_STATUS   = WM_APP + 25 // sensor service: named background worker started or stopped
 )
 
 // ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ const (
 	IDM_HELP_VERSION          = 207
 	IDM_HELP_CRASHLOG         = 208 // Help > View Crash Log
 	IDM_HELP_CONN_HANDLERS    = 212 // Help > Connection Handlers…
-	IDM_TOOLS_WORKER_QUEUE    = 216 // Tools > Worker Queue…
+	IDM_TOOLS_WORKER_QUEUE    = 216 // Tools > Background Workers…
 )
 
 // ---------------------------------------------------------------------------

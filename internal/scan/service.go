@@ -98,6 +98,10 @@ type ServiceMsg struct {
 	// WorkUpdate carries a host probe state transition (queued → running → done/dead).
 	// Emitted by the service throughout a scan so the GUI can display a live queue.
 	WorkUpdate *WorkItem `json:"work_update,omitempty"`
+	// WorkerStatus carries a named background goroutine state change (started / stopped).
+	// Emitted when any long-running service worker (broadcast listener, DHCP capture,
+	// ARP poll, PTR resolver, port scanner) starts or stops.
+	WorkerStatus *WorkerStatus `json:"worker_status,omitempty"`
 }
 
 // ARPResult carries a single ARP table entry streamed from service to GUI.
@@ -240,6 +244,8 @@ func RunServiceConn(conn net.Conn) error {
 	if err := safeSend(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
 		return fmt.Errorf("service ready: %w", err)
 	}
+	// PTR resolver goroutine starts immediately and lives for the connection.
+	_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "PTR Resolver", Running: true}})
 
 	// ptrQueue receives IPs that need background PTR (reverse-DNS) resolution.
 	// Buffered to absorb a full /24 without blocking the scan streamer.
@@ -471,6 +477,7 @@ func RunServiceConn(conn net.Conn) error {
 				_ = safeSend(ServiceMsg{Err: "scan: " + err.Error(), ScanID: scanID})
 				continue
 			}
+			_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Port Scanner", Running: true}})
 			// Stream results in a goroutine so the command loop stays responsive.
 			go func() {
 				for r := range ch {
@@ -506,6 +513,7 @@ func RunServiceConn(conn net.Conn) error {
 					}
 				}
 				_ = safeSend(ServiceMsg{Done: true, Stats: &sc.Stats, ScanID: scanID})
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Port Scanner", Running: false}})
 			}()
 
 		case "stop":
@@ -545,6 +553,7 @@ func RunServiceConn(conn net.Conn) error {
 				_ = safeSend(ServiceMsg{Err: "dhcp-start: " + err.Error()})
 				continue
 			}
+			_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "DHCP Capture", Running: true}})
 			go func() {
 				for evt := range ch {
 					e := evt
@@ -558,6 +567,7 @@ func RunServiceConn(conn net.Conn) error {
 			if dhcpCancel != nil {
 				dhcpCancel()
 				dhcpCancel = nil
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "DHCP Capture", Running: false}})
 			}
 
 		case "bcast-start":
@@ -582,6 +592,7 @@ func RunServiceConn(conn net.Conn) error {
 				if probeErr != nil {
 					return
 				}
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Broadcast Listener", Running: true}})
 				ListenBroadcast(ctx, bl, func(ip string, svc ServiceInfo) {
 					svcCopy := svc
 					_ = safeSend(ServiceMsg{BcastSvc: &svcCopy, BcastIP: ip})
@@ -594,6 +605,7 @@ func RunServiceConn(conn net.Conn) error {
 					default:
 					}
 				})
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Broadcast Listener", Running: false}})
 			}()
 
 		case "bcast-stop":
@@ -608,6 +620,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			arpCancel = cancel
+			_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "ARP Poll", Running: true}})
 			go func() {
 				t := time.NewTicker(5 * time.Second)
 				defer t.Stop()
@@ -630,6 +643,7 @@ func RunServiceConn(conn net.Conn) error {
 			if arpCancel != nil {
 				arpCancel()
 				arpCancel = nil
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "ARP Poll", Running: false}})
 			}
 
 		case "netbios":

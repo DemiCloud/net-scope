@@ -175,6 +175,11 @@ var (
 	pendingWorkUpdates   []scan.WorkItem
 	pendingWorkUpdatesMu sync.Mutex
 
+	// pendingWorkerStatuses carries named background worker start/stop events
+	// from the sensor service back to the UI thread via WM_WORKER_STATUS.
+	pendingWorkerStatuses   []scan.WorkerStatus
+	pendingWorkerStatusesMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -1092,6 +1097,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingWorkUpdatesMu.Unlock()
 		if wi.IP != "" {
 			workerQueueUpsert(wi)
+		}
+		return 0
+
+	case WM_WORKER_STATUS:
+		pendingWorkerStatusesMu.Lock()
+		var ws scan.WorkerStatus
+		if int(wParam) < len(pendingWorkerStatuses) {
+			ws = pendingWorkerStatuses[int(wParam)]
+		}
+		pendingWorkerStatusesMu.Unlock()
+		if ws.Name != "" {
+			workerStatusUpsert(ws)
 		}
 		return 0
 
