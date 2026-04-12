@@ -67,6 +67,7 @@ const (
 	WS_EX_CLIENTEDGE    = 0x00000200
 	WS_EX_STATICEDGE    = 0x00020000
 	WS_EX_TOPMOST       = 0x00000008
+	WS_EX_TOOLWINDOW    = 0x00000080 // excludes window from taskbar and Alt+Tab
 
 	// Class styles
 	CS_HREDRAW = 0x0002
@@ -781,7 +782,11 @@ func RunNamedBackgroundWindow(title string) {
 		LpszClassName: cls,
 	}
 	registerClassEx(&wc) //nolint:errcheck // error is benign: class already registered on respawn
-	_, _ = createWindowEx(0, "NetScopeBackgroundWnd", title, WS_POPUP, 0, 0, 0, 0, 0, 0, inst)
+	// WS_VISIBLE is required so Task Manager detects the window title
+	// (it ignores invisible windows when building the name for a process).
+	// WS_EX_TOOLWINDOW hides it from the taskbar and Alt+Tab. Zero size
+	// means nothing ever renders — the window is invisible in practice.
+	_, _ = createWindowEx(WS_EX_TOOLWINDOW, "NetScopeBackgroundWnd", title, WS_POPUP|WS_VISIBLE, 0, 0, 0, 0, 0, 0, inst)
 	var msg MSG
 	for getMessage(&msg) {
 		translateMessage(&msg)
