@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/scan"
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ var (
 	hwndHostsFilter      HWND
 	hwndHostsLoadingHint HWND
 
-	hostsAllRows    []scan.HostsEntry
+	hostsAllRows    []netinfo.HostsEntry
 	hostsFilterText string
 )
 
@@ -279,7 +279,7 @@ func showHostsContextMenu(parent HWND, row int32, pt POINT) {
 
 // hostsEntryTarget builds the "IP\thostname1 hostname2..." key used by
 // requestHostsDelete to identify a hosts file line.
-func hostsEntryTarget(e scan.HostsEntry) string {
+func hostsEntryTarget(e netinfo.HostsEntry) string {
 	return e.IP + "\t" + strings.Join(e.Hostnames, " ")
 }
 
@@ -324,7 +324,7 @@ func hostsDeleteSelected(parent HWND) {
 // ---------------------------------------------------------------------------
 
 // hostsDialogAddRow is called on the UI thread for each WM_HOSTS_SNAP_ENTRY.
-func hostsDialogAddRow(e scan.HostsEntry) {
+func hostsDialogAddRow(e netinfo.HostsEntry) {
 	hostsAllRows = append(hostsAllRows, e)
 	if hostsFilterText != "" && !hostsEntryMatchesFilter(e, hostsFilterText) {
 		return
@@ -361,11 +361,11 @@ func hostsRepopulate() {
 	}
 }
 
-func hostsInsertRow(lv HWND, e scan.HostsEntry) {
+func hostsInsertRow(lv HWND, e netinfo.HostsEntry) {
 	listViewAppendRow(lv, []string{e.IP, strings.Join(e.Hostnames, " "), e.Comment})
 }
 
-func hostsEntryMatchesFilter(e scan.HostsEntry, f string) bool {
+func hostsEntryMatchesFilter(e netinfo.HostsEntry, f string) bool {
 	return strings.Contains(strings.ToLower(e.IP), f) ||
 		strings.Contains(strings.ToLower(strings.Join(e.Hostnames, " ")), f) ||
 		strings.Contains(strings.ToLower(e.Comment), f)

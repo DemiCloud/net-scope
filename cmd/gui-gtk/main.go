@@ -15,6 +15,7 @@ package guigtk
 
 import (
 	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/netinfo"
 	"github.com/demicloud/net-scope/internal/scan"
 )
 
@@ -27,7 +28,7 @@ func Run(v, target string) {
 	if target == "" {
 		if cfg.Scan.DefaultTarget != "" {
 			target = cfg.Scan.DefaultTarget
-		} else if detected := scan.DetectLocalSubnets(); len(detected) > 0 {
+		} else if detected := netinfo.DetectLocalSubnets(); len(detected) > 0 {
 			target = detected[0]
 		} else {
 			target = "192.168.1.0/24"

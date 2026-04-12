@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/scan"
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ var (
 
 	// routeAllRows holds every entry from the last snapshot, allowing filter
 	// rebuilds without another network round-trip.
-	routeAllRows    []scan.RouteEntry
+	routeAllRows    []netinfo.RouteEntry
 	routeFilterText string
 )
 
@@ -280,7 +280,7 @@ func showRouteContextMenu(parent HWND, row int32, pt POINT) {
 // ---------------------------------------------------------------------------
 
 // routeTableDialogAddRow is called on the UI thread for each WM_ROUTE_SNAP_ENTRY.
-func routeTableDialogAddRow(e scan.RouteEntry) {
+func routeTableDialogAddRow(e netinfo.RouteEntry) {
 	routeAllRows = append(routeAllRows, e)
 	if routeFilterText != "" && !routeEntryMatchesFilter(e, routeFilterText) {
 		return
@@ -318,7 +318,7 @@ func routeRepopulate() {
 	}
 }
 
-func routeInsertRow(lv HWND, e scan.RouteEntry) {
+func routeInsertRow(lv HWND, e netinfo.RouteEntry) {
 	listViewAppendRow(lv, []string{
 		routeDestCIDR(e),
 		e.Gateway,
@@ -329,7 +329,7 @@ func routeInsertRow(lv HWND, e scan.RouteEntry) {
 	})
 }
 
-func routeEntryMatchesFilter(e scan.RouteEntry, f string) bool {
+func routeEntryMatchesFilter(e netinfo.RouteEntry, f string) bool {
 	cidr := strings.ToLower(routeDestCIDR(e))
 	return strings.Contains(cidr, f) ||
 		strings.Contains(strings.ToLower(e.Gateway), f) ||
@@ -340,7 +340,7 @@ func routeEntryMatchesFilter(e scan.RouteEntry, f string) bool {
 }
 
 // routeDestCIDR formats e.Dest/e.Mask as a CIDR string, e.g. "192.168.1.0/24".
-func routeDestCIDR(e scan.RouteEntry) string {
+func routeDestCIDR(e netinfo.RouteEntry) string {
 	mask := net.ParseIP(e.Mask).To4()
 	if mask == nil {
 		return e.Dest

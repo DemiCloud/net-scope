@@ -1,6 +1,6 @@
 //go:build linux
 
-package scan
+package netinfo
 
 import (
 	"bufio"

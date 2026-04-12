@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/demicloud/net-scope/internal/netinfo"
 	"github.com/demicloud/net-scope/internal/scan"
 )
 
@@ -58,7 +59,7 @@ var (
 
 	// arpAllRows stores every row fetched from the last snapshot so that the
 	// filter can rebuild the list without a new network round-trip.
-	arpAllRows    []scan.ARPResult
+	arpAllRows    []netinfo.ARPResult
 	arpFilterText string
 )
 
@@ -285,7 +286,7 @@ func showARPContextMenu(parent HWND, row int32, pt POINT) {
 // ---------------------------------------------------------------------------
 
 // arpCacheDialogAddRow is called on the UI thread for each WM_ARP_SNAP_ENTRY.
-func arpCacheDialogAddRow(e scan.ARPResult) {
+func arpCacheDialogAddRow(e netinfo.ARPResult) {
 	arpAllRows = append(arpAllRows, e)
 	if arpFilterText != "" && !arpEntryMatchesFilter(e, arpFilterText) {
 		return
@@ -323,7 +324,7 @@ func arpRepopulate() {
 	}
 }
 
-func arpInsertRow(lv HWND, e scan.ARPResult) {
+func arpInsertRow(lv HWND, e netinfo.ARPResult) {
 	vendor := scan.LookupVendor(mustParseMAC(e.MAC))
 	if vendor == "" {
 		vendor = "\u2014"
@@ -335,7 +336,7 @@ func arpInsertRow(lv HWND, e scan.ARPResult) {
 	listViewAppendRow(lv, []string{e.IP, e.MAC, vendor, e.Type, ifStr})
 }
 
-func arpEntryMatchesFilter(e scan.ARPResult, f string) bool {
+func arpEntryMatchesFilter(e netinfo.ARPResult, f string) bool {
 	vendor := strings.ToLower(scan.LookupVendor(mustParseMAC(e.MAC)))
 	for _, field := range []string{e.IP, e.MAC, vendor, e.Type} {
 		if strings.Contains(strings.ToLower(field), f) {
