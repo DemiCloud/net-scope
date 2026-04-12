@@ -72,8 +72,11 @@ type ServiceMsg struct {
 	ScanID   uint64       `json:"scan_id,omitempty"`
 	// DHCP carries a single passively-observed DHCP packet.
 	DHCP     *netinfo.DHCPEvent   `json:"dhcp,omitempty"`
-	// ProbeResult carries the result of a single on-demand host probe.
+	// ProbeResult carries the result of a single on-demand host probe (simple path).
 	ProbeResult *ProbeResult `json:"probe_result,omitempty"`
+	// ProbeEvent carries one streaming line from a deep probe run (ExtProbeID path).
+	// The dialog receives N ProbeEvent messages, the last of which has Done=true.
+	ProbeEvent *ProbeEvent `json:"probe_event,omitempty"`
 	// Err carries a human-readable error string.
 	Err      string       `json:"err,omitempty"`
 
@@ -614,11 +617,66 @@ func RunServiceConn(conn net.Conn) error {
 			spec := *cmd.Probe
 			target := cmd.Target
 			proxy := cmd.SOCKSProxy
-			go func() {
-				dial, _ := MakeDialFunc(proxy)
-				result := RunProbe(context.Background(), target, spec, 3*time.Second, dial)
-				_ = safeSend(ServiceMsg{ProbeResult: &result})
-			}()
+
+			if spec.ExtProbeID != "" {
+				// Deep probe: streaming ProbeEvent path.
+				runID := spec.RunID
+				port := spec.Port
+				go func() {
+					dp, ok := DeepProbeByID(spec.ExtProbeID)
+					if !ok {
+						_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{
+							RunID: runID,
+							Err:   "unknown probe: " + spec.ExtProbeID,
+							Done:  true,
+						}})
+						return
+					}
+					if port == 0 {
+						port = dp.DefaultPort
+					}
+					dial, _ := MakeDialFunc(proxy)
+					emit := func(line string) {
+						_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{RunID: runID, Text: line}})
+					}
+					obs, err := dp.Run(context.Background(), target, port, dial, emit)
+					// Merge observations into the session service registry.
+					if len(obs) > 0 && port > 0 {
+						now := time.Now()
+						ip := normalizeIP(target)
+						key := svcRegKey{ip: ip, port: port}
+						svcRegMu.Lock()
+						s, exists := svcReg[key]
+						if !exists {
+							s = &Service{ID: newPortServiceID(), IP: ip, Port: port, FirstSeen: now}
+							svcReg[key] = s
+						}
+						s.LastSeen = now
+						for _, o := range obs {
+							s.Obs = upsertObs(s.Obs, o.Source, o.Key, o.Value)
+						}
+						clone := *s
+						clone.Obs = make([]Observation, len(s.Obs))
+						copy(clone.Obs, s.Obs)
+						clone.Capabilities = copyClaimMap(s.Capabilities)
+						clone.Fingerprints = copyClaimMap(s.Fingerprints)
+						svcRegMu.Unlock()
+						_ = safeSend(ServiceMsg{SvcUpdate: &clone})
+					}
+					errStr := ""
+					if err != nil {
+						errStr = err.Error()
+					}
+					_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{RunID: runID, Done: true, Err: errStr}})
+				}()
+			} else {
+				// Simple probe: single ProbeResult (legacy banner-grab path).
+				go func() {
+					dial, _ := MakeDialFunc(proxy)
+					result := RunProbe(context.Background(), target, spec, 3*time.Second, dial)
+					_ = safeSend(ServiceMsg{ProbeResult: &result})
+				}()
+			}
 
 		case "dhcp-start":
 			if dhcpCancel != nil {

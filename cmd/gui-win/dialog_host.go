@@ -167,7 +167,7 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 				showConnectMenu(HWND(hwnd))
 			}
 		case idHostProbes:
-			showProbesDialog(HWND(hwnd))
+			showProbeDialog(HWND(hwnd), currentDetailIP, true)
 		case idHostScan:
 			hostDetailRunScan(HWND(hwnd))
 		case idHostDiagnostics:
@@ -489,7 +489,12 @@ func createHostDetailControls(hwnd HWND) {
 	createDlgSeparator(hwnd, inst, pad, y, cW-pad*2)
 	y += 10
 
-	// Listview of heterogeneous observations: ports, banners, services, OS… (ports, banners, services, OS…).
+	// ── Section 3: Observations ───────────────────────────────────────────
+	createCtrl("STATIC", "Observations", WS_CHILD|WS_VISIBLE,
+		pad, y+3, 100, 14, hwnd, 0, inst)
+	y += 20
+
+	// Observations listview: heterogeneous rows (ports, banners, services, OS…).
 	const btnRowH int32 = pad + 28 + pad
 	obsListH := cH - y - btnRowH
 	if obsListH < 60 {

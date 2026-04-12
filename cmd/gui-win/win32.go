@@ -49,6 +49,8 @@ const (
 	WM_HOSTS_SNAP_DONE   = WM_APP + 37 // sensor service: hosts-snapshot stream complete
 	WM_IF_SNAP_ENTRY     = WM_APP + 38 // sensor service: one local-interface entry arrived
 	WM_IF_SNAP_DONE      = WM_APP + 39 // sensor service: interface-snapshot stream complete
+	WM_PROBE_EVENT       = WM_APP + 40 // probe dialog: streaming text line from a deep probe run
+	WM_PROBE_DONE        = WM_APP + 41 // probe dialog: deep probe run finished (wParam = error flag)
 )
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,7 @@ const (
 	IDM_TOOLS_CONNECTIONS     = 221 // Tools > Active Connections…
 	IDM_TOOLS_HOSTS           = 222 // Tools > Hosts File…
 	IDM_TOOLS_INTERFACES      = 223 // Tools > Local Interfaces…
+	IDM_TOOLS_PROBE           = 224 // Tools > Probe…
 )
 
 // ---------------------------------------------------------------------------

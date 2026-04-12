@@ -179,6 +179,8 @@ func Run(v, target string) {
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_HOSTS, "&Hosts File\u2026")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_INTERFACES, "Local &Interfaces\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_PROBE, "&Probe\u2026")
+	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_WORKER_QUEUE, "&Background Workers\u2026")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")
 
