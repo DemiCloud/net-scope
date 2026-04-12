@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"strconv"
@@ -261,6 +262,18 @@ func DialService(addr, fingerprint string) (net.Conn, error) {
 // ---------------------------------------------------------------------------
 
 // RunServiceConn is the main loop run by the service subprocess.
+// cloneService returns a deep copy of s with independent Obs, Capabilities,
+// and Fingerprints slices so it is safe to send over the wire without holding
+// the registry lock.
+func cloneService(s *Service) Service {
+	clone := *s
+	clone.Obs = make([]Observation, len(s.Obs))
+	copy(clone.Obs, s.Obs)
+	clone.Capabilities = copyClaimMap(s.Capabilities)
+	clone.Fingerprints = copyClaimMap(s.Fingerprints)
+	return clone
+}
+
 // It handles commands over a single connection, staying alive until the GUI
 // sends "shutdown" or closes the connection.
 //
@@ -379,6 +392,18 @@ func RunServiceConn(conn net.Conn) error {
 		return uint8(sum)
 	}
 
+	// asyncCacheOp runs fn in a goroutine and sends a CacheOpResult with opName.
+	asyncCacheOp := func(opName string, fn func() error) {
+		go func() {
+			err := fn()
+			op := &CacheOpResult{Op: opName, OK: err == nil}
+			if err != nil {
+				op.Err = err.Error()
+			}
+			_ = safeSend(ServiceMsg{CacheOp: op})
+		}()
+	}
+
 	// upsertObs inserts or replaces a single observation by source+key.
 	upsertObs := func(obs []Observation, src, key, val string) []Observation {
 		if val == "" {
@@ -426,11 +451,7 @@ func RunServiceConn(conn net.Conn) error {
 			s.Obs = upsertObs(s.Obs, "banner", k, v)
 		}
 		ApplySignatures(s)
-		clone := *s
-		clone.Obs = make([]Observation, len(s.Obs))
-		copy(clone.Obs, s.Obs)
-		clone.Capabilities = copyClaimMap(s.Capabilities)
-		clone.Fingerprints = copyClaimMap(s.Fingerprints)
+		clone := cloneService(s)
 		svcRegMu.Unlock()
 		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 	}
@@ -514,11 +535,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 		}
 		ApplySignatures(s)
-		clone := *s
-		clone.Obs = make([]Observation, len(s.Obs))
-		copy(clone.Obs, s.Obs)
-		clone.Capabilities = copyClaimMap(s.Capabilities)
-		clone.Fingerprints = copyClaimMap(s.Fingerprints)
+		clone := cloneService(s)
 		svcRegMu.Unlock()
 		_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 	}
@@ -655,11 +672,8 @@ func RunServiceConn(conn net.Conn) error {
 						for _, o := range obs {
 							s.Obs = upsertObs(s.Obs, o.Source, o.Key, o.Value)
 						}
-						clone := *s
-						clone.Obs = make([]Observation, len(s.Obs))
-						copy(clone.Obs, s.Obs)
-						clone.Capabilities = copyClaimMap(s.Capabilities)
-						clone.Fingerprints = copyClaimMap(s.Fingerprints)
+						ApplySignatures(s)
+						clone := cloneService(s)
 						svcRegMu.Unlock()
 						_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 					}
@@ -803,24 +817,10 @@ func RunServiceConn(conn net.Conn) error {
 				continue
 			}
 			target := cmd.Target
-			go func() {
-				err := netinfo.DeleteARPEntry(target)
-				op := &CacheOpResult{Op: "arp-delete", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("arp-delete", func() error { return netinfo.DeleteARPEntry(target) })
 
 		case "arp-clear":
-			go func() {
-				err := netinfo.FlushARPCache(0)
-				op := &CacheOpResult{Op: "arp-clear", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("arp-clear", func() error { return netinfo.FlushARPCache(0) })
 
 		case "dns-snapshot":
 			// One-shot: stream the full DNS resolver cache and signal completion.
@@ -837,24 +837,10 @@ func RunServiceConn(conn net.Conn) error {
 				continue
 			}
 			target := cmd.Target
-			go func() {
-				err := netinfo.DeleteDNSCacheEntry(target)
-				op := &CacheOpResult{Op: "dns-delete", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("dns-delete", func() error { return netinfo.DeleteDNSCacheEntry(target) })
 
 		case "dns-clear":
-			go func() {
-				err := netinfo.FlushDNSCache()
-				op := &CacheOpResult{Op: "dns-clear", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("dns-clear", func() error { return netinfo.FlushDNSCache() })
 
 		case "route-snapshot":
 			// One-shot: stream the full routing table and signal completion.
@@ -871,14 +857,7 @@ func RunServiceConn(conn net.Conn) error {
 				continue
 			}
 			target := cmd.Target
-			go func() {
-				err := netinfo.DeleteRouteEntry(target)
-				op := &CacheOpResult{Op: "route-delete", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("route-delete", func() error { return netinfo.DeleteRouteEntry(target) })
 
 		case "socket-snapshot":
 			// One-shot: stream all TCP/UDP sockets and signal completion.
@@ -915,28 +894,14 @@ func RunServiceConn(conn net.Conn) error {
 				continue
 			}
 			ha := cmd.HostsAdd
-			go func() {
-				err := netinfo.AddHostsEntry(ha.IP, ha.Hostnames)
-				op := &CacheOpResult{Op: "hosts-add", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("hosts-add", func() error { return netinfo.AddHostsEntry(ha.IP, ha.Hostnames) })
 
 		case "hosts-delete":
 			if cmd.Target == "" {
 				continue
 			}
 			target := cmd.Target
-			go func() {
-				err := netinfo.DeleteHostsEntry(target)
-				op := &CacheOpResult{Op: "hosts-delete", OK: err == nil}
-				if err != nil {
-					op.Err = err.Error()
-				}
-				_ = safeSend(ServiceMsg{CacheOp: op})
-			}()
+			asyncCacheOp("hosts-delete", func() error { return netinfo.DeleteHostsEntry(target) })
 
 		case "netbios":
 			if cmd.Target == "" {
@@ -966,7 +931,23 @@ func RunServiceConn(conn net.Conn) error {
 					_ = safeSend(ServiceMsg{ProxyErr: err.Error()})
 					return
 				}
-				conn.Close()
+				defer conn.Close()
+				// Perform SOCKS5 greeting to verify the proxy actually speaks SOCKS5,
+				// not just any TCP listener (e.g. SSH, HTTP).
+				conn.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+				if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+					_ = safeSend(ServiceMsg{ProxyErr: "SOCKS5 handshake write: " + err.Error()})
+					return
+				}
+				resp := make([]byte, 2)
+				if _, err := io.ReadFull(conn, resp); err != nil {
+					_ = safeSend(ServiceMsg{ProxyErr: "SOCKS5 handshake read: " + err.Error()})
+					return
+				}
+				if resp[0] != 0x05 {
+					_ = safeSend(ServiceMsg{ProxyErr: fmt.Sprintf("not a SOCKS5 server (got 0x%02X 0x%02X)", resp[0], resp[1])})
+					return
+				}
 				_ = safeSend(ServiceMsg{ProxyOK: true})
 			}()
 

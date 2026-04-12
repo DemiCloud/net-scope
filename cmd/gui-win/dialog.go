@@ -459,8 +459,7 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 		makePushButton(HWND(hwnd), "Copy to Clipboard", idVerCopy, pad, btnY, 140, 26)
 		makeDefPushButton(HWND(hwnd), "Close", idVerClose, cW-pad-100, btnY, 100, 26)
 
-		dpi := getDpiForWindow(HWND(hwnd))
-		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
+		setFontAllChildren(HWND(hwnd), appFont)
 		return 0
 
 	case WM_CTLCOLORSTATIC:
@@ -678,8 +677,7 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 		btnY, btnXs := dlgBottomRight(cW, cH, 1)
 		makeDefPushButton(HWND(hwnd), "OK", idAboutOK, btnXs[0], btnY, 100, 26)
 
-		dpi := getDpiForWindow(HWND(hwnd))
-		setFontAllChildren(HWND(hwnd), createUIFont(dpi))
+		setFontAllChildren(HWND(hwnd), appFont)
 		return 0
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
