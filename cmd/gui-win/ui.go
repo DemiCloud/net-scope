@@ -1248,8 +1248,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if _, found := ipRowMap[ph.IP]; !found {
 			synthResult := scan.Result{IP: parsedIP, Alive: true}
 			row := listViewInsertPendingRow(hwndList, ph.IP)
+			if ipRowMap == nil {
+				ipRowMap = make(map[string]int32)
+			}
 			ipRowMap[ph.IP] = row
 			listViewUpdateRow(hwndList, row, synthResult)
+			if rowResultMap == nil {
+				rowResultMap = make(map[int32]scan.Result)
+			}
 			rowResultMap[row] = synthResult
 			if !listHasHosts {
 				listHasHosts = true
