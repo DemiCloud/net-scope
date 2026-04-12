@@ -14,19 +14,19 @@ import (
 
 func registerFileShare() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "smb-deep", Group: "File / Share", Name: "SMB Negotiate",
+		ID: "smb-deep", Group: "File / Share", Name: "SMB [Negotiate]",
 		DefaultPort: 445, Transport: "TCP", Run: probeSMBDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "ftp", Group: "File / Share", Name: "FTP Banner",
+		ID: "ftp", Group: "File / Share", Name: "FTP [Banner]",
 		DefaultPort: 21, Transport: "TCP", Run: probeFTP,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "ipp", Group: "File / Share", Name: "IPP (Internet Printing)",
+		ID: "ipp", Group: "File / Share", Name: "IPP [Attributes]",
 		DefaultPort: 631, Transport: "TCP", Run: probeIPP,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "pjl", Group: "File / Share", Name: "PJL (JetDirect)",
+		ID: "pjl", Group: "File / Share", Name: "PJL [Info]",
 		DefaultPort: 9100, Transport: "TCP", Run: probePJL,
 	})
 }

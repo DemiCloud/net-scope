@@ -13,23 +13,23 @@ import (
 
 func registerRemote() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "ssh", Group: "Remote Access", Name: "SSH",
+		ID: "ssh", Group: "Remote Access", Name: "SSH [Banner]",
 		DefaultPort: 22, Transport: "TCP", Run: probeSSH,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "rdp-deep", Group: "Remote Access", Name: "RDP Handshake",
+		ID: "rdp-deep", Group: "Remote Access", Name: "RDP [Negotiate]",
 		DefaultPort: 3389, Transport: "TCP", Run: probeRDPDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "vnc", Group: "Remote Access", Name: "VNC",
+		ID: "vnc", Group: "Remote Access", Name: "VNC [Security]",
 		DefaultPort: 5900, Transport: "TCP", Run: probeVNC,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "telnet", Group: "Remote Access", Name: "Telnet Banner",
+		ID: "telnet", Group: "Remote Access", Name: "Telnet [Banner]",
 		DefaultPort: 23, Transport: "TCP", Run: probeTelnet,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "rsync", Group: "Remote Access", Name: "rsync Modules",
+		ID: "rsync", Group: "Remote Access", Name: "rsync [Modules]",
 		DefaultPort: 873, Transport: "TCP", Run: probeRsync,
 	})
 }

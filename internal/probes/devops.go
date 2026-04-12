@@ -11,15 +11,15 @@ import (
 
 func registerDevOps() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "docker-api", Group: "DevOps / APIs", Name: "Docker API",
+		ID: "docker-api", Group: "DevOps / APIs", Name: "Docker [Version]",
 		DefaultPort: 2375, Transport: "TCP", Run: probeDockerAPI,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "prometheus", Group: "DevOps / APIs", Name: "Prometheus Metrics",
+		ID: "prometheus", Group: "DevOps / APIs", Name: "Prometheus [Metrics]",
 		DefaultPort: 9090, Transport: "TCP", Run: probePrometheus,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "vault", Group: "DevOps / APIs", Name: "HashiCorp Vault Health",
+		ID: "vault", Group: "DevOps / APIs", Name: "Vault [Health]",
 		DefaultPort: 8200, Transport: "TCP", Run: probeVault,
 	})
 }

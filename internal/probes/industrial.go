@@ -10,11 +10,11 @@ import (
 
 func registerIndustrial() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "modbus", Group: "Industrial / OT", Name: "Modbus MEI Device ID",
+		ID: "modbus", Group: "Industrial / OT", Name: "Modbus [Device ID]",
 		DefaultPort: 502, Transport: "TCP", Run: probeModbus,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "bacnet", Group: "Industrial / OT", Name: "BACnet Who-Is",
+		ID: "bacnet", Group: "Industrial / OT", Name: "BACnet [Who-Is]",
 		DefaultPort: 47808, Transport: "UDP", Run: probeBACnet,
 	})
 }

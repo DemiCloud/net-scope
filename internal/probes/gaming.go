@@ -13,15 +13,15 @@ import (
 
 func registerGaming() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "steam-a2s", Group: "Gaming / Media", Name: "Steam A2S Info",
+		ID: "steam-a2s", Group: "Gaming / Media", Name: "Steam [A2S_INFO]",
 		DefaultPort: 27015, Transport: "UDP", Run: probeSteamA2S,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "minecraft", Group: "Gaming / Media", Name: "Minecraft Status",
+		ID: "minecraft", Group: "Gaming / Media", Name: "Minecraft [Status]",
 		DefaultPort: 25565, Transport: "TCP", Run: probeMinecraft,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "rtsp", Group: "Gaming / Media", Name: "RTSP OPTIONS",
+		ID: "rtsp", Group: "Gaming / Media", Name: "RTSP [OPTIONS]",
 		DefaultPort: 554, Transport: "TCP", Run: probeRTSP,
 	})
 }
