@@ -1006,6 +1006,17 @@ func appendMenu(menu HMENU, flags uint32, id uintptr, text string) {
 	procAppendMenuW.Call(uintptr(menu), uintptr(flags), id, uintptr(unsafe.Pointer(t)))
 }
 
+// menuFlagIfSelected returns a context-menu flag builder that grays every item
+// when no row is selected. When hasSelection is true the returned function
+// passes the supplied flag through unchanged; otherwise it always returns
+// MF_STRING|MF_GRAYED regardless of the flag argument.
+func menuFlagIfSelected(hasSelection bool) func(uint32) uint32 {
+	if !hasSelection {
+		return func(uint32) uint32 { return MF_STRING | MF_GRAYED }
+	}
+	return func(f uint32) uint32 { return f }
+}
+
 func setMenu(hwnd HWND, menu HMENU) {
 	procSetMenu.Call(uintptr(hwnd), uintptr(menu))
 }

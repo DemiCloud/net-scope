@@ -236,12 +236,7 @@ func showARPContextMenu(parent HWND, row int32, pt POINT) {
 	defer destroyMenu(menu)
 
 	hasSelection := row >= 0
-	mf := func(flag uint32) uint32 {
-		if !hasSelection {
-			return MF_STRING | MF_GRAYED
-		}
-		return flag
-	}
+	mf := menuFlagIfSelected(hasSelection)
 
 	appendMenu(menu, mf(MF_STRING), idARPCopyIP, "Copy IP")
 	appendMenu(menu, mf(MF_STRING), idARPCopyMAC, "Copy MAC")
