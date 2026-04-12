@@ -72,11 +72,13 @@ func decodeHexIPLE(s string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// /proc/net/route stores addresses in host byte order on LE systems, which
-	// means the raw bytes are already in the "network order seen on the wire"
-	// when interpreted as little-endian. The byte at index 0 is the least-
-	// significant byte of the uint32(i.e. the first octet on the wire).
-	return fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3]), nil
+	// /proc/net/route stores addresses as little-endian 32-bit integers.
+	// hex.DecodeString produces: b[0]=LSB … b[3]=MSB.
+	// Network (wire) order is big-endian, so the first octet on the wire is
+	// the MSB: b[3].b[2].b[1].b[0].
+	// Example: 192.168.1.1 = 0xC0A80101 LE → bytes [0x01,0x01,0xA8,0xC0]
+	//          → printed as b[3].b[2].b[1].b[0] = "192.168.1.1".
+	return fmt.Sprintf("%d.%d.%d.%d", b[3], b[2], b[1], b[0]), nil
 }
 
 // DeleteRouteEntry is not supported on Linux. Use 'ip route del' manually.
