@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"unsafe"
 
 	guiwin "github.com/demicloud/net-scope/cmd/gui-win"
 	"github.com/demicloud/net-scope/internal/config"
@@ -15,13 +14,12 @@ import (
 )
 
 var (
-	modKernel32Disp    = syscall.NewLazyDLL("kernel32.dll")
-	procAttachConsole  = modKernel32Disp.NewProc("AttachConsole")
-	procAllocConsole   = modKernel32Disp.NewProc("AllocConsole")
-	procGetConsoleWin  = modKernel32Disp.NewProc("GetConsoleWindow")
-	procSetConsoleTitle = modKernel32Disp.NewProc("SetConsoleTitleW")
-	modUser32Disp      = syscall.NewLazyDLL("user32.dll")
-	procShowWindow     = modUser32Disp.NewProc("ShowWindow")
+	modKernel32Disp   = syscall.NewLazyDLL("kernel32.dll")
+	procAttachConsole = modKernel32Disp.NewProc("AttachConsole")
+	procAllocConsole  = modKernel32Disp.NewProc("AllocConsole")
+	procGetConsoleWin = modKernel32Disp.NewProc("GetConsoleWindow")
+	modUser32Disp     = syscall.NewLazyDLL("user32.dll")
+	procShowWindow    = modUser32Disp.NewProc("ShowWindow")
 )
 
 const swHide = 0
@@ -33,19 +31,16 @@ func hideOwnConsole() {
 	}
 }
 
-// setSensorServiceTitle sets the console window title so that Task Manager's
-// Details → Window Title column identifies this process as the sensor service.
-func setSensorServiceTitle() {
-	title, _ := syscall.UTF16PtrFromString("NetScope Sensor Service")
-	procSetConsoleTitle.Call(uintptr(unsafe.Pointer(title)))
-}
-
 func run() {
 	// ── service subcommand ──────────────────────────────────────────────────
 	// Spawned internally by the GUI: net-scope service <addr> <fingerprint>
 	if len(os.Args) == 4 && os.Args[1] == "service" {
-		setSensorServiceTitle()
 		hideOwnConsole()
+		// Create a hidden Win32 window so Task Manager can display a
+		// human-readable process name ("NetScope (Sensor Service)") instead
+		// of the raw executable filename. The window is never made visible;
+		// it simply registers the process as a windowed app.
+		go guiwin.RunNamedBackgroundWindow("NetScope (Sensor Service)")
 		conn, err := scan.DialService(os.Args[2], os.Args[3])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "service dial: %v\n", err)
