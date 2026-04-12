@@ -70,9 +70,11 @@ func ip4ToLE(ip net.IP) uint32 {
 	return uint32(ip4[0]) | uint32(ip4[1])<<8 | uint32(ip4[2])<<16 | uint32(ip4[3])<<24
 }
 
-// ReadRouteTable returns all IPv4 forwarding-table entries from Windows,
-// sorted by destination. Entries with type=invalid (2) are excluded.
-func ReadRouteTable() []RouteEntry {
+// fetchForwardTable calls GetIpForwardTable (size-query then data-query) and
+// returns the raw buffer on success, or nil on error. It retries up to 3 times
+// if the table grows between the two calls (TOCTOU ERROR_INSUFFICIENT_BUFFER).
+// sort=true requests the API to sort entries by destination.
+func fetchForwardTable(sort bool) []byte {
 	var size uint32
 	r, _, _ := procGetIpForwardTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
 	const errInsufficientBuffer = 122
@@ -82,26 +84,58 @@ func ReadRouteTable() []RouteEntry {
 	if size == 0 {
 		return nil
 	}
-	buf := make([]byte, size)
-	r, _, _ = procGetIpForwardTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		1, // bOrder: sort by destination
-	)
-	if r != 0 {
-		return nil
+	bOrder := uintptr(0)
+	if sort {
+		bOrder = 1
+	}
+	for range 3 {
+		buf := make([]byte, size)
+		r, _, _ = procGetIpForwardTable.Call(
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&size)),
+			bOrder,
+		)
+		if r == 0 {
+			return buf
+		}
+		if r != errInsufficientBuffer {
+			return nil
+		}
+		// size was updated by the failed call; retry.
+	}
+	return nil
+}
+
+// forForwardRows calls fn for each MIB_IPFORWARDROW in buf.
+// If fn returns false, iteration stops.
+func forForwardRows(buf []byte, fn func(*mibIPForwardRow) bool) {
+	if len(buf) < 4 {
+		return
 	}
 	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
 	rowSize := unsafe.Sizeof(mibIPForwardRow{})
-	out := make([]RouteEntry, 0, numEntries)
 	for i := uint32(0); i < numEntries; i++ {
 		off := uintptr(4) + uintptr(i)*rowSize
 		if off+rowSize > uintptr(len(buf)) {
 			break
 		}
-		row := (*mibIPForwardRow)(unsafe.Pointer(&buf[off]))
+		if !fn((*mibIPForwardRow)(unsafe.Pointer(&buf[off]))) {
+			return
+		}
+	}
+}
+
+// ReadRouteTable returns all IPv4 forwarding-table entries from Windows,
+// sorted by destination. Entries with type=invalid (2) are excluded.
+func ReadRouteTable() []RouteEntry {
+	buf := fetchForwardTable(true)
+	if buf == nil {
+		return nil
+	}
+	var out []RouteEntry
+	forForwardRows(buf, func(row *mibIPForwardRow) bool {
 		if row.dwForwardType == 2 { // invalid
-			continue
+			return true
 		}
 		dest := ip4FromLE(row.dwForwardDest)
 		mask := ip4FromLE(row.dwForwardMask)
@@ -120,7 +154,8 @@ func ReadRouteTable() []RouteEntry {
 			Type:     routeType,
 			Policy:   row.dwForwardPolicy,
 		})
-	}
+		return true
+	})
 	return out
 }
 
@@ -145,41 +180,27 @@ func DeleteRouteEntry(target string) error {
 	wantGW := ip4ToLE(gwIP)
 
 	// Re-read the table to find the matching full row for DeleteIpForwardEntry.
-	var size uint32
-	r, _, _ := procGetIpForwardTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
-	const errInsufficientBuffer = 122
-	if r != 0 && r != errInsufficientBuffer {
-		return fmt.Errorf("GetIpForwardTable: %w", syscall.Errno(r))
+	buf := fetchForwardTable(false)
+	if buf == nil {
+		return fmt.Errorf("GetIpForwardTable: failed to read routing table")
 	}
-	if size == 0 {
-		return fmt.Errorf("routing table is empty")
-	}
-	buf := make([]byte, size)
-	r, _, _ = procGetIpForwardTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		0,
-	)
-	if r != 0 {
-		return fmt.Errorf("GetIpForwardTable: %w", syscall.Errno(r))
-	}
-	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
-	rowSize := unsafe.Sizeof(mibIPForwardRow{})
-	for i := uint32(0); i < numEntries; i++ {
-		off := uintptr(4) + uintptr(i)*rowSize
-		if off+rowSize > uintptr(len(buf)) {
-			break
+	var deleteErr error
+	found := false
+	forForwardRows(buf, func(row *mibIPForwardRow) bool {
+		if row.dwForwardDest != wantDest ||
+			row.dwForwardMask != wantMask ||
+			row.dwForwardNextHop != wantGW {
+			return true
 		}
-		row := (*mibIPForwardRow)(unsafe.Pointer(&buf[off]))
-		if row.dwForwardDest == wantDest &&
-			row.dwForwardMask == wantMask &&
-			row.dwForwardNextHop == wantGW {
-			rc, _, _ := procDeleteIpForwardEntry.Call(uintptr(unsafe.Pointer(row)))
-			if rc != 0 {
-				return fmt.Errorf("DeleteIpForwardEntry: %w", syscall.Errno(rc))
-			}
-			return nil
+		found = true
+		rc, _, _ := procDeleteIpForwardEntry.Call(uintptr(unsafe.Pointer(row)))
+		if rc != 0 {
+			deleteErr = fmt.Errorf("DeleteIpForwardEntry: %w", syscall.Errno(rc))
 		}
+		return false // stop
+	})
+	if !found {
+		return fmt.Errorf("route not found: %s", target)
 	}
-	return fmt.Errorf("route not found: %s", target)
+	return deleteErr
 }
