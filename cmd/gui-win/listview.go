@@ -1524,6 +1524,15 @@ var svcTabIDToRow = map[string]int32{}
 // services. Refreshed from appConfig when a scan starts or settings change.
 var svcTabMinConf uint8 = 60
 
+// svcFirstSource returns the Source field of the first Observation, or "".
+// Used to populate the source column in multi-source dialogs.
+func svcFirstSource(s scan.Service) string {
+	for _, obs := range s.Obs {
+		return obs.Source
+	}
+	return ""
+}
+
 // svcEntryDisplayName returns the base service name without host context.
 func svcEntryDisplayName(s scan.Service) string {
 	if s.Name != "" {

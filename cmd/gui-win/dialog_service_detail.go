@@ -180,13 +180,9 @@ func createSvcDetailControls(hwnd HWND) {
 // svcDetailAddObsRow appends one attribute/value row to hwndSvcObsList.
 func svcDetailAddObsRow(attr, value string) {
 	showWindow(hwndSvcObsHint, SW_HIDE)
-	p := utf16(attr)
-	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
-	row := int32(sendMessage(hwndSvcObsList, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-	if row < 0 {
+	if listViewAppendRow(hwndSvcObsList, []string{attr, value}) < 0 {
 		return
 	}
-	setSubItem(hwndSvcObsList, row, 1, value)
 }
 
 // svcDetailPopulateObservations fills the Observations listview for s.
@@ -301,11 +297,7 @@ func buildSvcSummary(s scan.Service) string {
 		fmt.Fprintf(&b, "Port:     %s      Source: Port scan%s\r\n",
 			strconv.Itoa(s.Port), conf)
 	} else {
-		src := ""
-		for _, obs := range s.Obs {
-			src = strings.ToUpper(obs.Source)
-			break
-		}
+		src := strings.ToUpper(svcFirstSource(s))
 		fmt.Fprintf(&b, "Source:   %s\r\n", src)
 	}
 	return b.String()
@@ -441,17 +433,12 @@ func allSvcsDlgPopulate(sv HWND, filter string) {
 }
 
 func allSvcsDlgMatchesFilter(s scan.Service, f string) bool {
-	src := ""
-	for _, obs := range s.Obs {
-		src = obs.Source
-		break
-	}
 	fields := []string{
 		svcEntryDisplayName(s),
 		s.IP,
 		svcDisplayHostname(s),
 		svcEntryVersion(s),
-		src,
+		svcFirstSource(s),
 	}
 	for _, field := range fields {
 		if strings.Contains(strings.ToLower(field), f) {
@@ -462,27 +449,17 @@ func allSvcsDlgMatchesFilter(s scan.Service, f string) bool {
 }
 
 func allSvcsDlgInsertRow(sv HWND, s scan.Service) int32 {
-	name := svcEntryDisplayName(s)
-	p := utf16(name)
-	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: p}
-	row := int32(sendMessage(sv, LVM_INSERTITEM, 0, uintptr(unsafe.Pointer(&item))))
-	if row < 0 {
-		return -1
-	}
-	setSubItem(sv, row, 1, s.IP)
 	hn := svcDisplayHostname(s)
 	if hn == "" {
 		hn = "\u2014"
 	}
-	setSubItem(sv, row, 2, hn)
-	src := ""
-	for _, obs := range s.Obs {
-		src = strings.ToUpper(obs.Source)
-		break
-	}
-	setSubItem(sv, row, 3, src)
-	setSubItem(sv, row, 4, svcEntryVersion(s))
-	return row
+	return listViewAppendRow(sv, []string{
+		svcEntryDisplayName(s),
+		s.IP,
+		hn,
+		strings.ToUpper(svcFirstSource(s)),
+		svcEntryVersion(s),
+	})
 }
 
 func openAllSvcsSelectedRow(parent HWND) {
