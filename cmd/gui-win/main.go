@@ -105,7 +105,7 @@ func Run(v, target string) {
 		LpszClassName: className,
 	}
 	if _, err := registerClassEx(&wc); err != nil {
-		messageBox(0, "RegisterClassEx failed: "+err.Error(), "NetScope", 0)
+		showError(0, ErrRegisterClass, "RegisterClassEx failed: "+err.Error(), "NetScope")
 		return
 	}
 
@@ -137,7 +137,7 @@ func Run(v, target string) {
 		0, 0, inst,
 	)
 	if err != nil {
-			messageBox(0, "CreateWindowEx failed: "+err.Error(), "NetScope", 0)
+		showError(0, ErrCreateWindow, "CreateWindowEx failed: "+err.Error(), "NetScope")
 		return
 	}
 	hwndMain = hwnd

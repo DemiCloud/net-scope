@@ -272,7 +272,7 @@ func applySettings(hwnd HWND) bool {
 	}
 	if cfgPath != "" {
 		if err := config.SaveTo(cfg, cfgPath); err != nil {
-			messageBox(hwnd, "Could not save settings:\n"+err.Error(), "Error", 0)
+			showError(hwnd, ErrSaveSettings, "Could not save settings:\n"+err.Error(), "Error")
 			return false
 		}
 	}
