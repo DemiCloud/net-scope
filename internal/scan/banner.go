@@ -263,13 +263,15 @@ func grabHTTP(ctx context.Context, ip net.IP, port int, tls_ bool, timeout time.
 	return ""
 }
 
-// grabSSH connects to port 22 and reads the SSH identification string.
-func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration, dial DialFunc) string {
+// grabSSHOnPort connects to ip:port and reads the SSH identification string.
+// It respects the context deadline in addition to timeout. Other SSH-related
+// functions should delegate here rather than reimplementing the logic.
+func grabSSHOnPort(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
 	dl := time.Now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(dl) {
 		dl = d
 	}
-	conn, err := dialOrDirect(dial)(ctx, "tcp", net.JoinHostPort(ip.String(), "22"))
+	conn, err := dialOrDirect(dial)(ctx, "tcp", net.JoinHostPort(ip.String(), fmt.Sprintf("%d", port)))
 	if err != nil {
 		return ""
 	}
@@ -290,6 +292,11 @@ func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration, dial DialFun
 		return line
 	}
 	return ""
+}
+
+// grabSSH connects to port 22 and reads the SSH identification string.
+func grabSSH(ctx context.Context, ip net.IP, timeout time.Duration, dial DialFunc) string {
+	return grabSSHOnPort(ctx, ip, 22, timeout, dial)
 }
 
 // grabLineBanner connects to port and reads the first non-empty line (FTP, SMTP, Telnet).
