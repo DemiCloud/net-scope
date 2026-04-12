@@ -52,8 +52,10 @@ func runModal(dlg, parent HWND) {
 
 	var msg MSG
 	for modalActive && getMessage(&msg) {
-		translateMessage(&msg)
-		dispatchMessage(&msg)
+		if !isDialogMessage(dlg, &msg) {
+			translateMessage(&msg)
+			dispatchMessage(&msg)
+		}
 	}
 
 	// closeModal already re-enabled the parent and restored focus;
@@ -167,6 +169,22 @@ func ctlColorDialog(hdc uintptr) uintptr {
 	setBkMode(hdc, TRANSPARENT)
 	setTextColor(hdc, 0x00000000)
 	return uintptr(getSysColorBrush(COLOR_BTNFACE))
+}
+
+// ctlColorEdit is the canonical WM_CTLCOLOREDIT handler for edit controls
+// placed on a dialog panel. It returns the standard window-background brush
+// (COLOR_WINDOW = white) so that focused and unfocused edits render
+// consistently and the top border pixel does not get erased by the dialog
+// background colour.
+//
+// Usage inside a WndProc switch:
+//
+//	case WM_CTLCOLOREDIT:
+//	    return ctlColorEdit(wParam)
+func ctlColorEdit(hdc uintptr) uintptr {
+	setBkColor(hdc, 0x00FFFFFF) // white interior
+	setTextColor(hdc, 0x00000000)
+	return uintptr(getSysColorBrush(COLOR_WINDOW))
 }
 
 // ---------------------------------------------------------------------------
