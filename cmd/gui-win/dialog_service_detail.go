@@ -104,7 +104,7 @@ func showServiceDetailDialog(parent HWND, s scan.Service) {
 	title := fmt.Sprintf("Service \u2014 %s \u00b7 %s \u00b7 %s", name, s.IP, portPart)
 
 	registerDialogClass("NetScopeSvcDetail", svcDetailWndProc)
-	dlg := createAndCenterDialog("NetScopeSvcDetail", title, 640, 560, svcDetailWndProc, parent)
+	dlg := createDialogForClient("NetScopeSvcDetail", title, 640, 560, svcDetailWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -510,7 +510,7 @@ func showAllServicesDlg(parent HWND) {
 	}
 
 	registerDialogClass("NetScopeAllSvcsDlg", allSvcsDlgWndProc)
-	dlg := createAndCenterDialog("NetScopeAllSvcsDlg", "All Services",
+	dlg := createDialogForClient("NetScopeAllSvcsDlg", "All Services",
 		860, 500, allSvcsDlgWndProc, parent)
 	if dlg == 0 {
 		return

@@ -410,7 +410,7 @@ func showHostDetailDialog(parent HWND, ip string) {
 	atomic.StoreInt32(&activeProbes, 0)
 	currentDetailIP = ip
 
-	dlg := createAndCenterDialog("NetScopeHostDetail", "Host \u2014 "+ip,
+	dlg := createDialogForClient("NetScopeHostDetail", "Host \u2014 "+ip,
 		740, 640, hostDetailWndProc, parent)
 	if dlg == 0 {
 		return
@@ -1152,8 +1152,8 @@ func showProbesDialog(parent HWND) {
 	// Disable the Probes button while the dialog is open.
 	enableWindow(hwndHostProbesBtn, false)
 
-	dlg := createAndCenterDialog("NetScopeProbes", "Probes \u2014 "+currentDetailIP,
-		520, 90, probesWndProc, parent)
+	dlg := createDialogForClient("NetScopeProbes", "Probes \u2014 "+currentDetailIP,
+		520, 44, probesWndProc, parent)
 	if dlg == 0 {
 		enableWindow(hwndHostProbesBtn, true)
 		return
@@ -1232,8 +1232,8 @@ func createDiagnosticsControls(hwnd HWND) {
 
 // showDiagnosticsDialog opens the Diagnostics sub-dialog for the current host.
 func showDiagnosticsDialog(parent HWND) {
-	dlg := createAndCenterDialog("NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
-		400, 90, diagWndProc, parent)
+	dlg := createDialogForClient("NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
+		430, 46, diagWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -1434,7 +1434,7 @@ func showAllHostsDialog(parent HWND) {
 		return
 	}
 
-	dlg := createAndCenterDialog("NetScopeAllHosts", "All Hosts",
+	dlg := createDialogForClient("NetScopeAllHosts", "All Hosts",
 		480, 400, allHostsWndProc, parent)
 	if dlg == 0 {
 		return
@@ -1941,7 +1941,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // showPickHostDialog opens the Query Host dialog.
 // Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
-	dlg := createAndCenterDialog("NetScopePickHost", "Hosts",
+	dlg := createDialogForClient("NetScopePickHost", "Hosts",
 		460, 360, pickHostWndProc, parent)
 	if dlg == 0 {
 		return

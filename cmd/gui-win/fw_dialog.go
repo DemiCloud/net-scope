@@ -116,7 +116,7 @@ func registerDialogClass(name string, wndProc uintptr) {
 //   - style:   WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 //
 // Note: w and h are outer (window) dimensions. To derive them from a desired
-// client area, use adjustWindowRectEx first.
+// client area, use adjustWindowRectEx first, or call createDialogForClient.
 func createAndCenterDialog(className, title string, w, h int32, wndProc uintptr, parent HWND) HWND {
 	registerDialogClass(className, wndProc)
 	dlg, err := createWindowEx(
@@ -131,6 +131,26 @@ func createAndCenterDialog(className, title string, w, h int32, wndProc uintptr,
 	}
 	centerWindowOver(dlg, parent)
 	return dlg
+}
+
+// createDialogForClient is the preferred dialog creation function.
+// It takes the desired CLIENT area dimensions (cW × cH) and automatically
+// calls adjustWindowRectEx to compute the correct outer frame size, so
+// controls placed anywhere within (0,0)→(cW,cH) are never clipped by the
+// caption bar or dialog border regardless of DPI scale or Windows version.
+//
+// Use this in preference to createAndCenterDialog whenever the dialog has
+// a fixed or content-derived client size. Dialogs that derive all control
+// positions from getClientRect(hwnd) at WM_CREATE also benefit: the window
+// is guaranteed to be the right outer size for exactly the client area the
+// layout code expects.
+func createDialogForClient(className, title string, cW, cH int32, wndProc uintptr, parent HWND) HWND {
+	const (
+		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
+	)
+	outer := adjustWindowRectEx(RECT{0, 0, cW, cH}, dlgStyle, dlgExStyle, false)
+	return createAndCenterDialog(className, title, outer.Right-outer.Left, outer.Bottom-outer.Top, wndProc, parent)
 }
 
 // ---------------------------------------------------------------------------
