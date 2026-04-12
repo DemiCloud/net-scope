@@ -39,10 +39,18 @@ func run() {
 		conn, err := scan.DialService(os.Args[2], os.Args[3])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "service dial: %v\n", err)
+			writeSvcErrorLog(err)
 			os.Exit(1)
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				writeSvcCrashLog(r)
+				os.Exit(2)
+			}
+		}()
 		if err := scan.RunServiceConn(conn); err != nil {
 			fmt.Fprintf(os.Stderr, "service: %v\n", err)
+			writeSvcErrorLog(err)
 			os.Exit(1)
 		}
 		return

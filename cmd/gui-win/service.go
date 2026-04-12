@@ -16,8 +16,15 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Persistent scan service state
+// Persistent sensor service state
 // ---------------------------------------------------------------------------
+
+// svcRestartMaxAttempts is the maximum number of automatic restart attempts
+// allowed within svcRestartWindow before giving up and showing an error.
+const (
+	svcRestartMaxAttempts = 3
+	svcRestartWindow      = 30 * time.Second
+)
 
 var (
 	serviceMu       sync.Mutex
@@ -30,6 +37,17 @@ var (
 	// + startDHCPCapture) corrupt the wire stream and cause the remote
 	// decoder to panic.
 	serviceEncMu sync.Mutex
+
+	// serviceShuttingDown is set to true during WM_DESTROY to suppress
+	// automatic service restarts while the application is closing.
+	// Accessed only from the UI thread.
+	serviceShuttingDown bool
+
+	// svcRestartCount and svcRestartWindowStart track how many automatic
+	// restarts have occurred within the current svcRestartWindow interval.
+	// These are accessed only from the UI thread (WM_SERVICE_DOWN handler).
+	svcRestartCount       int
+	svcRestartWindowStart time.Time
 
 	// hwndActiveProbeDialogAtomic holds the HWND of the currently-open host
 	// detail dialog, or 0 if none is open. Accessed atomically: written by
@@ -85,6 +103,28 @@ func serviceRunning() bool {
 // Must be called from the UI thread; the goroutine handles the connection.
 func startService(hwnd HWND) {
 	spawnService(hwnd, false)
+}
+
+// svcMaybeRestart attempts to automatically restart the sensor service after
+// an unexpected disconnect. Returns true if a restart was attempted, false if
+// the restart limit was reached (caller should surface an error to the user).
+// Must be called from the UI thread.
+func svcMaybeRestart(hwnd HWND) bool {
+	if serviceShuttingDown {
+		return false
+	}
+	now := time.Now()
+	if now.Sub(svcRestartWindowStart) > svcRestartWindow {
+		// Reset the counter when the previous window has expired.
+		svcRestartCount = 0
+		svcRestartWindowStart = now
+	}
+	if svcRestartCount >= svcRestartMaxAttempts {
+		return false
+	}
+	svcRestartCount++
+	startService(hwnd)
+	return true
 }
 
 // elevateService spawns a new service subprocess via UAC (admin).
@@ -525,12 +565,12 @@ func statusForService() string {
 	serviceMu.Lock()
 	defer serviceMu.Unlock()
 	if serviceConn == nil {
-		return "Service: starting…"
+		return "Sensor: offline"
 	}
 	if serviceElevated {
-		return "Service: running (Admin)"
+		return "Sensor: ready (Admin)"
 	}
-	return "Service: running (User)"
+	return "Sensor: ready (User)"
 }
 
 // serviceCmd is a low-level helper that encodes a single command if the

@@ -296,7 +296,7 @@ func probeDlgStart(dlg HWND) {
 	enc := serviceEnc
 	serviceMu.Unlock()
 	if enc == nil {
-		probeDlgAppendLine("⚠  Scan service is not running. Start the service first.")
+		probeDlgAppendLine("⚠  Sensor is not running — please wait a moment and try again.")
 		probeDlgRunning = false
 		setWindowText(hwndProbeRun, "Run")
 		enableWindow(hwndProbeSelect, true)
