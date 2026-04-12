@@ -151,13 +151,10 @@ func doMACLookup(hwnd HWND) {
 func showMACLookupDialog(parent HWND) {
 	const (
 		clientW int32 = 380
-		clientH int32 = 132 // pad + input row + sep section + vendor label + result box + pad
-		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
-		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
+		clientH int32 = 132
 	)
-	outer := adjustWindowRectEx(RECT{0, 0, clientW, clientH}, dlgStyle, dlgExStyle, false)
-	dlg := createAndCenterDialog("NetScopeMACLookup", "MAC Vendor Lookup",
-		outer.Right-outer.Left, outer.Bottom-outer.Top, macLookupWndProc, parent)
+	dlg := createDialogForClient("NetScopeMACLookup", "MAC Vendor Lookup",
+		clientW, clientH, macLookupWndProc, parent)
 	if dlg == 0 {
 		return
 	}

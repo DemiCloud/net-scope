@@ -163,8 +163,18 @@ var probeDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 func createProbeDialogControls(hwnd HWND) {
 	inst := getModuleHandle()
+	r := getClientRect(hwnd)
+	cW := r.Right
+	cH := r.Bottom
+	const (
+		pad  int32 = 10
+		btnH int32 = 26
+		runW int32 = 50
+		selW int32 = 150
+		gap  int32 = 6
+	)
 
-	// Row 1: IP address ─ Port ─ Transport label.
+	// ── Row 1: IP · Port · transport label (left-aligned) ────────────────
 	createCtrl("STATIC", "IP:", WS_CHILD|WS_VISIBLE, 10, 14, 18, 16, hwnd, 0, inst)
 	hwndProbeIP = createCtrl("EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
@@ -179,24 +189,31 @@ func createProbeDialogControls(hwnd HWND) {
 	hwndProbeTransport = createCtrl("STATIC", "TCP",
 		WS_CHILD|WS_VISIBLE, 265, 14, 28, 16, hwnd, idProbeTransport, inst)
 
-	// Row 1 (right side): probe selector + Run button.
-	hwndProbeSelect = createCtrl("BUTTON", "Select Probe \u25be",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 302, 10, 150, 22, hwnd, idProbeSelect, inst)
+	// ── Row 1 (right): Select Probe + Run — right-aligned to client width ─
 	hwndProbeRun = createCtrl("BUTTON", "Run",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 460, 10, 50, 22, hwnd, idProbeRun, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, cW-pad-runW, 10, runW, 22, hwnd, idProbeRun, inst)
+	hwndProbeSelect = createCtrl("BUTTON", "Select Probe \u25be",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, cW-pad-runW-gap-selW, 10, selW, 22, hwnd, idProbeSelect, inst)
 
-	// Output area label + multiline read-only Edit.
-	createCtrl("STATIC", "Output:", WS_CHILD|WS_VISIBLE, 10, 40, 60, 16, hwnd, 0, inst)
+	// ── Output area: fills from below row-1 to above the button row ───────
+	const outputY int32 = 58 // top of the Edit (row-1 height + label row)
+	const btnRowH int32 = pad + btnH + pad
+	outputH := cH - outputY - btnRowH
+	if outputH < 60 {
+		outputH = 60
+	}
+	createCtrl("STATIC", "Output:", WS_CHILD|WS_VISIBLE, pad, 40, 60, 16, hwnd, 0, inst)
 	hwndProbeOutput = createCtrl("EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_VSCROLL|
 			ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
-		10, 58, 494, 294, hwnd, idProbeOutput, inst)
+		pad, outputY, cW-pad*2, outputH, hwnd, idProbeOutput, inst)
 
-	// Bottom row: Copy + Close.
+	// ── Bottom row: Copy Output (left) · Close (right) ────────────────────
+	btnY := cH - pad - btnH
 	createCtrl("BUTTON", "Copy Output",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 10, 362, 100, 24, hwnd, idProbeCopy, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, pad, btnY, 100, btnH, hwnd, idProbeCopy, inst)
 	createCtrl("BUTTON", "Close",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP, 444, 362, 66, 24, hwnd, idProbeClose, inst)
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP, cW-pad-80, btnY, 80, btnH, hwnd, idProbeClose, inst)
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +407,7 @@ func showProbeDialog(parent HWND, ip string, ipLocked bool) {
 	}
 
 	registerDialogClass("NetScopeProbeDialog", probeDlgWndProc)
-	dlg := createAndCenterDialog("NetScopeProbeDialog", title, 524, 400, probeDlgWndProc, parent)
+	dlg := createDialogForClient("NetScopeProbeDialog", title, 514, 390, probeDlgWndProc, parent)
 	if dlg == 0 {
 		return
 	}

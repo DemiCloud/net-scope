@@ -78,14 +78,7 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 func showSettingsDialog(parent HWND) {
 	_, cfgPath, _ := config.Load()
 
-	// Compute outer dimensions from the desired client area so the window
-	// is correctly sized at any DPI scale.
-	rc := adjustWindowRectEx(
-		RECT{0, 0, 560, 460},
-		WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,
-		WS_EX_DLGMODALFRAME, false,
-	)
-	dlg := createAndCenterDialog("NetScopeSettings", "Settings", rc.Right-rc.Left, rc.Bottom-rc.Top, settingsWndProc, parent)
+	dlg := createDialogForClient("NetScopeSettings", "Settings", 560, 460, settingsWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -176,12 +169,14 @@ func createSettingsControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE,
 		lx, checkY+84, lw+ew, 40, hwnd, 0, inst)
 
-	// Protocol Handlers button + OK / Cancel — anchored to client bottom
+	// Protocol Handlers button + OK / Cancel — anchored to client bottom.
 	cr := getClientRect(hwnd)
-	btnY := cr.Bottom - 12 - 26
-	makePushButton(hwnd, "Protocol Handlers\u2026", idSettProtoHandlers, lx, btnY, 140, 26)
-	makePushButton(hwnd, "OK", idSettOK, 306, btnY, 78, 26)
-	makePushButton(hwnd, "Cancel", idSettCancel, 392, btnY, 78, 26)
+	cW := cr.Right
+	cH := cr.Bottom
+	btnY, leftXs, rightXs := dlgButtonRowSplit(cW, cH, []int32{140}, 2)
+	makePushButton(hwnd, "Protocol Handlers\u2026", idSettProtoHandlers, leftXs[0], btnY, 140, 26)
+	makeDefPushButton(hwnd, "OK", idSettOK, rightXs[0], btnY, 100, 26)
+	makePushButton(hwnd, "Cancel", idSettCancel, rightXs[1], btnY, 100, 26)
 }
 
 // applySettings reads and validates the dialog values, applies them to memory,
@@ -359,8 +354,8 @@ var cfgLocWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) 
 func showConfigLocationDialog(parent HWND, appDataPath, exePath string) string {
 	cfgLocResult = "neither"
 
-	const dlgW, dlgH int32 = 520, 360
-	dlg := createAndCenterDialog("NetScopeCfgLoc", "Where should NetScope save its config?",
+	const dlgW, dlgH int32 = 520, 310
+	dlg := createDialogForClient("NetScopeCfgLoc", "Where should NetScope save its config?",
 		dlgW, dlgH, cfgLocWndProc, parent)
 	if dlg == 0 {
 		return ""
@@ -492,19 +487,14 @@ var versionWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 
 func showVersionDialog(parent HWND) {
 	const (
-		pad        int32  = 14
-		cW         int32  = 430
-		bodyH      int32  = 168
-		bodyY      int32  = pad + 20 + 6 + 10 // 50
-		btnY       int32  = bodyY + bodyH + pad // 232
-		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
-		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
+		pad     int32 = 14
+		cW      int32 = 430
+		bodyH   int32 = 168
+		bodyY   int32 = pad + 20 + 6 + 10  // 50
+		btnY    int32 = bodyY + bodyH + pad // 232
+		clientH int32 = btnY + 26 + pad     // 272
 	)
-	clientH := btnY + 26 + pad // 272
-	outer := adjustWindowRectEx(RECT{0, 0, cW, clientH}, dlgStyle, dlgExStyle, false)
-
-	dlg := createAndCenterDialog("NetScopeVersion", "Version — NetScope",
-		outer.Right-outer.Left, outer.Bottom-outer.Top, versionWndProc, parent)
+	dlg := createDialogForClient("NetScopeVersion", "Version — NetScope", cW, clientH, versionWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -565,7 +555,7 @@ var databasesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 })
 
 func showDatabasesDialog(parent HWND) {
-	dlg := createAndCenterDialog("NetScopeDatabases", "Databases", 560, 330, databasesWndProc, parent)
+	dlg := createDialogForClient("NetScopeDatabases", "Databases", 560, 330, databasesWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -585,8 +575,10 @@ func showDatabasesDialog(parent HWND) {
 
 func createDatabasesControls(hwnd HWND) {
 	inst := getModuleHandle()
+	r := getClientRect(hwnd)
+	cW := r.Right
 	const lx int32 = 14
-	const cw int32 = 532
+	cw := cW - lx*2
 
 	y := int32(14)
 
@@ -618,9 +610,7 @@ func createDatabasesControls(hwnd HWND) {
 	y += 46
 
 	hwndDBDownload = makePushButton(hwnd, "Download updated database", idDBDownload, lx, y, 210, 26)
-
-	// ── Close button — same right margin as Download has left margin ─────────
-	makePushButton(hwnd, "Close", idDBClose, cw-80, y, 80, 26)
+	makePushButton(hwnd, "Close", idDBClose, cW-lx-100, y, 100, 26)
 }
 
 // ---------------------------------------------------------------------------
@@ -664,7 +654,9 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 	switch uint32(msg) {
 	case WM_CREATE:
 		inst := getModuleHandle()
-		cW, cH := int32(390), int32(190)
+		r := getClientRect(HWND(hwnd))
+		cW := r.Right
+		cH := r.Bottom
 
 		registerDialogClass("NSAboutIcon", aboutIconWndProc)
 		createWindowEx(0, "NSAboutIcon", "",
@@ -706,8 +698,7 @@ var aboutWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 func showAboutDialog(parent HWND) {
 	aboutHIcon = createAppIcon(96)
 
-	dlg := createAndCenterDialog("NSAbout", "About NetScope",
-		390, 190, aboutWndProc, parent)
+	dlg := createDialogForClient("NSAbout", "About NetScope", 390, 190, aboutWndProc, parent)
 	if dlg == 0 {
 		destroyIcon(aboutHIcon)
 		aboutHIcon = 0
@@ -944,6 +935,7 @@ func createProtoHandlerControls(hwnd HWND) {
 	inst := getModuleHandle()
 	r := getClientRect(hwnd)
 	cW := r.Right
+	cH := r.Bottom
 	const (
 		pad     int32 = 12
 		rowH    int32 = 30
@@ -983,10 +975,10 @@ func createProtoHandlerControls(hwnd HWND) {
 		WS_CHILD|WS_VISIBLE,
 		pad, hintY, cW-pad*2, 16, hwnd, 0, inst)
 
-	// Buttons.
-	btnY := hintY + 26
-	makePushButton(hwnd, "OK", idProtoOK, cW-pad-174, btnY, 78, 26)
-	makePushButton(hwnd, "Cancel", idProtoCancel, cW-pad-86, btnY, 78, 26)
+	// Buttons — anchored to client bottom via framework helper.
+	btnY, xs := dlgBottomRight(cW, cH, 2)
+	makeDefPushButton(hwnd, "OK", idProtoOK, xs[0], btnY, 100, 26)
+	makePushButton(hwnd, "Cancel", idProtoCancel, xs[1], btnY, 100, 26)
 }
 
 // applyProtoHandlers reads the edit fields and stores non-empty values into
@@ -1024,16 +1016,9 @@ func showProtocolHandlersDialog(parent HWND) {
 		rowH int32 = 30
 		y0   int32 = 36
 	)
-	const (
-		dlgStyle   uint32 = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
-		dlgExStyle uint32 = WS_EX_DLGMODALFRAME
-	)
 	clientW := int32(640)
 	clientH := y0 + n*rowH + 4 + 26 + 26 + pad
-	outer := adjustWindowRectEx(RECT{0, 0, clientW, clientH}, dlgStyle, dlgExStyle, false)
-
-	dlg := createAndCenterDialog("NetScopeProtoHandlers", "Protocol Handlers",
-		outer.Right-outer.Left, outer.Bottom-outer.Top, protoHandlersWndProc, parent)
+	dlg := createDialogForClient("NetScopeProtoHandlers", "Protocol Handlers", clientW, clientH, protoHandlersWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -1119,16 +1104,11 @@ func createConnHandlersControls(hwnd HWND) {
 	createCtrl("STATIC", "Custom overrides are set in Options \u2192 Settings \u2192 Protocol Handlers\u2026",
 		WS_CHILD|WS_VISIBLE, pad, hintY, cW-pad*2, hintH, hwnd, 0, inst)
 	makePushButton(hwnd, "Configure\u2026", idConnHandlersConfigure, pad, btnY, 110, btnH)
-	makePushButton(hwnd, "Close", idConnHandlersClose, cW-pad-86, btnY, 78, btnH)
+	makePushButton(hwnd, "Close", idConnHandlersClose, cW-pad-100, btnY, 100, btnH)
 }
 
 func showConnHandlersDialog(parent HWND) {
-	const (
-		dlgW int32 = 420
-		dlgH int32 = 320
-	)
-	dlg := createAndCenterDialog("NetScopeConnHandlers", "Connection Handlers",
-		dlgW, dlgH, connHandlersWndProc, parent)
+	dlg := createDialogForClient("NetScopeConnHandlers", "Connection Handlers", 420, 320, connHandlersWndProc, parent)
 	if dlg == 0 {
 		return
 	}
