@@ -179,16 +179,16 @@ func createProbeDialogControls(hwnd HWND) {
 
 	// ── Row 1: IP · Port · transport label (left-aligned) ────────────────
 	createCtrl("STATIC", "IP:", WS_CHILD|WS_VISIBLE, 10, 14, 18, 16, hwnd, 0, inst)
-	hwndProbeIP = createCtrl("EDIT", "",
-		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL,
-		32, 11, 130, 20, hwnd, idProbeIP, inst)
+	hwndProbeIP, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
+		32, 11, 130, 20, hwnd, HMENU(idProbeIP), inst)
 	if probeDlgIPLocked {
 		sendMessage(hwndProbeIP, EM_SETREADONLY, 1, 0)
 	}
 	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE, 170, 14, 30, 16, hwnd, 0, inst)
-	hwndProbePort = createCtrl("EDIT", "",
-		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL|ES_NUMBER,
-		204, 11, 55, 20, hwnd, idProbePort, inst)
+	hwndProbePort, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL|ES_NUMBER,
+		204, 11, 55, 20, hwnd, HMENU(idProbePort), inst)
 	hwndProbeTransport = createCtrl("STATIC", "TCP",
 		WS_CHILD|WS_VISIBLE, 265, 14, 28, 16, hwnd, idProbeTransport, inst)
 
@@ -206,10 +206,10 @@ func createProbeDialogControls(hwnd HWND) {
 		outputH = 60
 	}
 	createCtrl("STATIC", "Output:", WS_CHILD|WS_VISIBLE, pad, 40, 60, 16, hwnd, 0, inst)
-	hwndProbeOutput = createCtrl("EDIT", "",
-		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_VSCROLL|
+	hwndProbeOutput, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
+		WS_CHILD|WS_VISIBLE|WS_VSCROLL|
 			ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,
-		pad, outputY, cW-pad*2, outputH, hwnd, idProbeOutput, inst)
+		pad, outputY, cW-pad*2, outputH, hwnd, HMENU(idProbeOutput), inst)
 
 	// ── Bottom row: Copy Output (left) · Close (right) ────────────────────
 	btnY := cH - pad - btnH
@@ -270,10 +270,22 @@ func probeDlgShowProbeMenu(dlg HWND) {
 		return // dismissed or out of range
 	}
 	p := &probeDlgAllProbes[cmdID-probeMenuBase]
+
+	// Snapshot the previous probe's default port before updating the selection.
+	// We only overwrite the port box if it is empty OR if it still holds the
+	// previous probe's default (i.e. the user hasn't typed a custom value).
+	prevDefault := 0
+	if probeDlgSelectedProbe != nil {
+		prevDefault = probeDlgSelectedProbe.DefaultPort
+	}
+	curPortStr := getWindowText(hwndProbePort)
+
 	probeDlgSelectedProbe = p
 
 	setWindowText(hwndProbeSelect, p.Name)
-	setWindowText(hwndProbePort, fmt.Sprintf("%d", p.DefaultPort))
+	if curPortStr == "" || curPortStr == fmt.Sprintf("%d", prevDefault) {
+		setWindowText(hwndProbePort, fmt.Sprintf("%d", p.DefaultPort))
+	}
 	setWindowText(hwndProbeTransport, p.Transport)
 }
 
