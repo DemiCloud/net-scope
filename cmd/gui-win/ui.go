@@ -243,6 +243,11 @@ var (
 	pendingHostsSnap   []scan.HostsEntry
 	pendingHostsSnapMu sync.Mutex
 
+	// pendingIfSnap carries local-interface entries from the sensor service
+	// to the Interfaces dialog via WM_IF_SNAP_ENTRY.
+	pendingIfSnap   []scan.InterfaceEntry
+	pendingIfSnapMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -873,6 +878,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showConnectionsDialog(HWND(hwnd))
 		case IDM_TOOLS_HOSTS:
 			showHostsDialog(HWND(hwnd))
+		case IDM_TOOLS_INTERFACES:
+			showInterfacesDialog(HWND(hwnd))
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1312,6 +1319,22 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_HOSTS_SNAP_DONE:
 		houstsDialogLoadingDone()
+		return 0
+
+	case WM_IF_SNAP_ENTRY:
+		pendingIfSnapMu.Lock()
+		var entry scan.InterfaceEntry
+		if int(wParam) < len(pendingIfSnap) {
+			entry = pendingIfSnap[int(wParam)]
+		}
+		pendingIfSnapMu.Unlock()
+		if entry.Name != "" {
+			interfacesDialogAddRow(entry)
+		}
+		return 0
+
+	case WM_IF_SNAP_DONE:
+		interfacesDialogLoadingDone()
 		return 0
 
 	case WM_CACHE_OP:
