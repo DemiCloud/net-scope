@@ -90,6 +90,13 @@ var (
 	// hwndProbeDlgAtomic holds the HWND of the currently-open deep Probe
 	// dialog, or 0 if none is open.
 	hwndProbeDlgAtomic uintptr
+
+	// svcGeneration is incremented each time spawnService is called. Each
+	// spawned goroutine captures its generation at creation and only posts
+	// WM_SERVICE_DOWN when its generation still matches the current value.
+	// This prevents stale goroutines (e.g. from a stopped service that was
+	// intentionally replaced) from triggering spurious auto-restarts.
+	svcGeneration uint64
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -152,6 +159,11 @@ func stopService() {
 }
 
 func spawnService(hwnd HWND, elevated bool) {
+	// Claim a generation ticket before spawning. Any goroutine from a
+	// previous spawnService call now has a stale generation and will not
+	// post WM_SERVICE_DOWN when it eventually finishes.
+	gen := atomic.AddUint64(&svcGeneration, 1)
+
 	exe, err := os.Executable()
 	if err != nil {
 		messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "NetScope", MB_ICONERROR)
@@ -191,7 +203,9 @@ func spawnService(hwnd HWND, elevated bool) {
 		conn, err := tlsLn.Accept()
 		tlsLn.Close()
 		if err != nil {
-			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			if atomic.LoadUint64(&svcGeneration) == gen {
+				postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			}
 			return
 		}
 
@@ -204,7 +218,9 @@ func spawnService(hwnd HWND, elevated bool) {
 		conn.SetDeadline(time.Now().Add(10 * time.Second))
 		if err := dec.Decode(&msg); err != nil || !msg.Ready {
 			conn.Close()
-			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			if atomic.LoadUint64(&svcGeneration) == gen {
+				postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+			}
 			return
 		}
 
@@ -460,7 +476,13 @@ func spawnService(hwnd HWND, elevated bool) {
 			conn.Close()
 		}
 		serviceMu.Unlock()
-		postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+		// Only signal a service-down event if this goroutine's generation is
+		// still current. A stale goroutine (whose service was intentionally
+		// replaced by elevateService or a respawn) must not trigger a fresh
+		// auto-restart on top of the new service.
+		if atomic.LoadUint64(&svcGeneration) == gen {
+			postMessage(hwnd, WM_SERVICE_DOWN, 0, 0)
+		}
 	}()
 }
 
