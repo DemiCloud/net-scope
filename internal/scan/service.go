@@ -132,6 +132,9 @@ type ServiceMsg struct {
 
 	// PTRUpdate carries a background reverse-DNS enrichment for a previously-scanned IP.
 	PTRUpdate   *PTRResult   `json:"ptr_update,omitempty"`
+	// ProbeHost announces that a manual deep probe succeeded; the GUI should
+	// ensure this IP appears in the Hosts tab. PTR enrichment arrives separately.
+	ProbeHost *ProbeHostResult `json:"probe_host,omitempty"`
 	// ResolveResult carries the result of a "resolve" command (forward DNS).
 	ResolveResult *ResolveResult `json:"resolve_result,omitempty"`
 	// SvcUpdate carries a unified Service with updated evidence. Emitted after
@@ -170,6 +173,14 @@ type NetBIOSMsg struct {
 type PTRResult struct {
 	IP       string `json:"ip"`
 	Hostname string `json:"hostname"`
+}
+
+// ProbeHostResult announces that a successful manual deep probe reached an IP.
+// The GUI adds this IP to the Hosts tab; PTR enrichment arrives via PTRUpdate.
+type ProbeHostResult struct {
+	IP       string `json:"ip"`
+	Port     int    `json:"port,omitempty"`
+	Protocol string `json:"protocol,omitempty"` // human-readable probe name, e.g. "SMTP [EHLO]"
 }
 
 // ResolveResult carries the result of a forward DNS lookup ("resolve" command).
@@ -652,23 +663,51 @@ func RunServiceConn(conn net.Conn) error {
 					if port == 0 {
 						port = dp.DefaultPort
 					}
+
+					// Resolve target to a concrete IP address. If the caller supplied
+					// a hostname (e.g. "smtp.gmail.com"), resolve it to the first
+					// address before probing so the service registry key is always an
+					// IP and PTR/host enrichment works correctly.
+					probeIP := normalizeIP(target)
+					if net.ParseIP(target) == nil {
+						// target is a hostname — resolve to first address.
+						addrs, rErr := net.DefaultResolver.LookupHost(context.Background(), target)
+						if rErr != nil || len(addrs) == 0 {
+							_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{
+								RunID: runID,
+								Err:   "cannot resolve " + target + ": " + func() string { if rErr != nil { return rErr.Error() }; return "no addresses" }(),
+								Done:  true,
+							}})
+							return
+						}
+						probeIP = normalizeIP(addrs[0])
+						_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{
+							RunID: runID,
+							Text:  "Resolved " + target + " → " + probeIP,
+						}})
+					}
+
 					dial, _ := MakeDialFunc(proxy)
 					emit := func(line string) {
 						_ = safeSend(ServiceMsg{ProbeEvent: &ProbeEvent{RunID: runID, Text: line}})
 					}
-					obs, err := dp.Run(context.Background(), target, port, dial, emit)
-					// Merge observations into the session service registry.
+					obs, err := dp.Run(context.Background(), probeIP, port, dial, emit)
+					// Merge observations into the session service registry,
+					// then notify the GUI to ensure the host appears in the Hosts tab.
 					if len(obs) > 0 && port > 0 {
 						now := time.Now()
-						ip := normalizeIP(target)
-						key := svcRegKey{ip: ip, port: port}
+						key := svcRegKey{ip: probeIP, port: port}
 						svcRegMu.Lock()
 						s, exists := svcReg[key]
 						if !exists {
-							s = &Service{ID: newPortServiceID(), IP: ip, Port: port, FirstSeen: now}
+							s = &Service{ID: newPortServiceID(), IP: probeIP, Port: port, FirstSeen: now}
 							svcReg[key] = s
 						}
 						s.LastSeen = now
+						// Seed the service name from the probe if not yet set.
+						if s.Name == "" {
+							s.Name = dp.Name
+						}
 						for _, o := range obs {
 							s.Obs = upsertObs(s.Obs, o.Source, o.Key, o.Value)
 						}
@@ -676,6 +715,18 @@ func RunServiceConn(conn net.Conn) error {
 						clone := cloneService(s)
 						svcRegMu.Unlock()
 						_ = safeSend(ServiceMsg{SvcUpdate: &clone})
+
+						// Tell the GUI to add this IP to the Hosts tab.
+						_ = safeSend(ServiceMsg{ProbeHost: &ProbeHostResult{
+							IP:       probeIP,
+							Port:     port,
+							Protocol: dp.Name,
+						}})
+						// Queue for PTR resolution so the host gets a hostname.
+						select {
+						case ptrQueue <- probeIP:
+						default:
+						}
 					}
 					errStr := ""
 					if err != nil {

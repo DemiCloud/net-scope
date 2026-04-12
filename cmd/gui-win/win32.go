@@ -51,6 +51,7 @@ const (
 	WM_IF_SNAP_DONE      = WM_APP + 39 // sensor service: interface-snapshot stream complete
 	WM_PROBE_EVENT       = WM_APP + 40 // probe dialog: streaming text line from a deep probe run
 	WM_PROBE_DONE        = WM_APP + 41 // probe dialog: deep probe run finished (wParam = error flag)
+	WM_PROBE_HOST        = WM_APP + 42 // probe dialog: successful probe → add IP to Hosts tab
 )
 
 // ---------------------------------------------------------------------------
