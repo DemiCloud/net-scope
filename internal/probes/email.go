@@ -15,14 +15,17 @@ import (
 func registerEmail() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "smtp-deep", Group: "Email", Name: "SMTP [EHLO]",
+		ServiceName: "Email Server",
 		DefaultPort: 25, Transport: "TCP", Run: probeSMTPDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "imap", Group: "Email", Name: "IMAP [CAPABILITY]",
+		ServiceName: "Email Server",
 		DefaultPort: 143, Transport: "TCP", Run: probeIMAP,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "pop3", Group: "Email", Name: "POP3 [CAPA]",
+		ServiceName: "Email Server",
 		DefaultPort: 110, Transport: "TCP", Run: probePOP3,
 	})
 }

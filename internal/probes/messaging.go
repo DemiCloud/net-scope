@@ -13,10 +13,12 @@ import (
 func registerMessaging() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "mqtt-deep", Group: "Messaging / IoT", Name: "MQTT [CONNECT]",
+		ServiceName: "MQTT Broker",
 		DefaultPort: 1883, Transport: "TCP", Run: probeMQTTDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "sip", Group: "Messaging / IoT", Name: "SIP [OPTIONS]",
+		ServiceName: "SIP Server",
 		DefaultPort: 5060, Transport: "TCP", Run: probeSIP,
 	})
 }

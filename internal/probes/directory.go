@@ -13,6 +13,7 @@ import (
 func registerDirectory() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "ldap-deep", Group: "Directory", Name: "LDAP [RootDSE]",
+		ServiceName: "Directory Server",
 		DefaultPort: 389, Transport: "TCP", Run: probeLDAPDeep,
 	})
 }
