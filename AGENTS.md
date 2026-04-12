@@ -124,6 +124,16 @@ CGo is required for the Linux GUI build only.
 - Documentation / AGENTS.md updates
 - Build / Makefile changes
 
+**Before committing, run the test suite and confirm it passes:**
+
+```bash
+wsl -d Fedora -- bash -c "cd /home/user/dev/net-scope && go test ./..."
+```
+
+Do not commit if any test fails. If a change intentionally removes functionality, update
+or delete the affected tests in the same commit. If you add new logic, add corresponding
+tests before committing.
+
 Commit commands (run inside the Fedora WSL environment):
 
 ```bash
