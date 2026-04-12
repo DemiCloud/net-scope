@@ -17,6 +17,7 @@
 package guiwin
 
 import (
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -759,6 +760,33 @@ func dispatchMessage(msg *MSG) {
 
 func postQuitMessage(code int32) {
 	procPostQuitMessage.Call(uintptr(code))
+}
+
+// RunNamedBackgroundWindow registers a minimal window class, creates a hidden
+// WS_POPUP window with the given title, and runs its message loop until
+// WM_QUIT is received. Task Manager displays the window title as the process
+// name for any process that owns at least one window, making it a lightweight
+// way to give the sensor service a readable name without a visible UI.
+//
+// Must be called from a dedicated goroutine; it calls runtime.LockOSThread
+// internally so the Win32 message pump stays on the same OS thread.
+func RunNamedBackgroundWindow(title string) {
+	runtime.LockOSThread()
+	inst := getModuleHandle()
+	cls := utf16("NetScopeBackgroundWnd")
+	wc := WNDCLASSEX{
+		CbSize:        uint32(unsafe.Sizeof(WNDCLASSEX{})),
+		LpfnWndProc:   procDefWindowProcW.Addr(), // native DefWindowProcW — no Go callback needed
+		HInstance:     inst,
+		LpszClassName: cls,
+	}
+	registerClassEx(&wc) //nolint:errcheck // error is benign: class already registered on respawn
+	_, _ = createWindowEx(0, "NetScopeBackgroundWnd", title, WS_POPUP, 0, 0, 0, 0, 0, 0, inst)
+	var msg MSG
+	for getMessage(&msg) {
+		translateMessage(&msg)
+		dispatchMessage(&msg)
+	}
 }
 
 func loadCursor(name uintptr) HCURSOR {
