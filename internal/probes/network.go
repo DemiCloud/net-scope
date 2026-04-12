@@ -12,15 +12,15 @@ import (
 
 func registerNetwork() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "snmp-deep", Group: "Network", Name: "SNMP v1 sysDescr",
+		ID: "snmp-deep", Group: "Network", Name: "SNMP [sysDescr]",
 		DefaultPort: 161, Transport: "UDP", Run: probeSNMPDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "dns-deep", Group: "Network", Name: "DNS Version Query",
+		ID: "dns-deep", Group: "Network", Name: "DNS [Version]",
 		DefaultPort: 53, Transport: "TCP", Run: probeDNSDeep,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "ntp", Group: "Network", Name: "NTP Mode 6",
+		ID: "ntp", Group: "Network", Name: "NTP [Mode 6]",
 		DefaultPort: 123, Transport: "UDP", Run: probeNTP,
 	})
 }

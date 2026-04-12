@@ -14,7 +14,7 @@ func registerGeneral() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID:          "tcp",
 		Group:       "General",
-		Name:        "TCP Connect",
+		Name:        "TCP [Connect]",
 		DefaultPort: 80,
 		Transport:   "TCP",
 		Run:         probeTCPConnect,
@@ -22,7 +22,7 @@ func registerGeneral() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID:          "tls",
 		Group:       "General",
-		Name:        "TLS Handshake",
+		Name:        "TLS [Certificate]",
 		DefaultPort: 443,
 		Transport:   "TCP",
 		Run:         probeTLSHandshake,

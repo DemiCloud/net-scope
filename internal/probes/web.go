@@ -11,11 +11,11 @@ import (
 
 func registerWeb() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "http", Group: "Web", Name: "HTTP",
+		ID: "http", Group: "Web", Name: "HTTP [Banner]",
 		DefaultPort: 80, Transport: "TCP", Run: probeHTTP,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "https", Group: "Web", Name: "HTTPS",
+		ID: "https", Group: "Web", Name: "HTTPS [Banner]",
 		DefaultPort: 443, Transport: "TCP", Run: probeHTTPS,
 	})
 }

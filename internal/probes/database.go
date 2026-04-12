@@ -12,27 +12,27 @@ import (
 
 func registerDatabase() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "redis", Group: "Database", Name: "Redis PING",
+		ID: "redis", Group: "Database", Name: "Redis [PING]",
 		DefaultPort: 6379, Transport: "TCP", Run: probeRedis,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "mysql", Group: "Database", Name: "MySQL Handshake",
+		ID: "mysql", Group: "Database", Name: "MySQL [Handshake]",
 		DefaultPort: 3306, Transport: "TCP", Run: probeMySQL,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "mongodb", Group: "Database", Name: "MongoDB Hello",
+		ID: "mongodb", Group: "Database", Name: "MongoDB [hello]",
 		DefaultPort: 27017, Transport: "TCP", Run: probeMongoDB,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "postgres", Group: "Database", Name: "PostgreSQL Auth",
+		ID: "postgres", Group: "Database", Name: "PostgreSQL [Auth]",
 		DefaultPort: 5432, Transport: "TCP", Run: probePostgres,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "memcached", Group: "Database", Name: "Memcached Stats",
+		ID: "memcached", Group: "Database", Name: "Memcached [stats]",
 		DefaultPort: 11211, Transport: "TCP", Run: probeMemcached,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
-		ID: "elasticsearch", Group: "Database", Name: "Elasticsearch Info",
+		ID: "elasticsearch", Group: "Database", Name: "Elasticsearch [Health]",
 		DefaultPort: 9200, Transport: "TCP", Run: probeElasticsearch,
 	})
 }
