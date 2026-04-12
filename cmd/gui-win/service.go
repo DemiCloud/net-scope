@@ -68,6 +68,10 @@ var (
 	// hwndInterfacesDialogAtomic holds the HWND of the currently-open Local
 	// Interfaces dialog, or 0.
 	hwndInterfacesDialogAtomic uintptr
+
+	// hwndProbeDlgAtomic holds the HWND of the currently-open deep Probe
+	// dialog, or 0 if none is open.
+	hwndProbeDlgAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -353,6 +357,18 @@ func spawnService(hwnd HWND, elevated bool) {
 			} else if m.IfSnapDone {
 				if atomic.LoadUintptr(&hwndInterfacesDialogAtomic) != 0 {
 					postMessage(hwnd, WM_IF_SNAP_DONE, 0, 0)
+				}
+			} else if m.ProbeEvent != nil {
+				pendingProbeEventsMu.Lock()
+				idx := len(pendingProbeEvents)
+				pendingProbeEvents = append(pendingProbeEvents, *m.ProbeEvent)
+				pendingProbeEventsMu.Unlock()
+				if h := atomic.LoadUintptr(&hwndProbeDlgAtomic); h != 0 {
+					if m.ProbeEvent.Done {
+						postMessage(HWND(h), WM_PROBE_DONE, uintptr(idx), 0)
+					} else {
+						postMessage(HWND(h), WM_PROBE_EVENT, uintptr(idx), 0)
+					}
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {

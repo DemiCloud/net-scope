@@ -288,8 +288,11 @@ const (
 	BN_CLICKED = 0
 
 	// Edit messages
-	EM_SETSEL      = 0x00B1
+	EM_SETSEL       = 0x00B1
+	EM_SETREADONLY  = 0x00CF
+	EM_SCROLLCARET  = 0x00B7
 	EM_SETCUEBANNER = 0x1501
+	ES_NUMBER       = 0x2000
 
 	// Virtual keys
 	VK_LBUTTON = 0x01

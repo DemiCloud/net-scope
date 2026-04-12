@@ -14,6 +14,14 @@ import (
 type ProbeSpec struct {
 	Port int
 	Type string // "TCP", "SSH", "HTTP", "HTTPS", "FTP", "SMTP", "Telnet", "RDP", "Steam"
+	// ExtProbeID selects a registered deep probe from the catalog (see probe_catalog.go).
+	// When non-empty the service looks up the probe by ID and calls its Run function,
+	// streaming ProbeEvent messages instead of a single ProbeResult.
+	// Type is ignored when ExtProbeID is set.
+	ExtProbeID string `json:"ext_probe_id,omitempty"`
+	// RunID is a client-assigned UUID echoed back in every ProbeEvent for this run.
+	// The GUI uses it to route events to the correct open dialog.
+	RunID string `json:"run_id,omitempty"`
 }
 
 // ProbeResult is the outcome of one on-demand probe.
@@ -25,19 +33,19 @@ type ProbeResult struct {
 
 // CommonProbes is the set fired by "Run all common probes".
 var CommonProbes = []ProbeSpec{
-	{21, "FTP"},
-	{22, "SSH"},
-	{23, "Telnet"},
-	{25, "SMTP"},
-	{80, "HTTP"},
-	{443, "HTTPS"},
-	{445, "TCP"},
-	{3306, "TCP"},
-	{3389, "RDP"},
-	{5900, "TCP"},
-	{8080, "HTTP"},
-	{8443, "HTTPS"},
-	{27015, "Steam"},
+	{Port: 21, Type: "FTP"},
+	{Port: 22, Type: "SSH"},
+	{Port: 23, Type: "Telnet"},
+	{Port: 25, Type: "SMTP"},
+	{Port: 80, Type: "HTTP"},
+	{Port: 443, Type: "HTTPS"},
+	{Port: 445, Type: "TCP"},
+	{Port: 3306, Type: "TCP"},
+	{Port: 3389, Type: "RDP"},
+	{Port: 5900, Type: "TCP"},
+	{Port: 8080, Type: "HTTP"},
+	{Port: 8443, Type: "HTTPS"},
+	{Port: 27015, Type: "Steam"},
 }
 
 // RunProbe executes spec against ip and returns the result.
