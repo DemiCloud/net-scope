@@ -39,6 +39,21 @@ func listViewAddColumn(hwnd HWND, idx int32, title string, width int32) {
 	listViewAddColumnFmt(hwnd, idx, title, width, LVCFMT_LEFT)
 }
 
+// listViewAutoSizeColumns resizes every column in hwnd to fit the widest of
+// the column's cell text and its header text. Call this after populating the
+// list with data. numCols must equal the number of columns in the ListView.
+func listViewAutoSizeColumns(hwnd HWND, numCols int32) {
+	for c := int32(0); c < numCols; c++ {
+		sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(c), LVSCW_AUTOSIZE)
+		contentW := sendMessage(hwnd, LVM_GETCOLUMNWIDTH, uintptr(c), 0)
+		sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(c), LVSCW_AUTOSIZE_USEHEADER)
+		headerW := sendMessage(hwnd, LVM_GETCOLUMNWIDTH, uintptr(c), 0)
+		if contentW > headerW {
+			sendMessage(hwnd, LVM_SETCOLUMNWIDTH, uintptr(c), contentW)
+		}
+	}
+}
+
 // listViewSetColumnHeader updates the header text for a single column.
 func listViewSetColumnHeader(hwnd HWND, idx int32, title string) {
 	col := LVCOLUMN{
