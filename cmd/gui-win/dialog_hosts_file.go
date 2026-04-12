@@ -109,17 +109,6 @@ var hostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) u
 			houstsDialogRefresh()
 		case idHostsAdd:
 			showAddHostEntryDialog(HWND(hwnd))
-		case idHostsCopyIP:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndHostsList, 0))
-		case idHostsCopyHostname:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndHostsList, 1))
-		case idHostsCopyRow:
-			row := int32(sendMessage(hwndHostsList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-			if row >= 0 {
-				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndHostsList, row, int32(len(hostsFileColTitles))))
-			}
-		case idHostsDeleteEntry:
-			hostsDeleteSelected(HWND(hwnd))
 		}
 		return 0
 

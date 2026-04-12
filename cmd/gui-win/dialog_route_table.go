@@ -86,27 +86,6 @@ var routeTableWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			}
 		case idRouteRefresh:
 			routeTableDialogRefresh()
-		case idRouteCopyDest:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndRouteList, 0))
-		case idRouteCopyGW:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndRouteList, 1))
-		case idRouteCopyRow:
-			row := int32(sendMessage(hwndRouteList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-			if row >= 0 {
-				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndRouteList, row, int32(len(routeColTitles))))
-			}
-		case idRouteDeleteEntry:
-			if !serviceElevated {
-				messageBox(HWND(hwnd),
-					"Deleting routes requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar to restart the sensor with admin rights.",
-					"Route Table", MB_ICONINFORMATION)
-				return 0
-			}
-			for _, r := range listViewGetSelectedRows(hwndRouteList) {
-				if target := routeDeleteTarget(r); target != "" {
-					requestRouteDelete(target)
-				}
-			}
 		}
 		return 0
 
