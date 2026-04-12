@@ -233,9 +233,9 @@ func showRouteContextMenu(parent HWND, row int32, pt POINT) {
 		}
 	case idRouteDeleteEntry:
 		if !serviceElevated {
-			messageBox(parent,
+			showInfo(parent,
 				"Deleting routes requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar.",
-				"Route Table", MB_ICONINFORMATION)
+				"Route Table")
 			return
 		}
 		for _, r := range listViewGetSelectedRows(hwndRouteList) {
@@ -385,9 +385,9 @@ func showRouteTableDialog(parent HWND) {
 	atomic.StoreUintptr(&hwndRouteTableDialogAtomic, uintptr(dlg))
 
 	if !requestRouteSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart or elevate the sensor from the toolbar, then use Refresh.",
-			"Route Table", MB_ICONINFORMATION)
+			"Route Table")
 	}
 }
 

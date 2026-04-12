@@ -197,13 +197,13 @@ func applySettings(hwnd HWND) bool {
 	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
 
 	if _, err := time.ParseDuration(timeout); err != nil {
-		messageBox(hwnd, `Timeout must be a Go duration string, e.g. "1s" or "500ms".`, "Invalid Input", 0)
+		showInfo(hwnd, `Timeout must be a Go duration string, e.g. "1s" or "500ms".`, "Invalid Input")
 		return false
 	}
 
 	concur, err := strconv.Atoi(concurStr)
 	if err != nil || concur < 1 {
-		messageBox(hwnd, "Concurrency must be a positive integer.", "Invalid Input", 0)
+		showInfo(hwnd, "Concurrency must be a positive integer.", "Invalid Input")
 		return false
 	}
 
@@ -215,7 +215,7 @@ func applySettings(hwnd HWND) bool {
 		}
 		p, err := strconv.Atoi(token)
 		if err != nil || p < 1 || p > 65535 {
-			messageBox(hwnd, "Ports must be comma-separated integers between 1 and 65535.", "Invalid Input", 0)
+			showInfo(hwnd, "Ports must be comma-separated integers between 1 and 65535.", "Invalid Input")
 			return false
 		}
 		ports = append(ports, p)
@@ -223,14 +223,14 @@ func applySettings(hwnd HWND) bool {
 
 	if bcast != "" {
 		if _, err := time.ParseDuration(bcast); err != nil {
-			messageBox(hwnd, `Broadcast Listen must be a Go duration string, e.g. "3s".`, "Invalid Input", 0)
+			showInfo(hwnd, `Broadcast Listen must be a Go duration string, e.g. "3s".`, "Invalid Input")
 			return false
 		}
 	}
 
 	if socksProxy != "" {
 		if _, err := scan.MakeDialFunc(socksProxy); err != nil {
-			messageBox(hwnd, "SOCKS5 Proxy address is invalid:\n"+err.Error(), "Invalid Input", 0)
+			showInfo(hwnd, "SOCKS5 Proxy address is invalid:\n"+err.Error(), "Invalid Input")
 			return false
 		}
 	}
@@ -239,7 +239,7 @@ func applySettings(hwnd HWND) bool {
 	if svcConfStr != "" {
 		v, err2 := strconv.Atoi(svcConfStr)
 		if err2 != nil || v < 0 || v > 99 {
-			messageBox(hwnd, "Service confidence threshold must be an integer between 0 and 99.", "Invalid Input", 0)
+			showInfo(hwnd, "Service confidence threshold must be an integer between 0 and 99.", "Invalid Input")
 			return false
 		}
 		svcConf = v

@@ -233,7 +233,7 @@ func showDNSContextMenu(parent HWND, row int32, pt POINT) {
 		selRows := listViewGetSelectedRows(hwndDNSList)
 		if len(selRows) > 0 {
 			if !serviceRunning() {
-				messageBox(parent, "Sensor service is not running. Start the sensor and try again.", "DNS Cache", MB_ICONINFORMATION)
+				showInfo(parent, "Sensor service is not running. Start the sensor and try again.", "DNS Cache")
 			} else {
 				for _, r := range selRows {
 					name := listViewGetCellText(hwndDNSList, r, 0)
@@ -308,11 +308,11 @@ func dnsEntryMatchesFilter(e netinfo.DNSCacheEntry, f string) bool {
 // ---------------------------------------------------------------------------
 
 func dnsConfirmClearAll(parent HWND) {
-	if messageBox(parent,
+	if confirmYesNo(parent,
 		"Clear the Windows DNS resolver cache?\n\nAll cached lookups will be discarded. Windows will re-query DNS servers as needed.",
-		"DNS Cache", MB_YESNO|MB_ICONQUESTION) == IDYES {
+		"DNS Cache") {
 		if !requestDNSClear() {
-			messageBox(parent, "Sensor service is not running. Start the sensor and try again.", "DNS Cache", MB_ICONINFORMATION)
+			showInfo(parent, "Sensor service is not running. Start the sensor and try again.", "DNS Cache")
 		}
 	}
 }
@@ -351,9 +351,9 @@ func showDNSCacheDialog(parent HWND) {
 
 	// Kick off the initial snapshot.
 	if !requestDNSSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart the sensor from the toolbar, then use Refresh.",
-			"DNS Cache", MB_ICONWARNING)
+			"DNS Cache")
 		dnsCacheDialogLoadingDone()
 	}
 }

@@ -911,7 +911,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDM_HELP_CRASHLOG:
 			path := crashLogPath()
 			if _, err := os.Stat(path); os.IsNotExist(err) {
-				messageBox(HWND(hwnd), "No crash log found.\n\nIf the app closes unexpectedly, a log will be written to:\n"+path, "Crash Log", 0)
+				showInfo(HWND(hwnd), "No crash log found.\n\nIf the app closes unexpectedly, a log will be written to:\n"+path, "Crash Log")
 			} else {
 				shellExecute(HWND(hwnd), "open", "notepad.exe", path, "", SW_SHOW)
 			}
@@ -2108,19 +2108,17 @@ func startScan(hwnd HWND) {
 
 	target := getWindowText(hwndTarget)
 	if target == "" {
-		messageBox(hwnd, "Enter a target IP or CIDR.", "NetScope", 0)
+		showInfo(hwnd, "Enter a target IP or CIDR.", "NetScope")
 		return
 	}
 
 	// WAN safety: warn if the target is not an RFC1918 / private range.
 	if !netinfo.IsPrivate(target) {
-		r := messageBox(hwnd,
+		if !confirmDestructive(hwnd,
 			"Target \""+target+"\" is not a private/RFC1918 address.\n\n"+
 				"Scanning hosts you do not own may violate laws or terms of service.\n\n"+
 				"Proceed anyway?",
-			"WAN Target Warning",
-			MB_YESNO|MB_ICONWARNING)
-		if r != IDYES {
+			"WAN Target Warning") {
 			return
 		}
 	}
@@ -2137,7 +2135,7 @@ func startScan(hwnd HWND) {
 	// Expand target first so we can pre-populate the list.
 	hosts, err := scan.ExpandTarget(target)
 	if err != nil {
-		messageBox(hwnd, "Invalid target: "+err.Error(), "NetScope", 0)
+		showInfo(hwnd, "Invalid target: "+err.Error(), "NetScope")
 		return
 	}
 
@@ -2288,8 +2286,8 @@ func detectSubnet(hwnd HWND) {
 	subnets := netinfo.DetectLocalSubnets()
 	switch len(subnets) {
 	case 0:
-		messageBox(hwnd, "No private IPv4 interface detected.\n\nConnect to a network and try again.",
-			"Detect Local Subnet", 0)
+		showInfo(hwnd, "No private IPv4 interface detected.\n\nConnect to a network and try again.",
+			"Detect Local Subnet")
 	case 1:
 		setWindowText(hwndTarget, subnets[0])
 	default:
@@ -2405,7 +2403,7 @@ func hostEntryToResult(en *hostEntry) scan.Result {
 // JSON or CSV file via a Save dialog. This is the "Export All Hosts" action.
 func exportAllHosts(hwnd HWND, format string) {
 	if len(hostRegistry) == 0 {
-		messageBox(hwnd, "No hosts to export. Run a scan first.", "Export", 0)
+		showInfo(hwnd, "No hosts to export. Run a scan first.", "Export")
 		return
 	}
 
@@ -2423,7 +2421,7 @@ func exportAllHosts(hwnd HWND, format string) {
 // (allScanResults) to a JSON or CSV file via a Save dialog.
 func exportResults(hwnd HWND, format string) {
 	if len(allScanResults) == 0 {
-		messageBox(hwnd, "No scan results to export. Run a scan first.", "Export", 0)
+		showInfo(hwnd, "No scan results to export. Run a scan first.", "Export")
 		return
 	}
 
@@ -2482,7 +2480,7 @@ func doExport(hwnd HWND, results []scan.Result, format string) {
 		showError(hwnd, ErrExport, "Export failed:\n"+err.Error(), "Export Error")
 		return
 	}
-	messageBox(hwnd, "Exported "+fmt.Sprintf("%d", len(results))+" hosts to:\n"+path, "Export Complete", 0)
+	showInfo(hwnd, "Exported "+fmt.Sprintf("%d", len(results))+" hosts to:\n"+path, "Export Complete")
 }
 
 // ---------------------------------------------------------------------------

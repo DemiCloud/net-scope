@@ -577,9 +577,9 @@ func showInterfacesDialog(parent HWND) {
 	atomic.StoreUintptr(&hwndInterfacesDialogAtomic, uintptr(dlg))
 
 	if !requestIfSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart or elevate the sensor from the toolbar, then use Refresh.",
-			"Local Interfaces", MB_ICONINFORMATION)
+			"Local Interfaces")
 	}
 }
 

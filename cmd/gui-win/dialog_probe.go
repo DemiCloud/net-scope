@@ -226,8 +226,8 @@ func createProbeDialogControls(hwnd HWND) {
 func probeDlgShowProbeMenu(dlg HWND) {
 	probes := probeDlgAllProbes
 	if len(probes) == 0 {
-		messageBox(dlg, "No probes are registered.\n\n"+
-			"Make sure probes.Register() is called at startup.", "Probe", MB_ICONINFORMATION)
+		showInfo(dlg, "No probes are registered.\n\n"+
+			"Make sure probes.Register() is called at startup.", "Probe")
 		return
 	}
 
@@ -295,19 +295,19 @@ func probeDlgShowProbeMenu(dlg HWND) {
 
 func probeDlgStart(dlg HWND) {
 	if probeDlgSelectedProbe == nil {
-		messageBox(dlg, "Please select a probe first.", "Probe", MB_ICONINFORMATION)
+		showInfo(dlg, "Please select a probe first.", "Probe")
 		return
 	}
 	ip := getWindowText(hwndProbeIP)
 	if ip == "" {
-		messageBox(dlg, "Enter an IP address.", "Probe", MB_ICONINFORMATION)
+		showInfo(dlg, "Enter an IP address.", "Probe")
 		return
 	}
 	portStr := getWindowText(hwndProbePort)
 	port := 0
 	fmt.Sscanf(portStr, "%d", &port) //nolint:errcheck
 	if port <= 0 || port > 65535 {
-		messageBox(dlg, "Enter a valid port number (1–65535).", "Probe", MB_ICONINFORMATION)
+		showInfo(dlg, "Enter a valid port number (1\u201365535).", "Probe")
 		return
 	}
 
