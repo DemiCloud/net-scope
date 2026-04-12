@@ -677,6 +677,7 @@ var (
 	procKillTimer                    = modUser32.NewProc("KillTimer")
 	procGetWindowPlacement           = modUser32.NewProc("GetWindowPlacement")
 	procMonitorFromRect              = modUser32.NewProc("MonitorFromRect")
+	procIsDialogMessageW             = modUser32.NewProc("IsDialogMessageW")
 
 	procShellExecuteW = modShell32.NewProc("ShellExecuteW")
 
@@ -757,6 +758,13 @@ func translateMessage(msg *MSG) {
 
 func dispatchMessage(msg *MSG) {
 	procDispatchMessageW.Call(uintptr(unsafe.Pointer(msg)))
+}
+
+// isDialogMessage processes keyboard input for dialog-style navigation (Tab,
+// Shift-Tab, Enter, Esc). Returns true if the message was consumed.
+func isDialogMessage(dlg HWND, msg *MSG) bool {
+	r, _, _ := procIsDialogMessageW.Call(uintptr(dlg), uintptr(unsafe.Pointer(msg)))
+	return r != 0
 }
 
 func postQuitMessage(code int32) {

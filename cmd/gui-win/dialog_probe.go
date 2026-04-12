@@ -79,6 +79,9 @@ var probeDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 	case WM_CTLCOLORSTATIC:
 		return ctlColorDialog(wParam)
 
+	case WM_CTLCOLOREDIT:
+		return ctlColorEdit(wParam)
+
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idProbeSelect:
@@ -177,14 +180,14 @@ func createProbeDialogControls(hwnd HWND) {
 	// ── Row 1: IP · Port · transport label (left-aligned) ────────────────
 	createCtrl("STATIC", "IP:", WS_CHILD|WS_VISIBLE, 10, 14, 18, 16, hwnd, 0, inst)
 	hwndProbeIP = createCtrl("EDIT", "",
-		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
+		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL,
 		32, 11, 130, 20, hwnd, idProbeIP, inst)
 	if probeDlgIPLocked {
 		sendMessage(hwndProbeIP, EM_SETREADONLY, 1, 0)
 	}
 	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE, 170, 14, 30, 16, hwnd, 0, inst)
 	hwndProbePort = createCtrl("EDIT", "",
-		WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL|ES_NUMBER,
+		WS_CHILD|WS_VISIBLE|WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL|ES_NUMBER,
 		204, 11, 55, 20, hwnd, idProbePort, inst)
 	hwndProbeTransport = createCtrl("STATIC", "TCP",
 		WS_CHILD|WS_VISIBLE, 265, 14, 28, 16, hwnd, idProbeTransport, inst)
