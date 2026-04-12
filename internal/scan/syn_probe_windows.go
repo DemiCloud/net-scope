@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 const (
@@ -45,7 +47,7 @@ var (
 // Returns empty SYNProbeInfo when not elevated, target is not IPv4, or no
 // SYN-ACK is received within timeout.
 func probeSYN(ctx context.Context, ip net.IP, port int, timeout time.Duration) SYNProbeInfo {
-	if !IsElevated() {
+	if !netinfo.IsElevated() {
 		return SYNProbeInfo{}
 	}
 	ip4 := ip.To4()

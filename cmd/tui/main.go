@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/netinfo"
 	"github.com/demicloud/net-scope/internal/scan"
 	"github.com/spf13/pflag"
 )
@@ -286,7 +287,7 @@ func main() {
 	}
 
 	// WAN safety: warn if the target is not a private range.
-	if !scan.IsPrivate(target) {
+	if !netinfo.IsPrivate(target) {
 		fmt.Fprintf(os.Stderr,
 			"warning: target %q is not an RFC1918/private address.\n"+
 				"         Scanning hosts you do not own may be illegal. Proceed? [y/N] ",

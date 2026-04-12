@@ -1,6 +1,6 @@
 //go:build !linux && !windows
 
-package scan
+package netinfo
 
 // enrichInterfaceEntries is a no-op on platforms other than Linux and Windows.
 // FreeBSD and other BSDs expose interface stats via sysctl/ioctl but we do not

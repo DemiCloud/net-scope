@@ -1,6 +1,6 @@
 //go:build windows
 
-package scan
+package netinfo
 
 import (
 	"syscall"

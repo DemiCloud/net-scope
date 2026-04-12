@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/scan"
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ var (
 	hwndConnFilter      HWND
 	hwndConnLoadingHint HWND
 
-	connAllRows    []scan.SocketEntry
+	connAllRows    []netinfo.SocketEntry
 	connFilterText string
 )
 
@@ -252,7 +252,7 @@ func showConnContextMenu(parent HWND, row int32, pt POINT) {
 // ---------------------------------------------------------------------------
 
 // connDialogAddRow is called on the UI thread for each WM_SOCKET_SNAP_ENTRY.
-func connDialogAddRow(e scan.SocketEntry) {
+func connDialogAddRow(e netinfo.SocketEntry) {
 	connAllRows = append(connAllRows, e)
 	if connFilterText != "" && !connEntryMatchesFilter(e, connFilterText) {
 		return
@@ -289,7 +289,7 @@ func connRepopulate() {
 	}
 }
 
-func connInsertRow(lv HWND, e scan.SocketEntry) {
+func connInsertRow(lv HWND, e netinfo.SocketEntry) {
 	local := connAddrStr(e.LocalAddr, e.LocalPort)
 	remote := connAddrStr(e.RemoteAddr, e.RemotePort)
 	pid := ""
@@ -310,7 +310,7 @@ func connAddrStr(addr string, port uint16) string {
 	return fmt.Sprintf("%s:%d", addr, port)
 }
 
-func connEntryMatchesFilter(e scan.SocketEntry, f string) bool {
+func connEntryMatchesFilter(e netinfo.SocketEntry, f string) bool {
 	local := strings.ToLower(connAddrStr(e.LocalAddr, e.LocalPort))
 	remote := strings.ToLower(connAddrStr(e.RemoteAddr, e.RemotePort))
 	return strings.Contains(strings.ToLower(e.Proto), f) ||

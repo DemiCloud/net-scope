@@ -1,6 +1,6 @@
 //go:build !windows && !linux
 
-package scan
+package netinfo
 
 import "errors"
 

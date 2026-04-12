@@ -1,4 +1,4 @@
-package scan
+package netinfo
 
 import (
 	"net"

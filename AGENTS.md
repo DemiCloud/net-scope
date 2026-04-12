@@ -72,7 +72,9 @@ cmd/
   tui/                ← standalone TUI (legacy, keep for reference)
 internal/
   config/             ← TOML config; Load() never auto-writes on first run
-  scan/               ← core scanner library; all wire types (ServiceCmd/ServiceMsg)
+  scan/               ← active scanning library: probing, discovery, wire types (ServiceCmd/ServiceMsg)
+  netinfo/            ← OS system queries: interfaces, ARP/DNS/route tables, sockets, hosts file,
+                         DHCP capture, elevation check, private-network utility
 ```
 
 ---
@@ -261,6 +263,7 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
 | **Backend** | `internal/scan/` | All network I/O, scanning, enrichment, result types, wire protocol types (`ServiceCmd`/`ServiceMsg`) |
+| **OS queries** | `internal/netinfo/` | Read-only OS system queries: interfaces, ARP/DNS/route tables, sockets, hosts file, DHCP capture, elevation check, private-network utility |
 | **Service IPC client** | `cmd/gui-win/service.go` | Platform-agnostic subprocess spawn + JSON-over-TCP channel; **no Win32/GTK imports** — reusable by any front-end |
 | **Config** | `internal/config/` | Serialisation, defaults, path resolution, `ToScanConfig()` conversion |
 | **Front-end (Win32)** | `cmd/gui-win/` | Native Win32 GUI — Windows only; primary graphical target |
@@ -271,6 +274,7 @@ Keep a strict separation between layers. When in doubt, put logic in the lowest 
 **Rules:**
 
 - Do not add scanning, enrichment, or capture logic to any GUI or CLI file.
+- Do not add OS system queries or passive capture code to `internal/scan/` — put them in `internal/netinfo/`.
 - Do not add Win32 platform-specific code outside `cmd/gui-win/`.
 - Do not add GTK imports outside `cmd/gui-gtk/` UI files.
 - The service IPC client is shared infrastructure — treat it like a library, not a GUI component. Any front-end (Win32, GTK, TUI) can import and use it.

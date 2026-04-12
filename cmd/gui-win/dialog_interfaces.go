@@ -30,7 +30,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/scan"
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ var (
 
 	// ifAllRows holds every entry from the last snapshot, enabling filter
 	// rebuilds without a new round-trip.
-	ifAllRows    []scan.InterfaceEntry
+	ifAllRows    []netinfo.InterfaceEntry
 	ifFilterText string
 )
 
@@ -356,7 +356,7 @@ func ifUpdateDetailPanel() {
 }
 
 // ifPopulateDetails inserts key-value property rows for e into hwndIfDetails.
-func ifPopulateDetails(e scan.InterfaceEntry) {
+func ifPopulateDetails(e netinfo.InterfaceEntry) {
 	add := func(attr, value string) {
 		if value == "" || value == "0" {
 			return
@@ -477,7 +477,7 @@ func fmtCount(n uint64) string {
 // ---------------------------------------------------------------------------
 
 // interfacesDialogAddRow is called on the UI thread for each WM_IF_SNAP_ENTRY.
-func interfacesDialogAddRow(e scan.InterfaceEntry) {
+func interfacesDialogAddRow(e netinfo.InterfaceEntry) {
 	ifAllRows = append(ifAllRows, e)
 	if ifFilterText != "" && !ifEntryMatchesFilter(e, ifFilterText) {
 		return
@@ -519,7 +519,7 @@ func ifRepopulate() {
 	}
 }
 
-func ifInsertRow(lv HWND, e scan.InterfaceEntry) {
+func ifInsertRow(lv HWND, e netinfo.InterfaceEntry) {
 	listViewAppendRow(lv, []string{
 		e.Name,
 		e.Type,
@@ -529,7 +529,7 @@ func ifInsertRow(lv HWND, e scan.InterfaceEntry) {
 	})
 }
 
-func ifEntryMatchesFilter(e scan.InterfaceEntry, f string) bool {
+func ifEntryMatchesFilter(e netinfo.InterfaceEntry, f string) bool {
 	haystack := strings.Join([]string{
 		e.Name, e.Type, e.State, e.MAC,
 		strings.Join(e.Addrs4, " "),

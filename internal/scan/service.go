@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ type ServiceMsg struct {
 	// ScanID is the value from the matching ServiceCmd.ScanID.
 	ScanID   uint64       `json:"scan_id,omitempty"`
 	// DHCP carries a single passively-observed DHCP packet.
-	DHCP     *DHCPEvent   `json:"dhcp,omitempty"`
+	DHCP     *netinfo.DHCPEvent   `json:"dhcp,omitempty"`
 	// ProbeResult carries the result of a single on-demand host probe.
 	ProbeResult *ProbeResult `json:"probe_result,omitempty"`
 	// Err carries a human-readable error string.
@@ -86,33 +88,33 @@ type ServiceMsg struct {
 	// ARPEntry carries a single ARP table entry.
 	// When ARPSnapshot is true the entry came from an "arp-snapshot" one-shot
 	// command; without it the entry came from the continuous "arp-start" poll.
-	ARPEntry    *ARPResult `json:"arp_entry,omitempty"`
-	ARPSnapshot bool       `json:"arp_snapshot,omitempty"`
+	ARPEntry    *netinfo.ARPResult `json:"arp_entry,omitempty"`
+	ARPSnapshot bool               `json:"arp_snapshot,omitempty"`
 	// ARPSnapDone signals the end of an "arp-snapshot" stream.
-	ARPSnapDone bool       `json:"arp_snap_done,omitempty"`
+	ARPSnapDone bool               `json:"arp_snap_done,omitempty"`
 	// DNSEntry carries a single DNS resolver cache entry ("dns-snapshot" stream).
-	DNSEntry   *DNSCacheEntry `json:"dns_entry,omitempty"`
+	DNSEntry    *netinfo.DNSCacheEntry `json:"dns_entry,omitempty"`
 	// DNSSnapDone signals the end of a "dns-snapshot" stream.
-	DNSSnapDone bool          `json:"dns_snap_done,omitempty"`
+	DNSSnapDone bool                   `json:"dns_snap_done,omitempty"`
 	// CacheOp carries the result of an "arp-delete", "arp-clear", "dns-delete",
 	// "dns-clear", or "route-delete" command.
 	CacheOp    *CacheOpResult `json:"cache_op,omitempty"`
 	// RouteEntry carries a single routing-table entry ("route-snapshot" stream).
-	RouteEntry   *RouteEntry `json:"route_entry,omitempty"`
+	RouteEntry    *netinfo.RouteEntry `json:"route_entry,omitempty"`
 	// RouteSnapDone signals the end of a "route-snapshot" stream.
-	RouteSnapDone bool       `json:"route_snap_done,omitempty"`
+	RouteSnapDone bool                `json:"route_snap_done,omitempty"`
 	// SocketEntry carries a single socket from a "socket-snapshot" stream.
-	SocketEntry   *SocketEntry `json:"socket_entry,omitempty"`
+	SocketEntry    *netinfo.SocketEntry `json:"socket_entry,omitempty"`
 	// SocketSnapDone signals the end of a "socket-snapshot" stream.
-	SocketSnapDone bool        `json:"socket_snap_done,omitempty"`
+	SocketSnapDone bool                 `json:"socket_snap_done,omitempty"`
 	// HostsEntry carries a single hosts-file entry from a "hosts-snapshot" stream.
-	HostsEntry    *HostsEntry `json:"hosts_entry,omitempty"`
+	HostsEntry    *netinfo.HostsEntry `json:"hosts_entry,omitempty"`
 	// HostsSnapDone signals the end of a "hosts-snapshot" stream.
-	HostsSnapDone bool        `json:"hosts_snap_done,omitempty"`
+	HostsSnapDone bool                `json:"hosts_snap_done,omitempty"`
 	// IfEntry carries a single local network interface from an "if-snapshot" stream.
-	IfEntry    *InterfaceEntry `json:"if_entry,omitempty"`
+	IfEntry    *netinfo.InterfaceEntry `json:"if_entry,omitempty"`
 	// IfSnapDone signals the end of an "if-snapshot" stream.
-	IfSnapDone bool            `json:"if_snap_done,omitempty"`
+	IfSnapDone bool                    `json:"if_snap_done,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -140,57 +142,12 @@ type ServiceMsg struct {
 	WorkerStatus *WorkerStatus `json:"worker_status,omitempty"`
 }
 
-// ARPResult carries a single ARP table entry streamed from service to GUI.
-type ARPResult struct {
-	IP      string `json:"ip"`
-	MAC     string `json:"mac"`
-	Type    string `json:"type,omitempty"`    // "dynamic", "static", "other"; set on arp-snapshot
-	IfIndex uint32 `json:"if_index,omitempty"` // interface index; set on arp-snapshot
-}
-
-// DNSCacheEntry carries a single Windows DNS resolver cache entry.
-type DNSCacheEntry struct {
-	Name string `json:"name"`
-	Type string `json:"type"` // "A", "AAAA", "CNAME", "PTR", "MX", etc.
-}
-
 // CacheOpResult carries the result of a cache-manipulation command:
 // "arp-delete", "arp-clear", "dns-delete", "dns-clear", or "route-delete".
 type CacheOpResult struct {
 	Op  string `json:"op"`
 	OK  bool   `json:"ok"`
 	Err string `json:"err,omitempty"`
-}
-
-// RouteEntry carries a single IPv4 routing-table entry streamed from service to GUI.
-type RouteEntry struct {
-	Dest     string `json:"dest"`
-	Mask     string `json:"mask"`
-	Gateway  string `json:"gateway"`
-	IfIndex  uint32 `json:"if_index,omitempty"`
-	Metric   uint32 `json:"metric,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Policy   uint32 `json:"policy,omitempty"`
-}
-
-// SocketEntry carries a single TCP or UDP socket entry streamed from service to GUI.
-type SocketEntry struct {
-	Proto      string `json:"proto"`               // TCP, TCP6, UDP, UDP6
-	LocalAddr  string `json:"local_addr"`
-	LocalPort  uint16 `json:"local_port"`
-	RemoteAddr string `json:"remote_addr,omitempty"`
-	RemotePort uint16 `json:"remote_port,omitempty"`
-	State      string `json:"state,omitempty"`     // TCP only
-	PID        uint32 `json:"pid,omitempty"`
-	Process    string `json:"process,omitempty"`
-}
-
-// HostsEntry carries a single hosts-file entry streamed from service to GUI.
-type HostsEntry struct {
-	IP        string   `json:"ip"`
-	Hostnames []string `json:"hostnames"`
-	Comment   string   `json:"comment,omitempty"`
 }
 
 // HostsAddParams carries the parameters for a "hosts-add" command.
@@ -330,7 +287,7 @@ func RunServiceConn(conn net.Conn) error {
 
 	// Announce readiness and elevation state. Authentication has already been
 	// established by the TLS handshake; no additional token exchange needed.
-	if err := safeSend(ServiceMsg{Ready: true, Elevated: IsElevated()}); err != nil {
+	if err := safeSend(ServiceMsg{Ready: true, Elevated: netinfo.IsElevated()}); err != nil {
 		return fmt.Errorf("service ready: %w", err)
 	}
 	// PTR resolver goroutine starts immediately and lives for the connection.
@@ -667,14 +624,14 @@ func RunServiceConn(conn net.Conn) error {
 			if dhcpCancel != nil {
 				break // already running
 			}
-			if !IsElevated() {
+			if !netinfo.IsElevated() {
 				_ = safeSend(ServiceMsg{Err: "dhcp-start: requires elevation"})
 				continue
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			dhcpCancel = cancel
-			ch := make(chan DHCPEvent, 64)
-			if err := ListenDHCP(ctx, ch); err != nil {
+			ch := make(chan netinfo.DHCPEvent, 64)
+			if err := netinfo.ListenDHCP(ctx, ch); err != nil {
 				dhcpCancel()
 				dhcpCancel = nil
 				_ = safeSend(ServiceMsg{Err: "dhcp-start: " + err.Error()})
@@ -756,8 +713,8 @@ func RunServiceConn(conn net.Conn) error {
 					case <-ctx.Done():
 						return
 					case <-t.C:
-						for ip, mac := range ReadARPTable() {
-							entry := &ARPResult{IP: ip, MAC: mac.String()}
+				for ip, mac := range netinfo.ReadARPTable() {
+					entry := &netinfo.ARPResult{IP: ip, MAC: mac.String()}
 							if werr := safeSend(ServiceMsg{ARPEntry: entry}); werr != nil {
 								return
 							}
@@ -775,7 +732,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "arp-snapshot":
 			// One-shot: stream the full ARP table and signal completion.
-			for _, e := range ReadARPTableFull() {
+			for _, e := range netinfo.ReadARPTableFull() {
 				entry := e
 				if werr := safeSend(ServiceMsg{ARPEntry: &entry, ARPSnapshot: true}); werr != nil {
 					return werr
@@ -789,7 +746,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			target := cmd.Target
 			go func() {
-				err := DeleteARPEntry(target)
+				err := netinfo.DeleteARPEntry(target)
 				op := &CacheOpResult{Op: "arp-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -799,7 +756,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "arp-clear":
 			go func() {
-				err := FlushARPCache(0)
+				err := netinfo.FlushARPCache(0)
 				op := &CacheOpResult{Op: "arp-clear", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -809,7 +766,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "dns-snapshot":
 			// One-shot: stream the full DNS resolver cache and signal completion.
-			for _, e := range ReadDNSCache() {
+			for _, e := range netinfo.ReadDNSCache() {
 				entry := e
 				if werr := safeSend(ServiceMsg{DNSEntry: &entry}); werr != nil {
 					return werr
@@ -823,7 +780,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			target := cmd.Target
 			go func() {
-				err := DeleteDNSCacheEntry(target)
+				err := netinfo.DeleteDNSCacheEntry(target)
 				op := &CacheOpResult{Op: "dns-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -833,7 +790,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "dns-clear":
 			go func() {
-				err := FlushDNSCache()
+				err := netinfo.FlushDNSCache()
 				op := &CacheOpResult{Op: "dns-clear", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -843,7 +800,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "route-snapshot":
 			// One-shot: stream the full routing table and signal completion.
-			for _, e := range ReadRouteTable() {
+			for _, e := range netinfo.ReadRouteTable() {
 				entry := e
 				if werr := safeSend(ServiceMsg{RouteEntry: &entry}); werr != nil {
 					return werr
@@ -857,7 +814,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			target := cmd.Target
 			go func() {
-				err := DeleteRouteEntry(target)
+				err := netinfo.DeleteRouteEntry(target)
 				op := &CacheOpResult{Op: "route-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -867,7 +824,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "socket-snapshot":
 			// One-shot: stream all TCP/UDP sockets and signal completion.
-			for _, e := range ReadSockets() {
+			for _, e := range netinfo.ReadSockets() {
 				entry := e
 				if werr := safeSend(ServiceMsg{SocketEntry: &entry}); werr != nil {
 					return werr
@@ -877,7 +834,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "hosts-snapshot":
 			// One-shot: stream all hosts-file entries and signal completion.
-			for _, e := range ReadHostsFile() {
+			for _, e := range netinfo.ReadHostsFile() {
 				entry := e
 				if werr := safeSend(ServiceMsg{HostsEntry: &entry}); werr != nil {
 					return werr
@@ -887,7 +844,7 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "if-snapshot":
 			// One-shot: stream all local network interfaces and signal completion.
-			for _, e := range ReadInterfaces() {
+			for _, e := range netinfo.ReadInterfaces() {
 				entry := e
 				if werr := safeSend(ServiceMsg{IfEntry: &entry}); werr != nil {
 					return werr
@@ -901,7 +858,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			ha := cmd.HostsAdd
 			go func() {
-				err := AddHostsEntry(ha.IP, ha.Hostnames)
+				err := netinfo.AddHostsEntry(ha.IP, ha.Hostnames)
 				op := &CacheOpResult{Op: "hosts-add", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()
@@ -915,7 +872,7 @@ func RunServiceConn(conn net.Conn) error {
 			}
 			target := cmd.Target
 			go func() {
-				err := DeleteHostsEntry(target)
+				err := netinfo.DeleteHostsEntry(target)
 				op := &CacheOpResult{Op: "hosts-delete", OK: err == nil}
 				if err != nil {
 					op.Err = err.Error()

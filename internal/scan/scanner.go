@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/net/proxy"
+
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // Scanner orchestrates host discovery and port scanning across a target range.
@@ -259,7 +261,7 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 			if ip == nil {
 				continue
 			}
-			cacheMAC := lookupARPCache(ip)
+			cacheMAC := netinfo.LookupARPCache(ip)
 			if cacheMAC != nil && cacheMAC.String() != batchMAC.String() {
 				atomic.AddInt64(&s.Stats.ARPAnomalies, 1)
 			}
@@ -418,7 +420,7 @@ func (s *Scanner) liveCheck(ctx context.Context, ip net.IP, macMap map[string]ne
 				r.TTL = ttl
 				// ICMP causes the kernel to ARP; read cache to fill the MAC.
 				if r.MAC == nil {
-					if mac := lookupARPCache(ip); mac != nil {
+					if mac := netinfo.LookupARPCache(ip); mac != nil {
 						r.MAC = mac
 						r.Vendor = lookupVendor(mac)
 					}
@@ -450,7 +452,7 @@ func (s *Scanner) liveCheck(ctx context.Context, ip net.IP, macMap map[string]ne
 		if len(open) > 0 {
 			r.Alive = true
 			if r.MAC == nil && dial == nil {
-				if mac := lookupARPCache(ip); mac != nil {
+				if mac := netinfo.LookupARPCache(ip); mac != nil {
 					r.MAC = mac
 					r.Vendor = lookupVendor(mac)
 				}

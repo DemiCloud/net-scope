@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/demicloud/net-scope/internal/scan"
+	"github.com/demicloud/net-scope/internal/netinfo"
 )
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ var (
 	hwndDNSFilter      HWND
 	hwndDNSLoadingHint HWND
 
-	dnsAllRows    []scan.DNSCacheEntry
+	dnsAllRows    []netinfo.DNSCacheEntry
 	dnsFilterText string
 )
 
@@ -285,7 +285,7 @@ func showDNSContextMenu(parent HWND, row int32, pt POINT) {
 // ---------------------------------------------------------------------------
 
 // dnsCacheDialogAddRow is called on the UI thread for each WM_DNS_SNAP_ENTRY.
-func dnsCacheDialogAddRow(e scan.DNSCacheEntry) {
+func dnsCacheDialogAddRow(e netinfo.DNSCacheEntry) {
 	dnsAllRows = append(dnsAllRows, e)
 	if dnsFilterText != "" && !dnsEntryMatchesFilter(e, dnsFilterText) {
 		return
@@ -323,11 +323,11 @@ func dnsRepopulate() {
 	}
 }
 
-func dnsInsertRow(lv HWND, e scan.DNSCacheEntry) {
+func dnsInsertRow(lv HWND, e netinfo.DNSCacheEntry) {
 	listViewAppendRow(lv, []string{e.Name, e.Type})
 }
 
-func dnsEntryMatchesFilter(e scan.DNSCacheEntry, f string) bool {
+func dnsEntryMatchesFilter(e netinfo.DNSCacheEntry, f string) bool {
 	return strings.Contains(strings.ToLower(e.Name), f) ||
 		strings.Contains(strings.ToLower(e.Type), f)
 }

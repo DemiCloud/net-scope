@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/demicloud/net-scope/internal/config"
+	"github.com/demicloud/net-scope/internal/netinfo"
 	"github.com/demicloud/net-scope/internal/scan"
 )
 
@@ -911,7 +912,7 @@ func getWSDRawText(ip string) string {
 
 
 // Columns: Time | Type | Client MAC | Hostname | Client IP | Requested IP | Offered IP | Server IP
-func listViewAddDHCPRow(hwnd HWND, evt scan.DHCPEvent) {
+func listViewAddDHCPRow(hwnd HWND, evt netinfo.DHCPEvent) {
 	ts := evt.Time.Format("15:04:05")
 	tsPtr := utf16(ts)
 	item := LVITEM{Mask: LVIF_TEXT, IItem: 0x7fffffff, PszText: tsPtr}

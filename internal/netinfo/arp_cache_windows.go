@@ -1,6 +1,6 @@
 //go:build windows
 
-package scan
+package netinfo
 
 import (
 	"net"
@@ -23,13 +23,13 @@ type mibIPNetRow struct {
 	Type        uint32  // 1=other 2=invalid 3=dynamic 4=static
 }
 
-// lookupARPCache tries two strategies in order:
+// LookupARPCache tries two strategies in order:
 //  1. Read the Windows ARP neighbor table (GetIpNetTable) — populated as a side-effect
 //     of the ICMP ping, no network I/O, fast.
 //  2. Send a fresh ARP request (SendARP) — works if the host is on a local subnet.
 //
 // Returns nil if the MAC cannot be determined (e.g. host is on a remote subnet).
-func lookupARPCache(ip net.IP) net.HardwareAddr {
+func LookupARPCache(ip net.IP) net.HardwareAddr {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return nil
