@@ -234,6 +234,8 @@ const (
 	LVM_GETHEADER               = LVM_FIRST + 31
 	LVM_SETCOLUMNWIDTH          = LVM_FIRST + 30
 	LVM_GETCOLUMNWIDTH          = LVM_FIRST + 29
+	LVSCW_AUTOSIZE              = uintptr(0xFFFFFFFF) // -1: fit widest item text
+	LVSCW_AUTOSIZE_USEHEADER    = uintptr(0xFFFFFFFE) // -2: fit header text
 	LVNI_SELECTED                = 0x0002
 	LVM_GETITEMRECT              = LVM_FIRST + 14
 	LVM_SETITEMSTATE             = LVM_FIRST + 43
