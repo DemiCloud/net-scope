@@ -19,8 +19,8 @@ const (
 	WM_SCAN_STATS    = WM_APP + 3  // scan goroutine: progress stats
 	WM_BCAST_SVC     = WM_APP + 4  // broadcast listener: ServiceInfo arrived
 	WM_FIRST_RUN     = WM_APP + 5  // trigger first-run config-location dialog
-	WM_SERVICE_UP    = WM_APP + 6  // scan service connected and ready
-	WM_SERVICE_DOWN  = WM_APP + 7  // scan service disconnected
+	WM_SERVICE_UP    = WM_APP + 6  // sensor service connected and ready
+	WM_SERVICE_DOWN  = WM_APP + 7  // sensor service disconnected
 	WM_DHCP_EVENT    = WM_APP + 8  // DHCP packet from elevated service
 	WM_HOST_ENRICH   = WM_APP + 9  // background enrichment: NetBIOS / ARP arrived
 	WM_PROBE_RESULT  = WM_APP + 10 // host detail dialog: on-demand probe finished
@@ -77,7 +77,7 @@ const (
 	IDC_LIST_WSD     = 116
 	IDC_LIST_DHCP    = 111
 	IDC_ELEV_LABEL   = 112 // service status strip
-	IDC_SERVICE_BTN  = 113 // "Elevate scan service" button
+	IDC_SERVICE_BTN  = 113 // "Elevate Sensor" button
 	IDC_LIST_NETWORK    = 114 // Network tab header pane
 	IDC_NET_EVENTLOG    = 122 // Network tab event-log ListView
 	IDC_DETECT          = 115 // detect local subnet button
