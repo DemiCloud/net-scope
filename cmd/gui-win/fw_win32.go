@@ -884,6 +884,28 @@ func messageBox(hwnd HWND, text, caption string, flags uint32) int32 {
 	return int32(r)
 }
 
+// showInfo displays an informational dialog (MB_ICONINFORMATION).
+func showInfo(hwnd HWND, text, caption string) {
+	messageBox(hwnd, text, caption, MB_ICONINFORMATION)
+}
+
+// showWarn displays a warning dialog (MB_ICONWARNING).
+func showWarn(hwnd HWND, text, caption string) {
+	messageBox(hwnd, text, caption, MB_ICONWARNING)
+}
+
+// confirmYesNo asks a yes/no question (MB_YESNO|MB_ICONQUESTION) and returns
+// true when the user chooses Yes. Use for non-destructive confirms.
+func confirmYesNo(hwnd HWND, text, caption string) bool {
+	return messageBox(hwnd, text, caption, MB_YESNO|MB_ICONQUESTION) == IDYES
+}
+
+// confirmDestructive asks a yes/no confirmation for a destructive action
+// (MB_YESNO|MB_ICONWARNING) and returns true when the user chooses Yes.
+func confirmDestructive(hwnd HWND, text, caption string) bool {
+	return messageBox(hwnd, text, caption, MB_YESNO|MB_ICONWARNING) == IDYES
+}
+
 // getKeyState returns the state of the given virtual key. The high-order bit
 // is set (value < 0 as int16) if the key is currently pressed.
 func getKeyState(vk int) int16 {

@@ -237,9 +237,9 @@ func showARPContextMenu(parent HWND, row int32, pt POINT) {
 		}
 	case idARPDelete:
 		if !serviceElevated {
-			messageBox(parent,
+			showInfo(parent,
 				"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar.",
-				"ARP Cache", MB_ICONINFORMATION)
+				"ARP Cache")
 			return
 		}
 		for _, r := range listViewGetSelectedRows(hwndARPList) {
@@ -325,14 +325,14 @@ func arpEntryMatchesFilter(e netinfo.ARPResult, f string) bool {
 
 func arpConfirmClearAll(parent HWND) {
 	if !serviceElevated {
-		messageBox(parent,
+		showInfo(parent,
 			"Clearing the ARP cache requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar to restart the sensor with admin rights.",
-			"ARP Cache", MB_ICONINFORMATION)
+			"ARP Cache")
 		return
 	}
-	if messageBox(parent,
+	if confirmYesNo(parent,
 		"Clear all dynamic ARP entries?\n\nWindows will re-learn them automatically as you communicate with local hosts.",
-		"ARP Cache", MB_YESNO|MB_ICONQUESTION) == IDYES {
+		"ARP Cache") {
 		requestARPClear()
 	}
 }
@@ -371,9 +371,9 @@ func showARPCacheDialog(parent HWND) {
 
 	// Kick off the initial snapshot.
 	if !requestARPSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart or elevate the sensor from the toolbar, then use Refresh.",
-			"ARP Cache", MB_ICONINFORMATION)
+			"ARP Cache")
 		arpCacheDialogLoadingDone()
 	}
 }

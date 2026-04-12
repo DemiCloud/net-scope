@@ -392,7 +392,7 @@ func showObsContextMenu(hwnd HWND) {
 // hostDetailForget asks for confirmation then removes the host from the registry and closes.
 func hostDetailForget(hwnd HWND) {
 	msg := "Remove " + currentDetailIP + " from the session?\n\nAll observations, scan results, and service history for this host will be deleted. The host may reappear if observed again."
-	if messageBox(hwnd, msg, "Forget Host", MB_YESNO|MB_ICONWARNING) != IDYES {
+	if !confirmDestructive(hwnd, msg, "Forget Host") {
 		return
 	}
 	delete(hostRegistry, currentDetailIP)
@@ -537,7 +537,7 @@ func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) bool {
 	atomic.AddInt32(&activeProbes, 1)
 	if err := sendProbeViaService(ip, spec, appConfig.Scan.SOCKSProxy); err != nil {
 		atomic.AddInt32(&activeProbes, -1)
-		messageBox(hwnd, "Cannot run probe: the sensor service is not running.\nClick \"Elevate Sensor\" on the main window and try again.", "Probe", MB_ICONWARNING)
+		showWarn(hwnd, "Cannot run probe: the sensor service is not running.\nClick \"Elevate Sensor\" on the main window and try again.", "Probe")
 		return false
 	}
 	return true
@@ -1130,7 +1130,7 @@ func probesRunSingle(hwnd HWND) {
 		portStr := strings.TrimSpace(getWindowText(hwndProbesPort))
 		p, err := strconv.Atoi(portStr)
 		if err != nil || p < 1 || p > 65535 {
-			messageBox(hwnd, "Enter a valid port number (1\u201365535).", "Probes", MB_ICONWARNING)
+			showInfo(hwnd, "Enter a valid port number (1\u201365535).", "Probes")
 			return
 		}
 		port = p
@@ -1430,7 +1430,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // showAllHostsDialog opens the "View All Hosts" modal.
 func showAllHostsDialog(parent HWND) {
 	if len(hostRegistry) == 0 {
-		messageBox(parent, "No hosts have been discovered in this session yet.", "All Hosts", MB_OK)
+		showInfo(parent, "No hosts have been discovered in this session yet.", "All Hosts")
 		return
 	}
 
@@ -1846,7 +1846,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				} else {
 					confirmMsg = fmt.Sprintf("Remove %d hosts from the session?\n\nAll observations for these hosts will be deleted.", len(selected))
 				}
-				if messageBox(HWND(hwnd), confirmMsg, "Forget Host", MB_YESNO|MB_ICONWARNING) == IDYES {
+				if confirmDestructive(HWND(hwnd), confirmMsg, "Forget Host") {
 					for _, ip := range selected {
 						delete(hostRegistry, ip)
 					}

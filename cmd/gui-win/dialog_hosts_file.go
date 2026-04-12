@@ -270,7 +270,7 @@ func hostsEntryTarget(e netinfo.HostsEntry) string {
 // hostsDeleteSelected deletes all selected list rows.
 func hostsDeleteSelected(parent HWND) {
 	if !serviceRunning() {
-		messageBox(parent, "The sensor service is not running.\n\nStart the sensor from the toolbar and try again.", "Hosts File", MB_ICONINFORMATION)
+		showInfo(parent, "The sensor service is not running.\n\nStart the sensor from the toolbar and try again.", "Hosts File")
 		return
 	}
 	rows := listViewGetSelectedRows(hwndHostsList)
@@ -281,9 +281,9 @@ func hostsDeleteSelected(parent HWND) {
 	if len(rows) > 1 {
 		noun = "entries"
 	}
-	if messageBox(parent,
+	if !confirmDestructive(parent,
 		"Delete the selected hosts file "+noun+"?\n\nThis requires an elevated sensor; the operation may fail if the sensor is not running as administrator.",
-		"Hosts File", MB_YESNO|MB_ICONQUESTION) != IDYES {
+		"Hosts File") {
 		return
 	}
 	for _, r := range rows {
@@ -374,7 +374,7 @@ var addHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr)
 			ip := strings.TrimSpace(getWindowText(hwndAddHostIP))
 			parts := strings.Fields(getWindowText(hwndAddHostNames))
 			if ip == "" || len(parts) == 0 {
-				messageBox(HWND(hwnd), "Enter an IP address and at least one hostname.", "Add Entry", MB_ICONINFORMATION)
+				showInfo(HWND(hwnd), "Enter an IP address and at least one hostname.", "Add Entry")
 				return 0
 			}
 			hostsAddResult.ip = ip
@@ -440,7 +440,7 @@ func createAddHostControls(hwnd HWND) {
 // sends a hosts-add request to the sensor service.
 func showAddHostEntryDialog(parent HWND) {
 	if !serviceRunning() {
-		messageBox(parent, "The sensor service is not running.\n\nStart the sensor from the toolbar and try again.", "Hosts File", MB_ICONINFORMATION)
+		showInfo(parent, "The sensor service is not running.\n\nStart the sensor from the toolbar and try again.", "Hosts File")
 		return
 	}
 
@@ -507,9 +507,9 @@ func showHostsDialog(parent HWND) {
 	atomic.StoreUintptr(&hwndHostsDialogAtomic, uintptr(dlg))
 
 	if !requestHostsSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart the sensor from the toolbar, then use Refresh.",
-			"Hosts File", MB_ICONINFORMATION)
+			"Hosts File")
 	}
 }
 

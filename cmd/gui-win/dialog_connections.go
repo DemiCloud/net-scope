@@ -339,9 +339,9 @@ func showConnectionsDialog(parent HWND) {
 	atomic.StoreUintptr(&hwndConnectionsDialogAtomic, uintptr(dlg))
 
 	if !requestSocketSnapshot() {
-		messageBox(dlg,
+		showInfo(dlg,
 			"The sensor service is not running.\n\nStart or elevate the sensor from the toolbar, then use Refresh.",
-			"Active Connections", MB_ICONINFORMATION)
+			"Active Connections")
 	}
 }
 
