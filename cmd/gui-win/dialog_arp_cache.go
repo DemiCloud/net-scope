@@ -89,28 +89,6 @@ var arpCacheWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			arpCacheDialogRefresh()
 		case idARPClearAll:
 			arpConfirmClearAll(HWND(hwnd))
-		case idARPCopyIP:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndARPList, 0))
-		case idARPCopyMAC:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndARPList, 1))
-		case idARPCopyRow:
-			row := int32(sendMessage(hwndARPList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-			if row >= 0 {
-				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndARPList, row, int32(len(arpColTitles))))
-			}
-		case idARPDelete:
-			if !serviceElevated {
-				messageBox(HWND(hwnd),
-					"Deleting ARP entries requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar to restart the sensor with admin rights.",
-					"ARP Cache", MB_ICONINFORMATION)
-				return 0
-			}
-			for _, r := range listViewGetSelectedRows(hwndARPList) {
-				ip := listViewGetCellText(hwndARPList, r, 0)
-				if ip != "" && ip != "\u2014" {
-					requestARPDelete(ip)
-				}
-			}
 		}
 		return 0
 

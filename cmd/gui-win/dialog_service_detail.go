@@ -475,9 +475,9 @@ func openAllSvcsSelectedRow(parent HWND) {
 	showServiceDetailDialog(hwndMain, s)
 }
 
-// showAllServicesDlg opens the unified View All Services dialog.
+// showAllServicesDialog opens the unified View All Services dialog.
 // Called from the Tools > View All Services menu item.
-func showAllServicesDlg(parent HWND) {
+func showAllServicesDialog(parent HWND) {
 	if len(svcTabData) == 0 {
 		messageBox(parent,
 			"No services have been discovered yet.\n\n"+

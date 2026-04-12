@@ -82,17 +82,6 @@ var connWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 			}
 		case idConnRefresh:
 			connDialogRefresh()
-		case idConnCopyLocal:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndConnList, 1))
-		case idConnCopyRemote:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndConnList, 2))
-		case idConnCopyProcess:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndConnList, 5))
-		case idConnCopyRow:
-			row := int32(sendMessage(hwndConnList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-			if row >= 0 {
-				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndConnList, row, int32(len(connColTitles))))
-			}
 		}
 		return 0
 

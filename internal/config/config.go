@@ -192,18 +192,6 @@ func loadFile(path string) (Config, error) {
 	return cfg, err
 }
 
-func writeDefault(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprint(f, defaultTOML)
-	return err
-}
 
 // Save writes cfg to the user config directory as TOML.
 // The file is created if it does not exist; an existing file is overwritten.
@@ -260,37 +248,3 @@ func parseDurationOr(s string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// defaultTOML is the starter file written on first run.
-const defaultTOML = `# net-scope configuration
-# All durations use Go syntax: "1s", "500ms", "2m", etc.
-
-[scan]
-# Per-host probe timeout.
-timeout = "1s"
-
-# Maximum concurrent host probes.
-concurrency = 256
-
-# TCP ports to scan on every alive host.
-ports = [21, 22, 23, 25, 80, 443, 445, 3389, 8080, 8443]
-
-# Skip TCP scan on hosts that don't respond to ICMP ping.
-ping_first = true
-
-# How long to listen for mDNS/SSDP broadcast traffic.
-# Set to "0s" to disable.
-broadcast_listen = "3s"
-
-# SNMP v2c community string. Empty string disables SNMP.
-snmp_community = "public"
-
-# Network interface for ARP scanning (e.g. "eth0", "Ethernet").
-# Leave empty to auto-detect from the target subnet.
-interface = ""
-
-# Grab service banners from open ports (HTTP Server header, SSH version, FTP/SMTP greeting).
-banner_grab = true
-
-# Query NetBIOS Name Service (UDP 137) for Windows computer names.
-netbios = true
-`

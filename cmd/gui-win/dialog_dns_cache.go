@@ -85,30 +85,6 @@ var dnsCacheWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			dnsCacheDialogRefresh()
 		case idDNSClearAll:
 			dnsConfirmClearAll(HWND(hwnd))
-		case idDNSCopyName:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndDNSList, 0))
-		case idDNSCopyType:
-			copyToClipboard(HWND(hwnd), listViewSelectedText(hwndDNSList, 1))
-		case idDNSCopyRow:
-			row := int32(sendMessage(hwndDNSList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
-			if row >= 0 {
-				copyToClipboard(HWND(hwnd), listViewGetRowTSV(hwndDNSList, row, int32(len(dnsColTitles))))
-			}
-		case idDNSDeleteEntry:
-			rows := listViewGetSelectedRows(hwndDNSList)
-			if len(rows) == 0 {
-				break
-			}
-			if !serviceRunning() {
-				messageBox(HWND(hwnd), "Sensor service is not running. Start the sensor and try again.", "DNS Cache", MB_ICONINFORMATION)
-				break
-			}
-			for _, r := range rows {
-				name := listViewGetCellText(hwndDNSList, r, 0)
-				if name != "" {
-					requestDNSDelete(name)
-				}
-			}
 		}
 		return 0
 
