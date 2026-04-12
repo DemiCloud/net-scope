@@ -131,7 +131,7 @@ var (
 
 	// dhcpAllEvents is the backing store for DHCP filter repopulation.
 	// Every DHCP event is appended here when received, before being rendered.
-	dhcpAllEvents []scan.DHCPEvent
+	dhcpAllEvents []netinfo.DHCPEvent
 
 	// netEvents is the chronological event log shown in the Network tab body.
 	// Appended on the UI thread inside the WM_BCAST_SVC handler; never cleared.
@@ -186,7 +186,7 @@ var (
 	pendingListenerMsgsMu sync.Mutex
 
 	// DHCP event queue: service goroutine appends, UI thread reads via WM_DHCP_EVENT.
-	pendingDHCP   []scan.DHCPEvent
+	pendingDHCP   []netinfo.DHCPEvent
 	pendingDHCPMu sync.Mutex
 
 	// Host enrichment queue: background goroutines append NetBIOS names / ARP MACs
@@ -216,12 +216,12 @@ var (
 
 	// pendingARPSnap carries ARP snapshot entries from the sensor service
 	// to the ARP Cache dialog via WM_ARP_SNAP_ENTRY.
-	pendingARPSnap   []scan.ARPResult
+	pendingARPSnap   []netinfo.ARPResult
 	pendingARPSnapMu sync.Mutex
 
 	// pendingDNSSnap carries DNS cache snapshot entries from the sensor service
 	// to the DNS Cache dialog via WM_DNS_SNAP_ENTRY.
-	pendingDNSSnap   []scan.DNSCacheEntry
+	pendingDNSSnap   []netinfo.DNSCacheEntry
 	pendingDNSSnapMu sync.Mutex
 
 	// pendingCacheOps carries cache operation results (arp-delete/clear,
@@ -231,22 +231,22 @@ var (
 
 	// pendingRouteSnap carries routing-table entries from the sensor service
 	// to the Route Table dialog via WM_ROUTE_SNAP_ENTRY.
-	pendingRouteSnap   []scan.RouteEntry
+	pendingRouteSnap   []netinfo.RouteEntry
 	pendingRouteSnapMu sync.Mutex
 
 	// pendingSocketSnap carries socket entries from the sensor service
 	// to the Active Connections dialog via WM_SOCKET_SNAP_ENTRY.
-	pendingSocketSnap   []scan.SocketEntry
+	pendingSocketSnap   []netinfo.SocketEntry
 	pendingSocketSnapMu sync.Mutex
 
 	// pendingHostsSnap carries hosts-file entries from the sensor service
 	// to the Hosts File dialog via WM_HOSTS_SNAP_ENTRY.
-	pendingHostsSnap   []scan.HostsEntry
+	pendingHostsSnap   []netinfo.HostsEntry
 	pendingHostsSnapMu sync.Mutex
 
 	// pendingIfSnap carries local-interface entries from the sensor service
 	// to the Interfaces dialog via WM_IF_SNAP_ENTRY.
-	pendingIfSnap   []scan.InterfaceEntry
+	pendingIfSnap   []netinfo.InterfaceEntry
 	pendingIfSnapMu sync.Mutex
 
 	// hostRegistry accumulates data about every host seen across all scans
@@ -304,7 +304,7 @@ type hostEntry struct {
 	LastSeen     time.Time
 	Result       scan.Result      // latest scan data (zero-value for broadcast-only hosts)
 	HasResult    bool              // true once a scan result has been recorded
-	DHCPEvents   []scan.DHCPEvent // all DHCP packets observed for this IP
+	DHCPEvents   []netinfo.DHCPEvent // all DHCP packets observed for this IP
 	ExtraServices []scan.ServiceInfo // broadcast services not yet in Result.Services
 	// ProbeResults accumulates on-demand probe results for the session.
 	// Persists across host-detail dialog close/reopen until the host is forgotten.
@@ -489,7 +489,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DHCP_EVENT:
 		pendingDHCPMu.Lock()
-		var evt scan.DHCPEvent
+		var evt netinfo.DHCPEvent
 		if int(wParam) < len(pendingDHCP) {
 			evt = pendingDHCP[int(wParam)]
 		}
@@ -1258,7 +1258,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_ARP_SNAP_ENTRY:
 		pendingARPSnapMu.Lock()
-		var entry scan.ARPResult
+		var entry netinfo.ARPResult
 		if int(wParam) < len(pendingARPSnap) {
 			entry = pendingARPSnap[int(wParam)]
 		}
@@ -1274,7 +1274,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_DNS_SNAP_ENTRY:
 		pendingDNSSnapMu.Lock()
-		var entry scan.DNSCacheEntry
+		var entry netinfo.DNSCacheEntry
 		if int(wParam) < len(pendingDNSSnap) {
 			entry = pendingDNSSnap[int(wParam)]
 		}
@@ -1290,7 +1290,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_ROUTE_SNAP_ENTRY:
 		pendingRouteSnapMu.Lock()
-		var entry scan.RouteEntry
+		var entry netinfo.RouteEntry
 		if int(wParam) < len(pendingRouteSnap) {
 			entry = pendingRouteSnap[int(wParam)]
 		}
@@ -1306,7 +1306,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_SOCKET_SNAP_ENTRY:
 		pendingSocketSnapMu.Lock()
-		var entry scan.SocketEntry
+		var entry netinfo.SocketEntry
 		if int(wParam) < len(pendingSocketSnap) {
 			entry = pendingSocketSnap[int(wParam)]
 		}
@@ -1322,7 +1322,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_HOSTS_SNAP_ENTRY:
 		pendingHostsSnapMu.Lock()
-		var entry scan.HostsEntry
+		var entry netinfo.HostsEntry
 		if int(wParam) < len(pendingHostsSnap) {
 			entry = pendingHostsSnap[int(wParam)]
 		}
@@ -1338,7 +1338,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_IF_SNAP_ENTRY:
 		pendingIfSnapMu.Lock()
-		var entry scan.InterfaceEntry
+		var entry netinfo.InterfaceEntry
 		if int(wParam) < len(pendingIfSnap) {
 			entry = pendingIfSnap[int(wParam)]
 		}
@@ -1868,7 +1868,7 @@ func repopulateDHCP(hwnd HWND, filter string) {
 }
 
 // dhcpEventMatchesFilter reports whether any field of evt contains filter.
-func dhcpEventMatchesFilter(evt scan.DHCPEvent, filter string) bool {
+func dhcpEventMatchesFilter(evt netinfo.DHCPEvent, filter string) bool {
 	return strings.Contains(strings.ToLower(evt.ClientMAC), filter) ||
 		strings.Contains(strings.ToLower(evt.Hostname), filter) ||
 		strings.Contains(strings.ToLower(evt.ClientIP), filter) ||
@@ -2069,7 +2069,7 @@ func startScan(hwnd HWND) {
 	}
 
 	// WAN safety: warn if the target is not an RFC1918 / private range.
-	if !scan.IsPrivate(target) {
+	if !netinfo.IsPrivate(target) {
 		r := messageBox(hwnd,
 			"Target \""+target+"\" is not a private/RFC1918 address.\n\n"+
 				"Scanning hosts you do not own may violate laws or terms of service.\n\n"+
@@ -2241,7 +2241,7 @@ func rescanSingleHost(hwnd HWND, ip string) {
 // If multiple are found, a popup menu lets the user pick one.
 // Called from the UI thread only.
 func detectSubnet(hwnd HWND) {
-	subnets := scan.DetectLocalSubnets()
+	subnets := netinfo.DetectLocalSubnets()
 	switch len(subnets) {
 	case 0:
 		messageBox(hwnd, "No private IPv4 interface detected.\n\nConnect to a network and try again.",
