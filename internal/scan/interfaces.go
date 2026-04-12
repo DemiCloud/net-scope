@@ -9,21 +9,49 @@ import (
 // addressing state.  All fields except Name and State may be zero/empty when
 // the information is not available on a given platform.
 type InterfaceEntry struct {
-	Name     string   `json:"name"`
-	Index    int      `json:"index"`
-	MAC      string   `json:"mac,omitempty"`
-	Addrs4   []string `json:"addrs4,omitempty"`   // IPv4 CIDR addresses, e.g. "192.168.1.2/24"
-	Addrs6   []string `json:"addrs6,omitempty"`   // IPv6 CIDR addresses, e.g. "fe80::1/64"
-	Gateway4 string   `json:"gateway4,omitempty"` // best-effort default IPv4 gateway
+	// Core identity (always populated).
+	Name  string `json:"name"`
+	Index int    `json:"index"`
+	MAC   string `json:"mac,omitempty"`
+	State string `json:"state"` // "up" or "down"
+	Type  string `json:"type"`  // "ethernet", "wifi", "loopback", "tunnel", "virtual", "other"
+
+	// Addressing.
+	Addrs4   []string `json:"addrs4,omitempty"`   // IPv4 CIDR, e.g. "192.168.1.2/24"
+	Addrs6   []string `json:"addrs6,omitempty"`   // IPv6 CIDR, e.g. "fe80::1/64"
+	Gateway4 string   `json:"gateway4,omitempty"` // default IPv4 gateway
 	MTU      int      `json:"mtu,omitempty"`
-	State    string   `json:"state"` // "up" or "down"
-	Type     string   `json:"type"`  // "ethernet", "wifi", "loopback", "tunnel", "virtual", "other"
+
+	// Capability flags (from net.Interface.Flags).
+	Multicast    bool `json:"multicast,omitempty"`
+	Broadcast    bool `json:"broadcast,omitempty"`
+	PointToPoint bool `json:"pointtopoint,omitempty"`
+
+	// Platform-enriched identity / config.
+	Description    string   `json:"description,omitempty"`      // hardware description / friendly name
+	OperState      string   `json:"oper_state,omitempty"`        // granular operational state
+	Speed          int64    `json:"speed,omitempty"`             // link speed in Mbps; 0 = unknown
+	Duplex         string   `json:"duplex,omitempty"`            // "full", "half", or ""
+	DNSServers     []string `json:"dns_servers,omitempty"`       // per-interface (or system) DNS servers
+	DNSSuffix      string   `json:"dns_suffix,omitempty"`        // connection-specific DNS suffix
+	DHCPEnabled    bool     `json:"dhcp_enabled,omitempty"`      // DHCP enabled for IPv4
+	DHCPServer     string   `json:"dhcp_server,omitempty"`       // DHCP server address
+	DHCPLeaseExpiry string  `json:"dhcp_lease_expiry,omitempty"` // RFC3339 lease expiry, or ""
+
+	// Traffic counters (point-in-time snapshot).
+	RXBytes   uint64 `json:"rx_bytes,omitempty"`
+	TXBytes   uint64 `json:"tx_bytes,omitempty"`
+	RXPackets uint64 `json:"rx_packets,omitempty"`
+	TXPackets uint64 `json:"tx_packets,omitempty"`
+	RXErrors  uint64 `json:"rx_errors,omitempty"`
+	TXErrors  uint64 `json:"tx_errors,omitempty"`
+	RXDropped uint64 `json:"rx_dropped,omitempty"`
+	TXDropped uint64 `json:"tx_dropped,omitempty"`
 }
 
-// ReadInterfaces returns all local network interfaces with their addresses
-// and a best-effort default gateway derived from the system route table.
-// The route table is queried once; interfaces without a matching default route
-// will have an empty Gateway4 field.
+// ReadInterfaces returns all local network interfaces with their addresses,
+// a best-effort default gateway derived from the system route table, and
+// platform-specific enrichment (speed, duplex, traffic counters, DNS, DHCP, …).
 func ReadInterfaces() []InterfaceEntry {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -72,17 +100,24 @@ func ReadInterfaces() []InterfaceEntry {
 		}
 
 		out = append(out, InterfaceEntry{
-			Name:     iface.Name,
-			Index:    iface.Index,
-			MAC:      mac,
-			Addrs4:   addrs4,
-			Addrs6:   addrs6,
-			Gateway4: gw[iface.Index],
-			MTU:      iface.MTU,
-			State:    state,
-			Type:     ifaceKind(iface),
+			Name:         iface.Name,
+			Index:        iface.Index,
+			MAC:          mac,
+			Addrs4:       addrs4,
+			Addrs6:       addrs6,
+			Gateway4:     gw[iface.Index],
+			MTU:          iface.MTU,
+			State:        state,
+			Type:         ifaceKind(iface),
+			Multicast:    iface.Flags&net.FlagMulticast != 0,
+			Broadcast:    iface.Flags&net.FlagBroadcast != 0,
+			PointToPoint: iface.Flags&net.FlagPointToPoint != 0,
 		})
 	}
+
+	// Platform-specific enrichment: speed, duplex, traffic counters, DNS, DHCP, etc.
+	enrichInterfaceEntries(out)
+
 	return out
 }
 
