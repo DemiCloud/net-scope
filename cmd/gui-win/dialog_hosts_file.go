@@ -469,7 +469,7 @@ func showAddHostEntryDialog(parent HWND) {
 		return
 	}
 	if !requestHostsAdd(hostsAddResult.ip, hostsAddResult.hostnames) {
-		messageBox(parent, "Failed to send command to sensor service.", "Hosts File", MB_ICONERROR)
+		showError(parent, ErrSendCommand, "Failed to send command to sensor service.", "Hosts File")
 	}
 }
 

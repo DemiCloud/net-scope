@@ -25,6 +25,17 @@ func crashLogPath() string {
 	return filepath.Join(dir, "net-scope-crash.log")
 }
 
+// String formats an AppErrCode as "NS-E001".
+func (c AppErrCode) String() string {
+	return fmt.Sprintf("NS-E%03d", int(c))
+}
+
+// showError displays a modal error dialog. The error code is appended as
+// "[NS-Exxx]" so users can reference it when reporting issues.
+func showError(hwnd HWND, code AppErrCode, text, caption string) {
+	messageBox(hwnd, fmt.Sprintf("%s\n\n[%s]", text, code), caption, MB_ICONERROR)
+}
+
 // writeCrashLog appends a timestamped crash entry (panic value + stack trace)
 // to the crash log file and shows a message box.
 func writeCrashLog(hwnd HWND, recovered any) {
@@ -41,5 +52,5 @@ func writeCrashLog(hwnd HWND, recovered any) {
 			"NetScope encountered an unexpected error:\n\n%v\n\nDetails saved to:\n%s",
 		recovered, path,
 	)
-		messageBox(hwnd, msg, "NetScope — Unexpected Error", MB_ICONERROR)
+	showError(hwnd, ErrCrash, msg, "NetScope — Unexpected Error")
 }

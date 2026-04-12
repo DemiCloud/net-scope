@@ -166,7 +166,7 @@ func spawnService(hwnd HWND, elevated bool) {
 
 	exe, err := os.Executable()
 	if err != nil {
-		messageBox(hwnd, "Cannot locate executable:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		showError(hwnd, ErrFindExe, "Cannot locate executable:\n"+err.Error(), "NetScope")
 		return
 	}
 
@@ -178,7 +178,7 @@ func spawnService(hwnd HWND, elevated bool) {
 	// All session traffic is encrypted (TLS 1.3).
 	tcpLn, tlsCfg, fingerprint, err := scan.NewServiceTLS()
 	if err != nil {
-		messageBox(hwnd, "Cannot create service listener:\n"+err.Error(), "NetScope", MB_ICONERROR)
+		showError(hwnd, ErrCreateListener, "Cannot create service listener:\n"+err.Error(), "NetScope")
 		return
 	}
 	tlsLn := tls.NewListener(tcpLn, tlsCfg)

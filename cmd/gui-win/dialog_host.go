@@ -1326,7 +1326,7 @@ func allHostsDoAction(dlg HWND, ip string, action int32) {
 			return
 		}
 		if err := os.WriteFile(path, []byte(buildHostSummary(ip)), 0o644); err != nil {
-			messageBox(dlg, "Could not write file:\n"+err.Error(), "Export Error", MB_OK)
+			showError(dlg, ErrWriteFile, "Could not write file:\n"+err.Error(), "Export Error")
 		}
 	}
 }

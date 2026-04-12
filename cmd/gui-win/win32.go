@@ -200,6 +200,30 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
+// Application error codes
+// ---------------------------------------------------------------------------
+
+// AppErrCode is a numbered error identifier shown in error dialogs.
+// The code appears as "[NS-Exxx]" so users can reference it when reporting
+// issues even without a crash log.
+type AppErrCode int
+
+const (
+	ErrRegisterClass  AppErrCode = 1  // RegisterClassEx failed on startup
+	ErrCreateWindow   AppErrCode = 2  // CreateWindowEx failed on startup
+	ErrFindExe        AppErrCode = 10 // could not locate own executable
+	ErrCreateListener AppErrCode = 11 // could not create TLS service listener
+	ErrSendCommand    AppErrCode = 20 // IPC send to sensor service failed
+	ErrProxy          AppErrCode = 30 // cannot reach configured proxy
+	ErrSaveSettings   AppErrCode = 40 // config file write failed
+	ErrCreateFile     AppErrCode = 50 // could not create export file
+	ErrExport         AppErrCode = 51 // export write failed
+	ErrWriteFile      AppErrCode = 52 // could not write host-detail export file
+	ErrCacheOp        AppErrCode = 60 // cache operation (ARP/DNS/route) failed
+	ErrCrash          AppErrCode = 90 // unhandled panic / unexpected error
+)
+
+// ---------------------------------------------------------------------------
 // Elevation helper
 // ---------------------------------------------------------------------------
 

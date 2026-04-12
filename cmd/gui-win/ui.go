@@ -947,7 +947,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		enableWindow(hwndProxyCheck, true)
 		sendMessage(hwndProxyCheck, BM_SETCHECK, BST_UNCHECKED, 0)
 		setWindowText(hwndScanStatus, "Ready to scan")
-		messageBox(HWND(hwnd), "Cannot reach proxy:\n"+errMsg, "Proxy Mode", MB_ICONERROR)
+		showError(HWND(hwnd), ErrProxy, "Cannot reach proxy:\n"+errMsg, "Proxy Mode")
 		return 0
 
 	case WM_HOST_RESCAN:
@@ -2468,7 +2468,7 @@ func doExport(hwnd HWND, results []scan.Result, format string) {
 
 	f, err := os.Create(path)
 	if err != nil {
-		messageBox(hwnd, "Could not create file:\n"+err.Error(), "Export Error", 0)
+		showError(hwnd, ErrCreateFile, "Could not create file:\n"+err.Error(), "Export Error")
 		return
 	}
 	defer f.Close()
@@ -2479,7 +2479,7 @@ func doExport(hwnd HWND, results []scan.Result, format string) {
 		err = scan.WriteCSV(f, results)
 	}
 	if err != nil {
-		messageBox(hwnd, "Export failed:\n"+err.Error(), "Export Error", 0)
+		showError(hwnd, ErrExport, "Export failed:\n"+err.Error(), "Export Error")
 		return
 	}
 	messageBox(hwnd, "Exported "+fmt.Sprintf("%d", len(results))+" hosts to:\n"+path, "Export Complete", 0)
@@ -2951,7 +2951,7 @@ func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 		if errMsg == "" {
 			errMsg = "Unknown error"
 		}
-		messageBox(hwnd, "Operation failed:\n"+errMsg, "Cache", MB_ICONERROR)
+		showError(hwnd, ErrCacheOp, "Operation failed:\n"+errMsg, "Cache")
 		return
 	}
 	switch op.Op {
