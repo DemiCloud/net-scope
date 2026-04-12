@@ -55,6 +55,28 @@ func probeSteamA2S(_ context.Context, ip string, port int, dial scan.DialFunc, e
 		return nil, nil
 	}
 
+	// 0x41 = challenge response (Valve anti-DDoS, introduced 2021).
+	// Server sends: 0xFFFFFFFF 0x41 <4-byte challenge>.
+	// We must resend the request with the challenge appended.
+	if buf[4] == 0x41 {
+		if n < 9 {
+			emit("Malformed challenge response (too short)")
+			return nil, nil
+		}
+		challenge := buf[5:9]
+		emit("Received A2S challenge — resending with challenge token…")
+		challengedReq := append(a2sInfoRequest, challenge...)
+		if _, err := conn.Write(challengedReq); err != nil {
+			emit("Challenge resend failed: " + err.Error())
+			return nil, nil
+		}
+		n, err = conn.Read(buf)
+		if err != nil || n < 6 {
+			emit("No A2S_INFO response after challenge — server may have rejected it")
+			return nil, nil
+		}
+	}
+
 	// Response: 4-byte header (0xFFFFFFFF) + 0x49 (INFO) + payload.
 	if buf[4] != 0x49 {
 		emit(fmt.Sprintf("Unexpected response byte: 0x%02X (expected 0x49 for A2S_INFO)", buf[4]))
