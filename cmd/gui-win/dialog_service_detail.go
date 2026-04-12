@@ -479,10 +479,10 @@ func openAllSvcsSelectedRow(parent HWND) {
 // Called from the Tools > View All Services menu item.
 func showAllServicesDialog(parent HWND) {
 	if len(svcTabData) == 0 {
-		messageBox(parent,
+		showInfo(parent,
 			"No services have been discovered yet.\n\n"+
 				"Run a scan with Banner Grab enabled, or wait for mDNS / SSDP / WSD traffic.",
-			"All Services", MB_OK)
+			"All Services")
 		return
 	}
 
