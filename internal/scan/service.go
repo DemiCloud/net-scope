@@ -180,7 +180,7 @@ type PTRResult struct {
 type ProbeHostResult struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port,omitempty"`
-	Protocol string `json:"protocol,omitempty"` // human-readable probe name, e.g. "SMTP [EHLO]"
+	Protocol string `json:"protocol,omitempty"` // human-readable probe name, e.g. "SMTP"
 }
 
 // ResolveResult carries the result of a forward DNS lookup ("resolve" command).
@@ -704,11 +704,26 @@ func RunServiceConn(conn net.Conn) error {
 							svcReg[key] = s
 						}
 						s.LastSeen = now
-						// Seed the service name from the probe if not yet set.
-						if s.Name == "" {
-							s.Name = dp.Name
-						}
+						// A probe may emit obs("probe", "service_name", ...) to supply a
+						// dynamic display name (e.g. Steam reads the game title from the
+						// A2S response). These observations are consumed here and not
+						// stored in s.Obs — they are a naming side-channel only.
+						dynSvcName := ""
+						var filteredObs []Observation
 						for _, o := range obs {
+							if o.Source == "probe" && o.Key == "service_name" {
+								dynSvcName = o.Value
+							} else {
+								filteredObs = append(filteredObs, o)
+							}
+						}
+						// Priority: dynamic (probe-computed) > static (dp.ServiceName) > existing name.
+						if dynSvcName != "" {
+							s.Name = dynSvcName
+						} else if s.Name == "" && dp.ServiceName != "" {
+							s.Name = dp.ServiceName
+						}
+						for _, o := range filteredObs {
 							s.Obs = upsertObs(s.Obs, o.Source, o.Key, o.Value)
 						}
 						ApplySignatures(s)
@@ -717,10 +732,14 @@ func RunServiceConn(conn net.Conn) error {
 						_ = safeSend(ServiceMsg{SvcUpdate: &clone})
 
 						// Tell the GUI to add this IP to the Hosts tab.
+						svcNameForProto := dp.ServiceName
+						if svcNameForProto == "" {
+							svcNameForProto = dp.Name
+						}
 						_ = safeSend(ServiceMsg{ProbeHost: &ProbeHostResult{
 							IP:       probeIP,
 							Port:     port,
-							Protocol: dp.Name,
+							Protocol: svcNameForProto,
 						}})
 						// Queue for PTR resolution so the host gets a hostname.
 						select {

@@ -13,26 +13,32 @@ import (
 func registerDatabase() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "redis", Group: "Database", Name: "Redis [PING]",
+		ServiceName: "Redis Server",
 		DefaultPort: 6379, Transport: "TCP", Run: probeRedis,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "mysql", Group: "Database", Name: "MySQL [Handshake]",
+		ServiceName: "MySQL Server",
 		DefaultPort: 3306, Transport: "TCP", Run: probeMySQL,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "mongodb", Group: "Database", Name: "MongoDB [hello]",
+		ServiceName: "MongoDB Server",
 		DefaultPort: 27017, Transport: "TCP", Run: probeMongoDB,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "postgres", Group: "Database", Name: "PostgreSQL [Auth]",
+		ServiceName: "PostgreSQL Server",
 		DefaultPort: 5432, Transport: "TCP", Run: probePostgres,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "memcached", Group: "Database", Name: "Memcached [stats]",
+		ServiceName: "Memcached Server",
 		DefaultPort: 11211, Transport: "TCP", Run: probeMemcached,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "elasticsearch", Group: "Database", Name: "Elasticsearch [Health]",
+		ServiceName: "Elasticsearch Server",
 		DefaultPort: 9200, Transport: "TCP", Run: probeElasticsearch,
 	})
 }

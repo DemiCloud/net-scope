@@ -14,14 +14,17 @@ import (
 func registerGaming() {
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "steam-a2s", Group: "Gaming / Media", Name: "Steam [A2S_INFO]",
+		ServiceName: "Game Server",
 		DefaultPort: 27015, Transport: "UDP", Run: probeSteamA2S,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "minecraft", Group: "Gaming / Media", Name: "Minecraft [Status]",
+		ServiceName: "Minecraft Server",
 		DefaultPort: 25565, Transport: "TCP", Run: probeMinecraft,
 	})
 	scan.RegisterDeepProbe(scan.DeepProbe{
 		ID: "rtsp", Group: "Gaming / Media", Name: "RTSP [OPTIONS]",
+		ServiceName: "Media Server",
 		DefaultPort: 554, Transport: "TCP", Run: probeRTSP,
 	})
 }
@@ -112,6 +115,14 @@ func probeSteamA2S(_ context.Context, ip string, port int, dial scan.DialFunc, e
 	result = append(result, obs("probe", "steam_name", name))
 	result = append(result, obs("probe", "steam_map", mapName))
 	result = append(result, obs("probe", "steam_game", game))
+
+	// Emit a specific service name for the Services tab.
+	// The game field from the A2S response names the running game (e.g. "Counter-Strike 2").
+	svcName := "Game Server"
+	if game != "" {
+		svcName = game + " Game Server"
+	}
+	result = append(result, obs("probe", "service_name", svcName))
 
 	if off+4 <= n {
 		players := int(buf[off])
