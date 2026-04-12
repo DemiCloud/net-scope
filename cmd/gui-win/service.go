@@ -64,6 +64,10 @@ var (
 	// hwndHostsDialogAtomic holds the HWND of the currently-open Hosts File
 	// dialog, or 0.
 	hwndHostsDialogAtomic uintptr
+
+	// hwndInterfacesDialogAtomic holds the HWND of the currently-open Local
+	// Interfaces dialog, or 0.
+	hwndInterfacesDialogAtomic uintptr
 )
 
 // serviceRunning returns true if there is a live service connection.
@@ -337,6 +341,18 @@ func spawnService(hwnd HWND, elevated bool) {
 			} else if m.HostsSnapDone {
 				if atomic.LoadUintptr(&hwndHostsDialogAtomic) != 0 {
 					postMessage(hwnd, WM_HOSTS_SNAP_DONE, 0, 0)
+				}
+			} else if m.IfEntry != nil {
+				if atomic.LoadUintptr(&hwndInterfacesDialogAtomic) != 0 {
+					pendingIfSnapMu.Lock()
+					idx := len(pendingIfSnap)
+					pendingIfSnap = append(pendingIfSnap, *m.IfEntry)
+					pendingIfSnapMu.Unlock()
+					postMessage(hwnd, WM_IF_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.IfSnapDone {
+				if atomic.LoadUintptr(&hwndInterfacesDialogAtomic) != 0 {
+					postMessage(hwnd, WM_IF_SNAP_DONE, 0, 0)
 				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
@@ -640,4 +656,11 @@ func requestHostsAdd(ip string, hostnames []string) bool {
 // The result arrives as WM_CACHE_OP (op = "hosts-delete").
 func requestHostsDelete(target string) bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "hosts-delete", Target: target})
+}
+
+// requestIfSnapshot sends an "if-snapshot" command; entries arrive as
+// WM_IF_SNAP_ENTRY followed by WM_IF_SNAP_DONE.
+// Returns false if the service is not running.
+func requestIfSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "if-snapshot"})
 }

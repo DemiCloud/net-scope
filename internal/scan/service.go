@@ -34,6 +34,7 @@ type ServiceCmd struct {
 	// "route-snapshot", "route-delete",
 	// "socket-snapshot",
 	// "hosts-snapshot", "hosts-add", "hosts-delete",
+	// "if-snapshot",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -108,6 +109,10 @@ type ServiceMsg struct {
 	HostsEntry    *HostsEntry `json:"hosts_entry,omitempty"`
 	// HostsSnapDone signals the end of a "hosts-snapshot" stream.
 	HostsSnapDone bool        `json:"hosts_snap_done,omitempty"`
+	// IfEntry carries a single local network interface from an "if-snapshot" stream.
+	IfEntry    *InterfaceEntry `json:"if_entry,omitempty"`
+	// IfSnapDone signals the end of an "if-snapshot" stream.
+	IfSnapDone bool            `json:"if_snap_done,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -879,6 +884,16 @@ func RunServiceConn(conn net.Conn) error {
 				}
 			}
 			_ = safeSend(ServiceMsg{HostsSnapDone: true})
+
+		case "if-snapshot":
+			// One-shot: stream all local network interfaces and signal completion.
+			for _, e := range ReadInterfaces() {
+				entry := e
+				if werr := safeSend(ServiceMsg{IfEntry: &entry}); werr != nil {
+					return werr
+				}
+			}
+			_ = safeSend(ServiceMsg{IfSnapDone: true})
 
 		case "hosts-add":
 			if cmd.HostsAdd == nil {
