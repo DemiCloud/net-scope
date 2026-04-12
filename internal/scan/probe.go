@@ -1,7 +1,6 @@
 package scan
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -148,25 +147,9 @@ func probeTCPStatus(ctx context.Context, ip string, port int, timeout time.Durat
 }
 
 // probeSSHBanner connects to ip:port and reads the SSH identification string.
+// Delegates to grabSSHOnPort so context-deadline handling is consistent.
 func probeSSHBanner(ctx context.Context, ip net.IP, port int, timeout time.Duration, dial DialFunc) string {
-	conn, err := dialOrDirect(dial)(ctx, "tcp",
-		net.JoinHostPort(ip.String(), strconv.Itoa(port)))
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout)) //nolint:errcheck
-	sc := bufio.NewScanner(conn)
-	if sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "SSH-") {
-			if parts := strings.SplitN(line, "-", 3); len(parts) == 3 {
-				return parts[2]
-			}
-		}
-		return line
-	}
-	return ""
+	return grabSSHOnPort(ctx, ip, port, timeout, dial)
 }
 
 // probeRDP connects to ip:port and checks for a TPKT first byte (0x03).
