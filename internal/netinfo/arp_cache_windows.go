@@ -23,6 +23,56 @@ type mibIPNetRow struct {
 	Type        uint32  // 1=other 2=invalid 3=dynamic 4=static
 }
 
+// fetchIPNetTable calls GetIpNetTable twice (size-query then data-query) and
+// returns the raw buffer on success, or nil on error. It retries up to 3 times
+// if the table grows between the two calls (TOCTOU ERROR_INSUFFICIENT_BUFFER).
+func fetchIPNetTable() []byte {
+	var size uint32
+	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
+	const errInsufficientBuffer = 122
+	if r != 0 && r != errInsufficientBuffer {
+		return nil
+	}
+	if size == 0 {
+		return nil
+	}
+	for range 3 {
+		buf := make([]byte, size)
+		r, _, _ = procGetIpNetTable.Call(
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(unsafe.Pointer(&size)),
+			0,
+		)
+		if r == 0 {
+			return buf
+		}
+		if r != errInsufficientBuffer {
+			return nil
+		}
+		// size was updated by the failed call; retry with the new value.
+	}
+	return nil
+}
+
+// forIPNetRows calls fn for each MIB_IPNETROW in buf (a GetIpNetTable result).
+// If fn returns false, iteration stops.
+func forIPNetRows(buf []byte, fn func(*mibIPNetRow) bool) {
+	if len(buf) < 4 {
+		return
+	}
+	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
+	rowSize := unsafe.Sizeof(mibIPNetRow{})
+	for i := uint32(0); i < numEntries; i++ {
+		off := uintptr(4) + uintptr(i)*rowSize
+		if off+rowSize > uintptr(len(buf)) {
+			break
+		}
+		if !fn((*mibIPNetRow)(unsafe.Pointer(&buf[off]))) {
+			return
+		}
+	}
+}
+
 // LookupARPCache tries two strategies in order:
 //  1. Read the Windows ARP neighbor table (GetIpNetTable) — populated as a side-effect
 //     of the ICMP ping, no network I/O, fast.
@@ -34,11 +84,7 @@ func LookupARPCache(ip net.IP) net.HardwareAddr {
 	if ip4 == nil {
 		return nil
 	}
-	// Encode as the uint32 value we will read back from mibIPNetRow.Addr on LE Windows:
-	//   bytes in memory = [ip4[0], ip4[1], ip4[2], ip4[3]]  (network byte order)
-	//   uint32 on LE    = ip4[0] | ip4[1]<<8 | ip4[2]<<16 | ip4[3]<<24
-	target := uint32(ip4[0]) | uint32(ip4[1])<<8 | uint32(ip4[2])<<16 | uint32(ip4[3])<<24
-
+	target := ip4ToLE(ip4)
 	if mac := readARPTable(target); mac != nil {
 		return mac
 	}
@@ -47,42 +93,21 @@ func LookupARPCache(ip net.IP) net.HardwareAddr {
 
 // readARPTable queries GetIpNetTable and returns the MAC for target, or nil.
 func readARPTable(target uint32) net.HardwareAddr {
-	// First call: get required buffer size.
-	var size uint32
-	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
-	const errInsufficientBuffer = 122
-	if r != 0 && r != errInsufficientBuffer {
+	buf := fetchIPNetTable()
+	if buf == nil {
 		return nil
 	}
-	if size == 0 {
-		return nil
-	}
-
-	buf := make([]byte, size)
-	r, _, _ = procGetIpNetTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		0, // bOrder=FALSE (unsorted)
-	)
-	if r != 0 {
-		return nil
-	}
-
-	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
-	rowSize := unsafe.Sizeof(mibIPNetRow{})
-	for i := uint32(0); i < numEntries; i++ {
-		off := uintptr(4) + uintptr(i)*rowSize
-		if off+rowSize > uintptr(len(buf)) {
-			break
-		}
-		row := (*mibIPNetRow)(unsafe.Pointer(&buf[off]))
+	var found net.HardwareAddr
+	forIPNetRows(buf, func(row *mibIPNetRow) bool {
 		if row.Addr == target && row.PhysAddrLen == 6 && row.Type != 2 {
 			mac := make(net.HardwareAddr, 6)
 			copy(mac, row.PhysAddr[:6])
-			return mac
+			found = mac
+			return false // stop iteration
 		}
-	}
-	return nil
+		return true
+	})
+	return found
 }
 
 // sendARPRequest uses the Windows SendARP API to send an ARP request.
@@ -111,37 +136,15 @@ func sendARPRequest(target uint32) net.HardwareAddr {
 // interface-index metadata. Entries with invalid MACs or type=invalid are
 // skipped. Returns nil on any error.
 func ReadARPTableFull() []ARPResult {
-	var size uint32
-	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
-	const errInsufficientBuffer = 122
-	if r != 0 && r != errInsufficientBuffer {
+	buf := fetchIPNetTable()
+	if buf == nil {
 		return nil
 	}
-	if size == 0 {
-		return nil
-	}
-	buf := make([]byte, size)
-	r, _, _ = procGetIpNetTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		0,
-	)
-	if r != 0 {
-		return nil
-	}
-	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
-	rowSize := unsafe.Sizeof(mibIPNetRow{})
-	out := make([]ARPResult, 0, numEntries)
-	for i := uint32(0); i < numEntries; i++ {
-		off := uintptr(4) + uintptr(i)*rowSize
-		if off+rowSize > uintptr(len(buf)) {
-			break
-		}
-		row := (*mibIPNetRow)(unsafe.Pointer(&buf[off]))
+	var out []ARPResult
+	forIPNetRows(buf, func(row *mibIPNetRow) bool {
 		if row.Type == 2 || row.PhysAddrLen != 6 {
-			continue // skip invalid entries and non-Ethernet MACs
+			return true // skip invalid entries and non-Ethernet MACs
 		}
-		ip := net.IP{byte(row.Addr), byte(row.Addr >> 8), byte(row.Addr >> 16), byte(row.Addr >> 24)}
 		mac := make(net.HardwareAddr, 6)
 		copy(mac, row.PhysAddr[:6])
 		arpType := "other"
@@ -152,12 +155,13 @@ func ReadARPTableFull() []ARPResult {
 			arpType = "static"
 		}
 		out = append(out, ARPResult{
-			IP:      ip.String(),
+			IP:      ip4FromLE(row.Addr).String(),
 			MAC:     mac.String(),
 			Type:    arpType,
 			IfIndex: row.Index,
 		})
-	}
+		return true
+	})
 	return out
 }
 
@@ -165,42 +169,19 @@ func ReadARPTableFull() []ARPResult {
 // IPv4-string → MAC. Only valid (type 3 dynamic, type 4 static) Ethernet
 // entries are included. Returns nil on any error.
 func ReadARPTable() map[string]net.HardwareAddr {
-	var size uint32
-	r, _, _ := procGetIpNetTable.Call(0, uintptr(unsafe.Pointer(&size)), 0)
-	const errInsufficientBuffer = 122
-	if r != 0 && r != errInsufficientBuffer {
+	buf := fetchIPNetTable()
+	if buf == nil {
 		return nil
 	}
-	if size == 0 {
-		return nil
-	}
-	buf := make([]byte, size)
-	r, _, _ = procGetIpNetTable.Call(
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-		0,
-	)
-	if r != 0 {
-		return nil
-	}
-	numEntries := *(*uint32)(unsafe.Pointer(&buf[0]))
-	rowSize := unsafe.Sizeof(mibIPNetRow{})
-	out := make(map[string]net.HardwareAddr, numEntries)
-	for i := uint32(0); i < numEntries; i++ {
-		off := uintptr(4) + uintptr(i)*rowSize
-		if off+rowSize > uintptr(len(buf)) {
-			break
-		}
-		row := (*mibIPNetRow)(unsafe.Pointer(&buf[off]))
-		// Skip invalid entries and non-Ethernet MACs.
+	out := make(map[string]net.HardwareAddr)
+	forIPNetRows(buf, func(row *mibIPNetRow) bool {
 		if row.Type == 2 || row.PhysAddrLen != 6 {
-			continue
+			return true // skip invalid entries and non-Ethernet MACs
 		}
-		// Addr is in LE uint32: bytes in memory are network order.
-		ip := net.IP{byte(row.Addr), byte(row.Addr >> 8), byte(row.Addr >> 16), byte(row.Addr >> 24)}
 		mac := make(net.HardwareAddr, 6)
 		copy(mac, row.PhysAddr[:6])
-		out[ip.String()] = mac
-	}
+		out[ip4FromLE(row.Addr).String()] = mac
+		return true
+	})
 	return out
 }
