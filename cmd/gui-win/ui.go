@@ -204,6 +204,11 @@ var (
 	pendingSvcUpdates   []scan.Service
 	pendingSvcUpdatesMu sync.Mutex
 
+	// pendingProbeHosts carries ProbeHostResult messages from the sensor service
+	// back to the UI thread via WM_PROBE_HOST so the Hosts tab stays up to date.
+	pendingProbeHosts   []scan.ProbeHostResult
+	pendingProbeHostsMu sync.Mutex
+
 	// pendingWorkUpdates carries host probe state transitions from the sensor
 	// service back to the UI thread via WM_WORK_UPDATE.
 	pendingWorkUpdates   []scan.WorkItem
@@ -1217,6 +1222,39 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingSvcUpdatesMu.Unlock()
 		if s.ID != "" {
 			servicesTabUpsert(s)
+		}
+		return 0
+
+	case WM_PROBE_HOST:
+		// A manual deep probe succeeded: ensure the probed IP appears in the
+		// Hosts tab. PTR enrichment arrives separately as WM_HOST_ENRICH.
+		pendingProbeHostsMu.Lock()
+		var ph scan.ProbeHostResult
+		if int(wParam) < len(pendingProbeHosts) {
+			ph = pendingProbeHosts[int(wParam)]
+		}
+		pendingProbeHostsMu.Unlock()
+		if ph.IP == "" {
+			return 0
+		}
+		parsedIP := net.ParseIP(ph.IP)
+		if parsedIP == nil {
+			return 0
+		}
+		// Update host registry regardless of whether the IP is in the listview.
+		en := ensureHostEntry(ph.IP)
+		en.LastSeen = time.Now()
+		// Add to the Hosts tab listview if not already present.
+		if _, found := ipRowMap[ph.IP]; !found {
+			synthResult := scan.Result{IP: parsedIP, Alive: true}
+			row := listViewInsertPendingRow(hwndList, ph.IP)
+			ipRowMap[ph.IP] = row
+			listViewUpdateRow(hwndList, row, synthResult)
+			rowResultMap[row] = synthResult
+			if !listHasHosts {
+				listHasHosts = true
+				showWindow(hwndListPlaceholder, SW_HIDE)
+			}
 		}
 		return 0
 
