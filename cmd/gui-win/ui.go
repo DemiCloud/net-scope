@@ -2626,6 +2626,17 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 	} else {
 		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "ARP anomalies")
 	}
+	// Cross-reference the live ARP table for IP conflicts (one IP → multiple MACs).
+	arpConflicts := netinfo.FindARPConflicts(netinfo.ReadARPTableFull())
+	if len(arpConflicts) > 0 {
+		fmt.Fprintf(&b, "  %-28s  %5d  ← investigate — possible conflict or spoofing\r\n",
+			"Duplicate IPs (ARP table)", len(arpConflicts))
+		for _, c := range arpConflicts {
+			fmt.Fprintf(&b, "    \u2192 %-18s  %s\r\n", c.IP, strings.Join(c.MACs, "  /  "))
+		}
+	} else {
+		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "Duplicate IPs (ARP table)")
+	}
 	fmt.Fprintf(&b, "\r\n")
 
 	// Pull a snapshot of rowResultMap for breakdowns.
@@ -2747,6 +2758,7 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 	fmt.Fprintf(&b, "\r\n")
 	fmt.Fprintf(&b, sep)
 	fmt.Fprintf(&b, "  ARP anomalies are genuinely unusual and worth investigating.\r\n")
+	fmt.Fprintf(&b, "  Duplicate IPs may indicate a conflict or ARP spoofing — check both devices.\r\n")
 	fmt.Fprintf(&b, "  Hosts without PTR: no reverse DNS is normal on many networks.\r\n")
 
 	setInfoHeader(healthView, b.String())
