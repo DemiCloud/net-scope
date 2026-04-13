@@ -470,6 +470,12 @@ func spawnService(hwnd HWND, elevated bool) {
 				if h := atomic.LoadUintptr(&hwndPickDialogAtomic); h != 0 {
 					postMessage(HWND(h), WM_RESOLVE_HOST, uintptr(idx), 0)
 				}
+			} else if m.WolResult != nil {
+				pendingWolMu.Lock()
+				idx := len(pendingWolResults)
+				pendingWolResults = append(pendingWolResults, *m.WolResult)
+				pendingWolMu.Unlock()
+				postMessage(hwnd, WM_WOL_RESULT, uintptr(idx), 0)
 			}
 		}
 
@@ -747,4 +753,13 @@ func requestHostsDelete(target string) bool {
 // Returns false if the service is not running.
 func requestIfSnapshot() bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "if-snapshot"})
+}
+
+// requestWakeOnLAN asks the service to send a Wake-on-LAN magic packet.
+// mac is a MAC address string (e.g. "aa:bb:cc:dd:ee:ff") and broadcast is the
+// UDP destination (e.g. "192.168.1.255"); an empty broadcast defaults to
+// "255.255.255.255" in the service.
+// The result arrives as WM_WOL_RESULT. Returns false if the service is not running.
+func requestWakeOnLAN(mac, broadcast string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "wake", WolMAC: mac, WolBroadcast: broadcast})
 }

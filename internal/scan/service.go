@@ -38,6 +38,7 @@ type ServiceCmd struct {
 	// "socket-snapshot",
 	// "hosts-snapshot", "hosts-add", "hosts-delete",
 	// "if-snapshot",
+	// "wake",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
 	Target     string     `json:"target,omitempty"`
@@ -56,6 +57,11 @@ type ServiceCmd struct {
 	DataDir     string    `json:"data_dir,omitempty"`
 	// HostsAdd carries parameters for the "hosts-add" command.
 	HostsAdd    *HostsAddParams `json:"hosts_add,omitempty"`
+	// WolMAC is the target MAC for the "wake" command (e.g. "aa:bb:cc:dd:ee:ff").
+	WolMAC       string `json:"wol_mac,omitempty"`
+	// WolBroadcast is the UDP broadcast address for the "wake" command.
+	// Defaults to "255.255.255.255" when empty.
+	WolBroadcast string `json:"wol_broadcast,omitempty"`
 }
 
 // ServiceMsg is sent by the service to the GUI.
@@ -147,6 +153,8 @@ type ServiceMsg struct {
 	// Emitted when any long-running service worker (broadcast listener, DHCP capture,
 	// ARP poll, PTR resolver, port scanner) starts or stops.
 	WorkerStatus *WorkerStatus `json:"worker_status,omitempty"`
+	// WolResult carries the outcome of a "wake" command.
+	WolResult *WolResult `json:"wol_result,omitempty"`
 }
 
 // CacheOpResult carries the result of a cache-manipulation command:
@@ -181,6 +189,12 @@ type ProbeHostResult struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port,omitempty"`
 	Protocol string `json:"protocol,omitempty"` // human-readable probe name, e.g. "SMTP"
+}
+
+// WolResult carries the outcome of a "wake" (Wake-on-LAN) command.
+type WolResult struct {
+	MAC string `json:"mac"`
+	Err string `json:"err,omitempty"` // empty on success
 }
 
 // ResolveResult carries the result of a forward DNS lookup ("resolve" command).
@@ -958,6 +972,31 @@ func RunServiceConn(conn net.Conn) error {
 				}
 			}
 			_ = safeSend(ServiceMsg{IfSnapDone: true})
+
+		case "wake":
+			// Send a Wake-on-LAN magic packet to the given MAC / broadcast address.
+			if cmd.WolMAC == "" {
+				_ = safeSend(ServiceMsg{Err: "wake: missing MAC address"})
+				continue
+			}
+			mac := cmd.WolMAC
+			bcast := cmd.WolBroadcast
+			go func() {
+				parsed, err := net.ParseMAC(mac)
+				if err != nil {
+					_ = safeSend(ServiceMsg{WolResult: &WolResult{MAC: mac, Err: "invalid MAC: " + err.Error()}})
+					return
+				}
+				if bcast == "" {
+					bcast = "255.255.255.255"
+				}
+				err = SendWakeOnLAN(parsed, bcast)
+				errStr := ""
+				if err != nil {
+					errStr = err.Error()
+				}
+				_ = safeSend(ServiceMsg{WolResult: &WolResult{MAC: mac, Err: errStr}})
+			}()
 
 		case "hosts-add":
 			if cmd.HostsAdd == nil {

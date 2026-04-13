@@ -254,6 +254,11 @@ var (
 	pendingIfSnap   []netinfo.InterfaceEntry
 	pendingIfSnapMu sync.Mutex
 
+	// pendingWolResults carries Wake-on-LAN send results from the sensor
+	// service to the WoL dialog via WM_WOL_RESULT.
+	pendingWolResults []scan.WolResult
+	pendingWolMu      sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -900,6 +905,13 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showInterfacesDialog(HWND(hwnd))
 		case IDM_TOOLS_PROBE:
 			showProbeDialog(HWND(hwnd), "", false)
+		case IDM_TOOLS_WOL:
+			// Pre-populate MAC from the selected Scanner row if available.
+			mac := ""
+			if rows := listViewGetSelectedRows(hwndList); len(rows) > 0 {
+				mac = listViewGetCellText(hwndList, rows[0], colMAC)
+			}
+			showWoLDialog(HWND(hwnd), mac, "")
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -1394,6 +1406,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_IF_SNAP_DONE:
 		interfacesDialogLoadingDone()
+		return 0
+
+	case WM_WOL_RESULT:
+		pendingWolMu.Lock()
+		var r scan.WolResult
+		if int(wParam) < len(pendingWolResults) {
+			r = pendingWolResults[int(wParam)]
+		}
+		pendingWolMu.Unlock()
+		wolDialogHandleResult(r.MAC, r.Err)
 		return 0
 
 	case WM_CACHE_OP:
