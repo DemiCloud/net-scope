@@ -37,7 +37,7 @@
 
 ## Wake-on-LAN
 
-- [ ] **Wake-on-LAN tool** — `Tools > Wake on LAN…`: MAC address field (auto-populated from selected Scanner row if available) + optional broadcast IP (defaults to subnet broadcast derived from current target); sends the 102-byte magic packet (6× `0xFF` + 16× target MAC) as a UDP broadcast on port 9; no elevation required; show confirmation in the status bar on send
+- [x] **Wake-on-LAN tool** — `Tools > Wake on LAN…`: MAC address field (auto-populated from selected Scanner row if available) + optional broadcast IP (defaults to subnet broadcast derived from current target); sends the 102-byte magic packet (6× `0xFF` + 16× target MAC) as a UDP broadcast on port 9; no elevation required; show confirmation in the status bar on send
 
 ## MAC Vendor Lookup
 
