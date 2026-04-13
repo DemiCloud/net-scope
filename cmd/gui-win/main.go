@@ -167,6 +167,7 @@ func Run(v, target string) {
 	appendMenu(hHosts, MF_STRING, IDM_SERVICES_VIEW_ALL, "&Services\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_MAC_LOOKUP, "&MAC Vendor Lookup\u2026")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_WOL, "&Wake on LAN\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	// Cache submenu (ephemeral OS caches: ARP + DNS)
 	hCache := createPopupMenu()

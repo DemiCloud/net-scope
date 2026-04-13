@@ -41,11 +41,11 @@
 
 ## MAC Vendor Lookup
 
-- [ ] **MAC Vendor Lookup tool** — `Tools > MAC Vendor Lookup…`: MAC address input field (accepts full MAC or OUI prefix, colon/hyphen/dot-separated or plain hex); looks up the vendor string from the embedded OUI database; shows result inline in the dialog; useful for identifying unknown hardware without running a full scan
+- [x] **MAC Vendor Lookup tool** — `Tools > MAC Vendor Lookup…`: MAC address input field (accepts full MAC or OUI prefix, colon/hyphen/dot-separated or plain hex); looks up the vendor string from the embedded OUI database; shows result inline in the dialog; useful for identifying unknown hardware without running a full scan
 
 ## Network Interfaces
 
-- [ ] **Interfaces tab** — new tab listing all local NICs: adapter name, description, link speed, duplex (where exposed), driver version + date, MTU, IPv4 + IPv6 addresses, DHCP vs static, DHCPv6 state, offload capabilities (checksum offload, LSO, RSS); on Windows read via `GetAdaptersAddresses` + WMI `Win32_NetworkAdapter`; on Linux via `net.Interfaces()` + `/sys/class/net/<iface>/`
+- [x] **Interfaces dialog** (`Tools > Local Interfaces…`) — lists all local NICs with adapter name, description, link speed, duplex, MTU, IPv4/IPv6 addresses, gateway, DHCP server/lease, DNS servers/suffix, oper state, and full RX/TX traffic counters (bytes, packets, errors, dropped). Windows: `GetAdaptersAddresses` + `GetIfEntry2Ex`. Linux: `net.Interfaces()` + `/sys/class/net/<iface>/` + `/proc/net/dev`. Not yet: driver version/date, DHCPv6 state, offload capabilities.
 - [ ] **Interface flap/reset counter** — within a session, poll NIC operational state periodically; track up→down→up transitions per adapter; show flap count in the Interfaces tab; surface as a Scan Report warning if any flaps occurred during the last scan window
 
 ## Routing Diagnostics
