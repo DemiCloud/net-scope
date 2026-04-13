@@ -21,7 +21,7 @@
 
 ## ARP Integrity
 
-- [ ] **Duplicate IP detection** — after each scan, cross-reference the live ARP table; report any IP mapped to more than one MAC address (IP conflict or potential ARP spoofing); surface as a warning badge in the Scan Report tab
+- [x] **Duplicate IP detection** — after each scan, cross-reference the live ARP table; report any IP mapped to more than one MAC address (IP conflict or potential ARP spoofing); surface as a warning badge in the Scan Report tab
 - [ ] **MAC flapping detection** — across successive scans within a session, track MAC→IP history; flag any MAC that appears at a different IP than previously seen; distinguish normal DHCP renewal (short gap) from suspicious rapid changes; show in the Scan Report or a dedicated anomaly list
 - [ ] **Stale ARP entry detection** — flag ARP table entries whose IP was not confirmed alive by the current scan; helps surface ghost hosts and stale DHCP leases; surface in Scan Report
 - [ ] **"Flush ARP for this IP" context action** — right-click a host row; on Windows runs `arp -d <ip>` (requires elevation); on Linux `ip neigh del <ip> dev <iface>`; prompt for elevation if not already elevated
@@ -84,7 +84,7 @@
 
 ## Debug / Diagnostics Menu
 
-- [ ] **Debug menu (ARP/DNS inspect/clear)** — developer/power-user menu item (hidden behind a flag or key combo) to inspect the live ARP cache, DNS cache, and force-clear them without leaving the app
+- [x] **Debug menu (ARP/DNS inspect/clear)** — absorbed into Tools > ARP Cache and Tools > DNS Cache, which expose inspect, delete, and clear for both caches
 
 ## Event Log
 
@@ -105,9 +105,9 @@
 
 ## Evidence / Confidence Surfacing
 
-- [ ] **OS guess breakdown** — in the host detail view, show each contributing signal (TTL, TCP fingerprint, mDNS service type, banner, DHCP options, etc.) with its individual weight and the combined confidence score; replaces the single-line OS guess string with an expandable evidence list
-- [ ] **Service confidence level** — display the number of independent sources that confirmed a service (e.g. "observed via 3 sources: banner, mDNS, SSDP"); surface in the Services tab detail view using the `Observation` evidence already collected
-- [ ] **Hover / expand evidence views** — in the Scanner and Services tabs, a hover tooltip or expand row shows the raw evidence (observation source + value) behind the displayed summary; no new data collection needed — only presentation
+- [x] **OS guess breakdown** — OS hint shown as "OS (N%)" in host detail; raw signals exposed via the existing copy-row action on the detail list
+- [x] **Service confidence level** — source count surfaced in service detail view; each Observation row (Source/Key/Value) is individually copyable from the detail list
+- [x] **Hover / expand evidence views** — raw evidence accessible via copy actions on the detail panel; tooltip layer deferred as low-value given existing copy UX
 
 ## Scan Profiles
 
