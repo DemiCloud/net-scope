@@ -16,6 +16,11 @@ func registerDirectory() {
 		ServiceName: "Directory Server",
 		DefaultPort: 389, Transport: "TCP", Run: probeLDAPDeep,
 	})
+	scan.RegisterDeepProbe(scan.DeepProbe{
+		ID: "ldap-gc-deep", Group: "Directory", Name: "LDAP GC [RootDSE]",
+		ServiceName: "AD Global Catalog",
+		DefaultPort: 3268, Transport: "TCP", Run: probeLDAPDeep,
+	})
 }
 
 // ldapRootDSEQuery is a minimal LDAP SearchRequest for the RootDSE entry.
