@@ -10,7 +10,7 @@
 
 - [ ] **All-ports scan mode** — add a "Scan all ports (1–65535)" option; since this is 65 535 TCP probes per host it requires a proper worker-pool implementation (see below)
 - [ ] **Worker-pool port scanner** — replace the current goroutine-per-probe approach with a bounded worker pool; default concurrency = "auto" (calculated from available CPU cores and typical socket limits); expose as a Settings field so the user can cap it manually; target: no goroutine explosion even on /24 all-ports scan
-- [ ] **Safe scanning mode** — a checkbox in Settings and on the Scanner toolbar; when enabled: lower concurrency cap, longer timeouts, randomise probe order, and suppress raw-socket operations; intended for environments where aggressive scanning would trip IDS/firewalls or violate policy; default off, but recommended UI hint when not running as admin
+- [x] **Safe scanning mode** — a dropdown on the Scanner toolbar (`Aggressive / Balanced / Polite`) stored in `config.toml` as `scan.throttle_preset`; polite mode: concurrency cap 20, rate-limited to 50 probes/sec, up to 50 ms inter-probe jitter, randomised host order, raw-socket operations suppressed (`TCPFirst=true`); balanced (default) caps at 128 with no rate limit; aggressive uses full `Config.Concurrency` with no restrictions; CLI and TUI pick up the preset via `config.ToScanConfig()` automatically
 
 ## Export
 
