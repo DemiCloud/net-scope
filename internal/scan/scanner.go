@@ -65,6 +65,9 @@ type throttleSettings struct {
 	RandomiseOrder bool
 	// ForceNoRawSockets sets TCPFirst=true, disabling ICMP and ARP.
 	ForceNoRawSockets bool
+	// MaxPortConcurrency limits in-flight TCP dials within a single host's port scan.
+	// 0 means unlimited (safe for small port lists, dangerous for all-ports mode).
+	MaxPortConcurrency int
 }
 
 // resolveThrottle returns the throttle settings for the given preset string.
@@ -78,6 +81,7 @@ func resolveThrottle(preset string) throttleSettings {
 			JitterMs:          0,
 			RandomiseOrder:    false,
 			ForceNoRawSockets: false,
+			MaxPortConcurrency: 2000,
 		}
 	case ThrottlePolite:
 		return throttleSettings{
@@ -86,6 +90,7 @@ func resolveThrottle(preset string) throttleSettings {
 			JitterMs:          50,
 			RandomiseOrder:    true,
 			ForceNoRawSockets: true,
+			MaxPortConcurrency: 100,
 		}
 	default: // "balanced" or ""
 		return throttleSettings{
@@ -94,6 +99,7 @@ func resolveThrottle(preset string) throttleSettings {
 			JitterMs:          0,
 			RandomiseOrder:    false,
 			ForceNoRawSockets: false,
+			MaxPortConcurrency: 500,
 		}
 	}
 }
@@ -117,6 +123,9 @@ type Config struct {
 	// ThrottlePreset controls scan aggressiveness. One of ThrottleAggressive,
 	// ThrottleBalanced (default), or ThrottlePolite.
 	ThrottlePreset string
+	// AllPorts overrides the Ports list and scans all TCP ports 1–65535.
+	// Requires a bounded port concurrency limit (enforced via ThrottlePreset).
+	AllPorts bool
 }
 
 // DialFunc is a context-aware TCP dial function. nil means use the system default.
@@ -559,7 +568,7 @@ func (s *Scanner) liveCheck(ctx context.Context, ip net.IP, macMap map[string]ne
 	// SOCKS proxy. The full port enumeration runs later in deepProbe.
 	if !r.Alive {
 		livePorts := []int{80, 443, 22, 3389, 8080}
-		open := scanPorts(ctx, ip, livePorts, s.Config.Timeout, dial)
+			open := scanPorts(ctx, ip, livePorts, s.Config.Timeout, dial, 0)
 		if len(open) > 0 {
 			r.Alive = true
 			if r.MAC == nil && dial == nil {
@@ -595,8 +604,13 @@ func (s *Scanner) deepProbe(ctx context.Context, r Result, dial DialFunc) Result
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if len(s.Config.Ports) > 0 {
-			r.OpenPorts = scanPorts(ctx, r.IP, s.Config.Ports, s.Config.Timeout, dial)
+		ports := s.Config.Ports
+		if s.Config.AllPorts {
+			ports = allPortsRange()
+		}
+		if len(ports) > 0 {
+			portConc := resolveThrottle(s.Config.ThrottlePreset).MaxPortConcurrency
+			r.OpenPorts = scanPorts(ctx, r.IP, ports, s.Config.Timeout, dial, portConc)
 		}
 	}()
 

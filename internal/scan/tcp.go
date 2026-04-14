@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// allPortsRange returns the full list of TCP ports 1–65535.
+func allPortsRange() []int {
+	ports := make([]int, 65535)
+	for i := range ports {
+		ports[i] = i + 1
+	}
+	return ports
+}
+
 // probeTCPOpen returns true if ip:port accepts a TCP connection within timeout.
 // Lighter than scanPorts — no goroutine, no sorting, just a single dial.
 func probeTCPOpen(ctx context.Context, ip net.IP, port int, timeout time.Duration) bool {
@@ -23,20 +32,35 @@ func probeTCPOpen(ctx context.Context, ip net.IP, port int, timeout time.Duratio
 }
 
 // scanPorts dials each port concurrently and returns the open ones, sorted.
-func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration, dial DialFunc) []int {
+// maxConcurrency limits how many in-flight connections exist at once; pass 0
+// to run all ports concurrently (safe for small lists, dangerous for 65535).
+func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duration, dial DialFunc, maxConcurrency int) []int {
+	if len(ports) == 0 {
+		return nil
+	}
 	// Apply the caller-supplied timeout so filtered ports (no RST) don't block
 	// until the OS TCP retransmit timeout (can be tens of seconds).
 	ctx2, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// When the limit exceeds (or equals) the port count, every port gets its own
+	// goroutine immediately — no semaphore overhead, same behaviour as before.
+	if maxConcurrency <= 0 || maxConcurrency >= len(ports) {
+		maxConcurrency = len(ports)
+	}
 
 	type result struct {
 		port int
 		open bool
 	}
 
+	sem := make(chan struct{}, maxConcurrency)
 	ch := make(chan result, len(ports))
+
 	for _, port := range ports {
+		sem <- struct{}{} // blocks the dispatch loop when limit is reached
 		go func(p int) {
+			defer func() { <-sem }()
 			addr := fmt.Sprintf("%s:%d", ip, p)
 			conn, err := dialOrDirect(dial)(ctx2, "tcp", addr)
 			if err == nil {
