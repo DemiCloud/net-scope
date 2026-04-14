@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,61 @@ func (s *ScanStats) AvgLatencyMS() float64 {
 	return float64(s.LatencySum) / float64(s.RepliesReceived) / 1e6
 }
 
+// ThrottlePreset names control how aggressively the scanner probes the network.
+// The zero value ("" or "balanced") is the default.
+const (
+	ThrottleAggressive = "aggressive" // full concurrency, no rate limit, raw sockets allowed
+	ThrottleBalanced   = "balanced"   // capped concurrency, no rate limit (default)
+	ThrottlePolite     = "polite"     // low concurrency, rate-limited, jitter, no raw sockets
+)
+
+// throttleSettings is the resolved runtime parameters for a ThrottlePreset.
+type throttleSettings struct {
+	// MaxConcurrency caps the number of in-flight host goroutines.
+	// 0 means use Config.Concurrency unchanged.
+	MaxConcurrency int
+	// MaxRatePerSec is the maximum host probes dispatched per second.
+	// 0 means unlimited.
+	MaxRatePerSec int
+	// JitterMs is the maximum random extra delay (ms) added between host dispatches.
+	JitterMs int
+	// RandomiseOrder shuffles the host list before scanning.
+	RandomiseOrder bool
+	// ForceNoRawSockets sets TCPFirst=true, disabling ICMP and ARP.
+	ForceNoRawSockets bool
+}
+
+// resolveThrottle returns the throttle settings for the given preset string.
+// An unrecognised value falls back to balanced.
+func resolveThrottle(preset string) throttleSettings {
+	switch preset {
+	case ThrottleAggressive:
+		return throttleSettings{
+			MaxConcurrency:    0,
+			MaxRatePerSec:     0,
+			JitterMs:          0,
+			RandomiseOrder:    false,
+			ForceNoRawSockets: false,
+		}
+	case ThrottlePolite:
+		return throttleSettings{
+			MaxConcurrency:    20,
+			MaxRatePerSec:     50,
+			JitterMs:          50,
+			RandomiseOrder:    true,
+			ForceNoRawSockets: true,
+		}
+	default: // "balanced" or ""
+		return throttleSettings{
+			MaxConcurrency:    128,
+			MaxRatePerSec:     0,
+			JitterMs:          0,
+			RandomiseOrder:    false,
+			ForceNoRawSockets: false,
+		}
+	}
+}
+
 // Config holds tunable parameters for a scan.
 type Config struct {
 	Timeout         time.Duration
@@ -58,6 +114,9 @@ type Config struct {
 	// When set, all TCP connections are routed through the proxy and
 	// ARP, ICMP, mDNS, SSDP, WSD, NetBIOS, and SNMP are disabled.
 	SOCKSProxy string
+	// ThrottlePreset controls scan aggressiveness. One of ThrottleAggressive,
+	// ThrottleBalanced (default), or ThrottlePolite.
+	ThrottlePreset string
 }
 
 // DialFunc is a context-aware TCP dial function. nil means use the system default.
@@ -278,12 +337,64 @@ func (s *Scanner) runScan(ctx context.Context, hosts []net.IP, out chan<- Result
 	// time deepProbe completes. Broadcast runs concurrently, so earlier-
 	// finishing hosts get fewer services merged (devices responding fast on
 	// mDNS still appear later in the stream as broadcast-only hosts if missed).
-	sem := make(chan struct{}, s.Config.Concurrency)
+
+	// Apply throttle preset.
+	throttle := resolveThrottle(s.Config.ThrottlePreset)
+	concurrency := s.Config.Concurrency
+	if throttle.MaxConcurrency > 0 && throttle.MaxConcurrency < concurrency {
+		concurrency = throttle.MaxConcurrency
+	}
+	if s.Config.ThrottlePreset == ThrottleAggressive && s.Config.Concurrency > 0 {
+		concurrency = s.Config.Concurrency // aggressive: honour config exactly
+	}
+	if concurrency <= 0 {
+		concurrency = 256
+	}
+	if throttle.ForceNoRawSockets {
+		// Polite mode: disable raw-socket operations for this scan run.
+		// We shadow the scanner's config locally so the caller's struct is unchanged.
+		localCfg := s.Config
+		localCfg.TCPFirst = true
+		s = &Scanner{Config: localCfg, Stats: s.Stats}
+		iface = nil // skip ARP (already ran above, mac map is populated; skip future raw ops)
+	}
+	if throttle.RandomiseOrder {
+		rand.Shuffle(len(hosts), func(i, j int) { hosts[i], hosts[j] = hosts[j], hosts[i] })
+	}
+
+	// Optional rate limiter: a ticker that allows MaxRatePerSec dispatches/sec.
+	// nil means unlimited.
+	var rateTick <-chan time.Time
+	var rateTicker *time.Ticker
+	if throttle.MaxRatePerSec > 0 {
+		rateTicker = time.NewTicker(time.Second / time.Duration(throttle.MaxRatePerSec))
+		rateTick = rateTicker.C
+		defer rateTicker.Stop()
+	}
+
+	sem := make(chan struct{}, concurrency)
 	var scanWG sync.WaitGroup
 
 	for _, host := range hosts {
 		if ctx.Err() != nil {
 			break
+		}
+		// Rate limiting: wait for a tick before dispatching the next goroutine.
+		if rateTick != nil {
+			select {
+			case <-rateTick:
+			case <-ctx.Done():
+				break
+			}
+		}
+		// Jitter: randomised extra delay to avoid bursty probing patterns.
+		if throttle.JitterMs > 0 {
+			delay := time.Duration(rand.Intn(throttle.JitterMs)) * time.Millisecond
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				break
+			}
 		}
 		sem <- struct{}{}
 		scanWG.Add(1)

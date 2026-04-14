@@ -65,6 +65,7 @@ var (
 	hwndDetect          HWND // "⟲" detect local subnet button
 	hwndScan            HWND // toggle: "Scan" at rest, "Stop" while scanning
 	hwndActiveOnly      HWND // "Active only" filter checkbox
+	hwndThrottle        HWND // scan throttle preset dropdown
 	// Content panes
 	hwndList            HWND
 	hwndListPlaceholder HWND // empty-state overlay for Scanner tab
@@ -852,6 +853,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_ACTIVE_ONLY:
 			activeOnlyFilter = sendMessage(hwndActiveOnly, BM_GETCHECK, 0, 0) == BST_CHECKED
 			applyActiveFilter()
+		case IDC_THROTTLE:
+			if hiword(wParam) == CBN_SELCHANGE {
+				idx := sendMessage(hwndThrottle, CB_GETCURSEL, 0, 0)
+				presets := []string{scan.ThrottleAggressive, scan.ThrottleBalanced, scan.ThrottlePolite}
+				if int(idx) >= 0 && int(idx) < len(presets) {
+					appConfig.Scan.ThrottlePreset = presets[idx]
+					_, cfgPath, _ := config.Load()
+					if cfgPath != "" {
+						_ = config.SaveTo(appConfig, cfgPath)
+					}
+				}
+			}
 		case IDC_SCAN:
 			if isScanning {
 				stopScan()
@@ -1527,6 +1540,7 @@ func activateTab(hwnd HWND, tab int32) {
 		showWindow(hwndDetect, SW_SHOW)
 		showWindow(hwndScan, SW_SHOW)
 		showWindow(hwndActiveOnly, SW_SHOW)
+		showWindow(hwndThrottle, SW_SHOW)
 		showWindow(hwndScanStatus, SW_SHOW)
 
 		// Ensure Hosts list is repositioned to account for scan bar.
@@ -1550,6 +1564,7 @@ func activateTab(hwnd HWND, tab int32) {
 		showWindow(hwndDetect, SW_HIDE)
 		showWindow(hwndScan, SW_HIDE)
 		showWindow(hwndActiveOnly, SW_HIDE)
+		showWindow(hwndThrottle, SW_HIDE)
 		showWindow(hwndScanStatus, SW_HIDE)
 		switch tab {
 		case 1:
@@ -1653,8 +1668,25 @@ func createControls(hwnd HWND) {
 		scale(566), scanBarY+scale(6), scale(160), scale(22), hwnd, 0, inst)
 	hwndActiveOnly = makeCheckBox(hwnd, "Active only", IDC_ACTIVE_ONLY,
 		scale(734), scanBarY+scale(6), scale(110), scale(22))
+	// Throttle preset dropdown — sits just left of the Scan button.
+	// Height is taller than the visible control to accommodate the drop-down list.
+	hwndThrottle, _ = createWindowEx(0, "COMBOBOX", "",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
+		scale(852), scanBarY+scale(4), scale(120), scale(120), hwnd, IDC_THROTTLE, inst)
+	for _, label := range []string{"Aggressive", "Balanced", "Polite"} {
+		utf16, _ := syscall.UTF16PtrFromString(label)
+		sendMessage(hwndThrottle, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16)))
+	}
+	throttleIdx := uintptr(1) // default: Balanced
+	switch appConfig.Scan.ThrottlePreset {
+	case scan.ThrottleAggressive:
+		throttleIdx = 0
+	case scan.ThrottlePolite:
+		throttleIdx = 2
+	}
+	sendMessage(hwndThrottle, CB_SETCURSEL, throttleIdx, 0)
 	hwndScan = makePushButton(hwnd, "Scan", IDC_SCAN,
-		scale(852), scanBarY+scale(5), scale(100), scale(24))
+		scale(980), scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts listview starts below the scan bar.
 	hostsTop := scale(elevBarH + tabCtrlH + scanBarH)
@@ -1836,6 +1868,7 @@ func createFindBar(parent HWND) {
 	mainTooltip.add(hwndProxyCheck, "Route all scans through the configured SOCKS5 proxy — multicast listeners (mDNS, SSDP, WSD, DHCP) are disabled in this mode")
 	mainTooltip.add(hwndDetect, "Auto-fill the Target field with your local subnet (e.g. 192.168.1.0/24) by detecting the machine\u2019s primary network interface")
 	mainTooltip.add(hwndActiveOnly, "Hide hosts that did not respond to probing — uncheck to show every scanned address")
+	mainTooltip.add(hwndThrottle, "Scan aggressiveness: Aggressive (full speed, raw sockets) · Balanced (default) · Polite (rate-limited, no raw sockets, adds jitter — use when you can't modify the firewall)")
 	mainTooltip.add(hwndSearchClose, "Close find bar (Esc)")
 }
 
@@ -2002,10 +2035,11 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndProxyCheck, scale(180), scale(5), scale(120), scale(22))
 	moveWindow(hwndTabCtrl, 0, scale(elevBarH), width, scale(tabCtrlH))
 
-	// Scan bar (right-anchored): [Target stretches][⟲][Scan status 160px][Active only][Scan]
+	// Scan bar (right-anchored): [Target stretches][⟲][Scan status 160px][Active only][Throttle][Scan]
 	scanBarY := scale(elevBarH + tabCtrlH)
 	scanX := width - scale(108)
-	activeX := scanX - scale(116)
+	throttleX := scanX - scale(128) // 120px combo + 8px gap
+	activeX := throttleX - scale(118) // 110px checkbox + 8px gap
 	statusX := activeX - scale(168)
 	detectX := statusX - scale(42) // 34px button + 8px gap from status
 	targetW := detectX - scale(4) - scale(58)
@@ -2016,6 +2050,7 @@ func resizeControls(hwnd HWND, lParam uintptr) {
 	moveWindow(hwndDetect, scale(58)+targetW+scale(4), scanBarY+scale(5), scale(34), scale(24))
 	moveWindow(hwndScanStatus, statusX, scanBarY+scale(6), scale(160), scale(22))
 	moveWindow(hwndActiveOnly, activeX, scanBarY+scale(6), scale(110), scale(22))
+	moveWindow(hwndThrottle, throttleX, scanBarY+scale(4), scale(120), scale(120))
 	moveWindow(hwndScan, scanX, scanBarY+scale(5), scale(100), scale(24))
 
 	// Hosts tab: list fills remaining height above the status bar.

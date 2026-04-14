@@ -90,6 +90,7 @@ const (
 	IDC_SEARCH_EDIT   = 119 // Ctrl+F find bar — text input
 	IDC_SEARCH_CLOSE  = 120 // Ctrl+F find bar — "×" dismiss button
 	IDC_LIST_SERVICES = 121 // Services tab listview
+	IDC_THROTTLE      = 123 // scan throttle preset dropdown in scan bar
 )
 
 // ---------------------------------------------------------------------------

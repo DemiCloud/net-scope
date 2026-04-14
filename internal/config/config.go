@@ -85,6 +85,12 @@ type ScanConfig struct {
 	// An empty or missing key falls back to the OS default handler.
 	// Example: {"ssh": "putty.exe -ssh %s", "rdp": "mstsc.exe /v:%s"}
 	ProtocolHandlers map[string]string `toml:"protocol_handlers"`
+
+	// ThrottlePreset controls how aggressively the scanner probes the network.
+	// Valid values: "aggressive", "balanced" (default), "polite".
+	// "polite" caps concurrency, rate-limits probes, adds jitter, and avoids
+	// raw-socket operations — suitable for environments with IDS/firewalls.
+	ThrottlePreset string `toml:"throttle_preset"`
 }
 
 // Default returns the built-in defaults. Used when no config file exists
@@ -112,6 +118,7 @@ func Default() Config {
 			BannerGrab:           true,
 			NetBIOS:              true,
 			ServiceMinConfidence: 60,
+			ThrottlePreset:       scan.ThrottleBalanced,
 		},
 	}
 }
@@ -151,6 +158,7 @@ func (c Config) ToScanConfig() scan.Config {
 		BannerGrab:      c.Scan.BannerGrab,
 		NetBIOS:         c.Scan.NetBIOS,
 		SOCKSProxy:      c.Scan.SOCKSProxy,
+		ThrottlePreset:  c.Scan.ThrottlePreset,
 	}
 }
 
