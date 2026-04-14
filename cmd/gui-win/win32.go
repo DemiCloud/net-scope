@@ -53,6 +53,8 @@ const (
 	WM_PROBE_DONE        = WM_APP + 41 // probe dialog: deep probe run finished (wParam = error flag)
 	WM_PROBE_HOST        = WM_APP + 42 // probe dialog: successful probe → add IP to Hosts tab
 	WM_WOL_RESULT        = WM_APP + 43 // sensor service: Wake-on-LAN send result
+	WM_EVT_SNAP_ENTRY    = WM_APP + 44 // sensor service: one event-log entry arrived
+	WM_EVT_SNAP_DONE     = WM_APP + 45 // sensor service: event-log snapshot stream complete
 )
 
 // ---------------------------------------------------------------------------
@@ -120,6 +122,7 @@ const (
 	IDM_TOOLS_INTERFACES      = 223 // Tools > Local Interfaces…
 	IDM_TOOLS_PROBE           = 224 // Tools > Probe…
 	IDM_TOOLS_WOL             = 225 // Tools > Wake on LAN…
+	IDM_TOOLS_EVENT_LOG       = 226 // Tools > Network Event Log…
 )
 
 // ---------------------------------------------------------------------------

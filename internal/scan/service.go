@@ -38,6 +38,7 @@ type ServiceCmd struct {
 	// "socket-snapshot",
 	// "hosts-snapshot", "hosts-add", "hosts-delete",
 	// "if-snapshot",
+	// "eventlog-snapshot",
 	// "wake",
 	// "netbios", "proxy-test", "oui-update", "shutdown"
 	Cmd        string     `json:"cmd"`
@@ -125,6 +126,10 @@ type ServiceMsg struct {
 	IfEntry    *netinfo.InterfaceEntry `json:"if_entry,omitempty"`
 	// IfSnapDone signals the end of an "if-snapshot" stream.
 	IfSnapDone bool                    `json:"if_snap_done,omitempty"`
+	// EventLogEntry carries a single Windows Event Log entry from an "eventlog-snapshot" stream.
+	EventLogEntry    *netinfo.EventLogEntry `json:"eventlog_entry,omitempty"`
+	// EventLogSnapDone signals the end of an "eventlog-snapshot" stream.
+	EventLogSnapDone bool                   `json:"eventlog_snap_done,omitempty"`
 	// Netbios carries the result of a NetBIOS name query.
 	Netbios    *NetBIOSMsg  `json:"netbios,omitempty"`
 
@@ -972,6 +977,19 @@ func RunServiceConn(conn net.Conn) error {
 				}
 			}
 			_ = safeSend(ServiceMsg{IfSnapDone: true})
+
+		case "eventlog-snapshot":
+			// One-shot: stream Windows Event Log network entries (last 24 h) and signal completion.
+			// Runs in a goroutine because the Security log query can be slow.
+			go func() {
+				for _, e := range netinfo.ReadNetworkEventLog(24) {
+					entry := e
+					if werr := safeSend(ServiceMsg{EventLogEntry: &entry}); werr != nil {
+						return
+					}
+				}
+				_ = safeSend(ServiceMsg{EventLogSnapDone: true})
+			}()
 
 		case "wake":
 			// Send a Wake-on-LAN magic packet to the given MAC / broadcast address.

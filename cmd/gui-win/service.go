@@ -87,6 +87,10 @@ var (
 	// Interfaces dialog, or 0.
 	hwndInterfacesDialogAtomic uintptr
 
+	// hwndEvtLogDialogAtomic holds the HWND of the currently-open Network
+	// Event Log dialog, or 0.
+	hwndEvtLogDialogAtomic uintptr
+
 	// hwndProbeDlgAtomic holds the HWND of the currently-open deep Probe
 	// dialog, or 0 if none is open.
 	hwndProbeDlgAtomic uintptr
@@ -419,6 +423,18 @@ func spawnService(hwnd HWND, elevated bool) {
 			} else if m.IfSnapDone {
 				if atomic.LoadUintptr(&hwndInterfacesDialogAtomic) != 0 {
 					postMessage(hwnd, WM_IF_SNAP_DONE, 0, 0)
+				}
+			} else if m.EventLogEntry != nil {
+				if atomic.LoadUintptr(&hwndEvtLogDialogAtomic) != 0 {
+					pendingEvtLogSnapMu.Lock()
+					idx := len(pendingEvtLogSnap)
+					pendingEvtLogSnap = append(pendingEvtLogSnap, *m.EventLogEntry)
+					pendingEvtLogSnapMu.Unlock()
+					postMessage(hwnd, WM_EVT_SNAP_ENTRY, uintptr(idx), 0)
+				}
+			} else if m.EventLogSnapDone {
+				if atomic.LoadUintptr(&hwndEvtLogDialogAtomic) != 0 {
+					postMessage(hwnd, WM_EVT_SNAP_DONE, 0, 0)
 				}
 			} else if m.ProbeEvent != nil {
 				pendingProbeEventsMu.Lock()
@@ -753,6 +769,13 @@ func requestHostsDelete(target string) bool {
 // Returns false if the service is not running.
 func requestIfSnapshot() bool {
 	return serviceCmd(scan.ServiceCmd{Cmd: "if-snapshot"})
+}
+
+// requestEventLogSnapshot sends an "eventlog-snapshot" command; entries arrive
+// as WM_EVT_SNAP_ENTRY (posted to hwndEvtLogDialogAtomic) followed by
+// WM_EVT_SNAP_DONE. Returns false if the service is not running.
+func requestEventLogSnapshot() bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "eventlog-snapshot"})
 }
 
 // requestWakeOnLAN asks the service to send a Wake-on-LAN magic packet.

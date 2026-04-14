@@ -45,3 +45,13 @@ type HostsEntry struct {
 	Hostnames []string `json:"hostnames"`
 	Comment   string   `json:"comment,omitempty"`
 }
+
+// EventLogEntry carries a single Windows Event Log entry for network-related events.
+type EventLogEntry struct {
+	Time    string `json:"time"`    // RFC 3339 timestamp
+	Source  string `json:"source"`  // provider / source name
+	EventID uint32 `json:"event_id"`
+	Log     string `json:"log"`     // "System", "Security", etc.
+	Level   string `json:"level"`   // "Information", "Warning", "Error", "Critical"
+	Summary string `json:"summary"` // short human-readable description
+}
