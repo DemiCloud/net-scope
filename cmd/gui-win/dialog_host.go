@@ -71,11 +71,6 @@ const (
 	idHostScan        = 631
 	idHostDiagnostics = 632
 
-	// Probes sub-dialog.
-	idProbesRun  = 642
-	idProbesPort = 644
-	idProbesType = 645
-
 	// Diagnostics sub-dialog.
 	idDiagPing    = 652
 	idDiagPingCont = 653
@@ -101,39 +96,10 @@ var (
 	hwndHostScanBtn      HWND // «Scan» action-strip button
 	hwndHostDiagBtn      HWND // «Diagnostics» action-strip button
 
-	// Probes sub-dialog controls (valid while probes dialog is open).
-	hwndProbesPort       HWND
-	hwndProbesType       HWND
-	hwndProbesRun        HWND
-	hwndProbesHostDetail HWND // host detail HWND; restored to hwndActiveProbeDialogAtomic on close
-
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
 
-	// pendingProbeResults: receive loop appends, UI thread reads via WM_PROBE_RESULT.
-	pendingProbeResults   []scan.ProbeResult
-	pendingProbeResultsMu sync.Mutex
-
-	// activeProbes is the count of probe commands still awaiting a result.
-	activeProbes int32
 )
-
-// probeKinds lists the probe types shown in the Probes dialog combo.
-// "Port Test" maps to ProbeSpec.Type "TCP". All others map 1:1.
-var probeKinds = []struct {
-	label   string // shown in combo
-	ptype   string // ProbeSpec.Type value
-	needsPort bool  // false = port field is greyed out
-}{
-	{"Port Test", "TCP", true},
-	{"SSH Banner", "SSH", true},
-	{"HTTP(S) Banner", "HTTPS", true},
-	{"TLS Info", "TLS", true},
-	{"OS Probe", "OSProbe", false},
-	{"SNMP", "SNMP", false},
-	{"SteamQuery", "Steam", true},
-	{"RDP", "RDP", true},
-}
 
 // hostDetailWndProc is the window procedure for the host detail dialog.
 var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -182,22 +148,6 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 		}
 		return 0
 
-	case WM_PROBE_RESULT:
-		pendingProbeResultsMu.Lock()
-		var pr scan.ProbeResult
-		if int(wParam) < len(pendingProbeResults) {
-			pr = pendingProbeResults[int(wParam)]
-		}
-		pendingProbeResultsMu.Unlock()
-		if pr.Type != "" {
-			hostDetailAddProbeRow(HWND(hwnd), pr)
-		}
-		// When all probes complete, re-enable the Probes action button.
-		if atomic.AddInt32(&activeProbes, -1) == 0 {
-			enableWindow(hwndHostProbesBtn, true)
-		}
-		return 0
-
 	case WM_CLOSE:
 		hostDetailClose(HWND(hwnd))
 		return 0
@@ -206,9 +156,6 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 })
 
 func hostDetailClose(hwnd HWND) {
-	// Clear the probe target so the receive loop stops posting results to
-	// this (now-closing) dialog window.
-	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, 0)
 	closeModal(hwnd)
 }
 
@@ -403,11 +350,6 @@ func hostDetailForget(hwnd HWND) {
 
 // showHostDetailDialog opens the host detail modal for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
-	// Reset probe state.
-	pendingProbeResultsMu.Lock()
-	pendingProbeResults = pendingProbeResults[:0]
-	pendingProbeResultsMu.Unlock()
-	atomic.StoreInt32(&activeProbes, 0)
 	currentDetailIP = ip
 
 	dlg := createDialogForClient("NetScopeHostDetail", "Host \u2014 "+ip,
@@ -431,10 +373,6 @@ func showHostDetailDialog(parent HWND, ip string) {
 	setFontAllChildren(dlg, appFont)
 	// Override the summary pane with a monospace font so padded labels align.
 	sendMessage(hwndHostSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
-
-	// Register this dialog as the target for WM_PROBE_RESULT messages from
-	// the service receive loop. Cleared by hostDetailClose on close.
-	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(dlg))
 
 	runModal(dlg, parent)
 }
@@ -529,20 +467,6 @@ func createHostDetailControls(hwnd HWND) {
 	hwndHostCloseBtn = makePushButton(hwnd, "Close", idHostClose, cW-pad-80, btnY, 80, 28)
 }
 
-// startProbe sends a single on-demand probe to the sensor service.
-// Probe results are delivered asynchronously via WM_PROBE_RESULT.
-// Returns false when the sensor service is unavailable; the caller is
-// responsible for restoring any UI state that was changed before the call.
-func startProbe(hwnd HWND, ip string, spec scan.ProbeSpec) bool {
-	atomic.AddInt32(&activeProbes, 1)
-	if err := sendProbeViaService(ip, spec, appConfig.Scan.SOCKSProxy); err != nil {
-		atomic.AddInt32(&activeProbes, -1)
-		showWarn(hwnd, "Cannot run probe: the sensor service is not running.\nClick \"Elevate Sensor\" on the main window and try again.", "Probe")
-		return false
-	}
-	return true
-}
-
 // hostDetailAddObsRow appends one observation row to hwndHostProbeList.
 // Columns: Type | Target | Source | Result.
 // Hides the empty-state hint on the first insertion.
@@ -561,21 +485,6 @@ func hostDetailAddObsRow(obsType, target, source, result string) {
 	setSubItem(hwndHostProbeList, row, 1, target)
 	setSubItem(hwndHostProbeList, row, 2, source)
 	setSubItem(hwndHostProbeList, row, 3, result)
-}
-
-// hostDetailAddProbeRow maps an on-demand ProbeResult to an observation row
-// and persists it to the host registry so it survives dialog close/reopen.
-func hostDetailAddProbeRow(_ HWND, pr scan.ProbeResult) {
-	result := pr.Result
-	if result == "" {
-		result = "no response"
-	}
-	hostDetailAddObsRow(pr.Type, strconv.Itoa(pr.Port), "Probe", result)
-	// Persist to registry so this observation survives dialog close/reopen.
-	if e, ok := hostRegistry[currentDetailIP]; ok {
-		e.ProbeResults = append(e.ProbeResults, pr)
-	}
-	hostDetailUpdateCopyButtons()
 }
 
 // hostDetailUpdateCopyButtons enables the Copy ▾ footer button only when there
@@ -995,185 +904,6 @@ func hostDetailRunScan(hwnd HWND) {
 	setWindowText(hwndTarget, currentDetailIP)
 	postMessage(hwndMain, WM_HOST_RESCAN, 0, 0)
 	setWindowText(hwndHostStatus, "Scan queued for "+currentDetailIP+"  \u2014  results appear in the host list")
-}
-
-// ---------------------------------------------------------------------------
-// Probes sub-dialog
-// ---------------------------------------------------------------------------
-//
-// A focused modal opened from the Probes action button.
-// The combo lists semantic probe intents; the port edit is greyed out for
-// probes that do not target a specific port.
-//
-// While this dialog is open it registers itself as the WM_PROBE_RESULT
-// target so it receives probe completions in real-time. Observation rows
-// are written to hwndHostProbeList (the host detail listview), visible
-// behind the disabled-but-open parent dialog, and persisted to the host
-// registry so they survive dialog close/reopen.
-
-var probesWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
-	switch uint32(msg) {
-	case WM_CREATE:
-		createProbesDialogControls(HWND(hwnd))
-		return 0
-
-	case WM_CTLCOLORSTATIC:
-		return ctlColorDialog(wParam)
-
-	case WM_CTLCOLOREDIT:
-		if HWND(lParam) == hwndProbesPort && !isWindowEnabled(hwndProbesPort) {
-			return ctlColorDialog(wParam)
-		}
-		return ctlColorDlgBody(wParam)
-
-	case WM_COMMAND:
-		switch loword(wParam) {
-		case idProbesRun:
-			probesRunSingle(HWND(hwnd))
-		case idProbesType:
-			if hiword(wParam) == CBN_SELCHANGE {
-				probesUpdatePortEnabled()
-			}
-		}
-		return 0
-
-	case WM_PROBE_RESULT:
-		pendingProbeResultsMu.Lock()
-		var pr scan.ProbeResult
-		if int(wParam) < len(pendingProbeResults) {
-			pr = pendingProbeResults[int(wParam)]
-		}
-		pendingProbeResultsMu.Unlock()
-		if pr.Type != "" {
-			hostDetailAddProbeRow(HWND(hwnd), pr)
-		}
-		if atomic.AddInt32(&activeProbes, -1) == 0 {
-			enableWindow(hwndProbesRun, true)
-			setWindowText(hwndProbesRun, "Run Probe")
-			enableWindow(hwndHostProbesBtn, true)
-		}
-		return 0
-
-	case WM_CLOSE:
-		probesDialogClose(HWND(hwnd))
-		return 0
-	}
-	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
-})
-
-func createProbesDialogControls(hwnd HWND) {
-	inst := getModuleHandle()
-	r := getClientRect(hwnd)
-	cW := r.Right
-	const pad int32 = 10
-
-	// Layout: [Probe combo]  [Port: edit]  [Run Probe]
-	// Probe type combo on the left; port to its right; run button far right.
-	const (
-		typeLblW   int32 = 42
-		typeComboW int32 = 155
-		portLblW   int32 = 34
-		portEditW  int32 = 60
-		runBtnW    int32 = 100
-		gap        int32 = 6
-	)
-	y := pad
-	x := pad
-
-	createCtrl("STATIC", "Probe:", WS_CHILD|WS_VISIBLE,
-		x, y+5, typeLblW, 16, hwnd, 0, inst)
-	x += typeLblW
-	hwndProbesType, _ = createWindowEx(0, "COMBOBOX", "",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
-		x, y, typeComboW, 220, hwnd, HMENU(idProbesType), inst)
-	x += typeComboW + gap*2
-
-	createCtrl("STATIC", "Port:", WS_CHILD|WS_VISIBLE,
-		x, y+5, portLblW, 16, hwnd, 0, inst)
-	x += portLblW
-	hwndProbesPort, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "22",
-		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
-		x, y, portEditW, 24, hwnd, HMENU(idProbesPort), inst)
-	x += portEditW + gap*3
-
-	// Run button flush right.
-	hwndProbesRun = makePushButton(hwnd, "Run Probe", idProbesRun, cW-pad-runBtnW, y, runBtnW, 24)
-	_ = x // suppress unused-variable lint
-}
-
-// probesUpdatePortEnabled greys out the port edit when the selected probe
-// type does not require a port number.
-func probesUpdatePortEnabled() {
-	idx := int(sendMessage(hwndProbesType, CB_GETCURSEL, 0, 0))
-	if idx < 0 || idx >= len(probeKinds) {
-		return
-	}
-	enableWindow(hwndProbesPort, probeKinds[idx].needsPort)
-}
-
-func probesDialogClose(hwnd HWND) {
-	// Restore WM_PROBE_RESULT target to the host detail dialog.
-	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(hwndProbesHostDetail))
-	enableWindow(hwndHostProbesBtn, true)
-	closeModal(hwnd)
-}
-
-func probesRunSingle(hwnd HWND) {
-	idx := int(sendMessage(hwndProbesType, CB_GETCURSEL, 0, 0))
-	if idx < 0 || idx >= len(probeKinds) {
-		return
-	}
-	kind := probeKinds[idx]
-
-	port := 0
-	if kind.needsPort {
-		portStr := strings.TrimSpace(getWindowText(hwndProbesPort))
-		p, err := strconv.Atoi(portStr)
-		if err != nil || p < 1 || p > 65535 {
-			showInfo(hwnd, "Enter a valid port number (1\u201365535).", "Probes")
-			return
-		}
-		port = p
-	}
-
-	enableWindow(hwndProbesRun, false)
-	setWindowText(hwndProbesRun, "Running\u2026")
-	if !startProbe(hwnd, currentDetailIP, scan.ProbeSpec{Port: port, Type: kind.ptype}) {
-		enableWindow(hwndProbesRun, true)
-		setWindowText(hwndProbesRun, "Run Probe")
-	}
-}
-
-// showProbesDialog opens the Probes sub-dialog for the current host.
-// Registers itself as the WM_PROBE_RESULT target while open; restores on close.
-func showProbesDialog(parent HWND) {
-	hwndProbesHostDetail = parent
-
-	// Disable the Probes button while the dialog is open.
-	enableWindow(hwndHostProbesBtn, false)
-
-	dlg := createDialogForClient("NetScopeProbes", "Probes \u2014 "+currentDetailIP,
-		520, 44, probesWndProc, parent)
-	if dlg == 0 {
-		enableWindow(hwndHostProbesBtn, true)
-		return
-	}
-
-	// Populate the probe kind combo.
-	for _, k := range probeKinds {
-		pt, _ := syscall.UTF16PtrFromString(k.label)
-		sendMessage(hwndProbesType, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(pt)))
-	}
-	sendMessage(hwndProbesType, CB_SETCURSEL, 0, 0) // default: Port Test
-	probesUpdatePortEnabled()
-
-	setFontAllChildren(dlg, appFont)
-
-	// Transfer WM_PROBE_RESULT ownership to this dialog.
-	atomic.StoreUintptr(&hwndActiveProbeDialogAtomic, uintptr(dlg))
-
-	runModal(dlg, parent)
-	// probesDialogClose restores hwndActiveProbeDialogAtomic before calling closeModal.
 }
 
 // ---------------------------------------------------------------------------

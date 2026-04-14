@@ -49,11 +49,6 @@ var (
 	svcRestartCount       int
 	svcRestartWindowStart time.Time
 
-	// hwndActiveProbeDialogAtomic holds the HWND of the currently-open host
-	// detail dialog, or 0 if none is open. Accessed atomically: written by
-	// the UI thread (open/close), read by the service receive goroutine.
-	hwndActiveProbeDialogAtomic uintptr
-
 	// hwndActiveDBDialogAtomic holds the HWND of the currently-open Databases
 	// dialog, or 0 if none is open. Used to forward OUI download results.
 	hwndActiveDBDialogAtomic uintptr
@@ -276,14 +271,6 @@ func spawnService(hwnd HWND, elevated bool) {
 				pendingDHCP = append(pendingDHCP, *m.DHCP)
 				pendingDHCPMu.Unlock()
 				postMessage(hwnd, WM_DHCP_EVENT, uintptr(idx), 0)
-			} else if m.ProbeResult != nil {
-				pendingProbeResultsMu.Lock()
-				idx := len(pendingProbeResults)
-				pendingProbeResults = append(pendingProbeResults, *m.ProbeResult)
-				pendingProbeResultsMu.Unlock()
-				if h := atomic.LoadUintptr(&hwndActiveProbeDialogAtomic); h != 0 {
-					postMessage(HWND(h), WM_PROBE_RESULT, uintptr(idx), 0)
-				}
 			} else if m.BcastReady {
 				pendingListenerMsgsMu.Lock()
 				idx := len(pendingListenerMsgs)
@@ -536,22 +523,6 @@ func sendScanViaService(hwnd HWND, target string, cfg scan.Config, gen uint64) {
 		postMessage(hwnd, WM_SCAN_COMPLETE, uintptr(gen), 0)
 	}
 	// Results arrive through the persistent receive loop; no goroutine needed here.
-}
-
-// sendProbeViaService sends a single on-demand probe to the running service.
-// The result is delivered asynchronously as WM_PROBE_RESULT posted to the
-// active host detail dialog (hwndActiveProbeDialogAtomic).
-func sendProbeViaService(ip string, spec scan.ProbeSpec, socksProxy string) error {
-	serviceMu.Lock()
-	enc := serviceEnc
-	serviceMu.Unlock()
-	if enc == nil {
-		return errors.New("sensor service is not running")
-	}
-	serviceEncMu.Lock()
-	err := enc.Encode(scan.ServiceCmd{Cmd: "probe", Target: ip, Probe: &spec, SOCKSProxy: socksProxy})
-	serviceEncMu.Unlock()
-	return err
 }
 
 // stopServiceScan sends a stop command to the running service, if any.
