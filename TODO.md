@@ -29,11 +29,11 @@
 
 ## Extended Service Probes
 
-- [ ] **SMB version negotiation probe** — on port 445: send an SMBv2 NEGOTIATE request; record the highest supported dialect (e.g. SMB 3.1.1); additionally send an SMBv1 negotiate to detect legacy enablement; add a "SMBv1!" warning badge in the Banner column; no authentication required
-- [ ] **RDP handshake check** — on port 3389: complete the X.224 Connection Request / Confirm exchange; record NLA requirement (Security layer), offered certificate CN, and RDP version; surface in Banner column; no credentials needed
-- [ ] **LDAP ping** — on port 389 (and 3268 for GC): send an anonymous LDAP RootDSE query; record `defaultNamingContext`, `supportedLDAPVersion`, server type; useful for automatic DC/AD detection; surface domain name in Banner column
-- [ ] **MQTT broker detection** — on port 1883: send a minimal MQTT CONNECT packet (protocol level 4, no credentials); record whether anonymous connection is accepted or rejected (CONNACK return code); an open anonymous broker is a security finding; surface in Banner column
-- [ ] **WireGuard presence probe** — on UDP port 51820: send a minimal handshake-initiation message; infer endpoint presence from a correctly structured response (type=2) or a deliberate rejection; note: WireGuard is intentionally silent so absence of response is not definitive; surface as "WireGuard?" in Banner when a valid response is received
+- [x] **SMB version negotiation probe** — on port 445: send an SMBv2 NEGOTIATE request; record the highest supported dialect (e.g. SMB 3.1.1); additionally send an SMBv1 negotiate to detect legacy enablement; add a "SMBv1!" warning badge in the Banner column; no authentication required
+- [x] **RDP handshake check** — on port 3389: complete the X.224 Connection Request / Confirm exchange; record NLA requirement (Security layer), offered certificate CN, and RDP version; surface in Banner column; no credentials needed
+- [x] **LDAP GC probe** — port 389 probe done (`probeLDAPDeep`); port 3268 (AD Global Catalog) registered as `ldap-gc-deep`, reuses same function
+- [x] **MQTT broker detection** — on port 1883: send a minimal MQTT CONNECT packet (protocol level 4, no credentials); record whether anonymous connection is accepted or rejected (CONNACK return code); an open anonymous broker is a security finding; surface in Banner column
+- [x] **WireGuard presence probe** — on UDP port 51820: send a minimal handshake-initiation message; infer endpoint presence from a correctly structured response (type=2) or a deliberate rejection; note: WireGuard is intentionally silent so absence of response is not definitive; surface as "WireGuard?" in Banner when a valid response is received
 
 ## Wake-on-LAN
 

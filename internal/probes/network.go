@@ -26,6 +26,11 @@ func registerNetwork() {
 		ServiceName: "NTP Server",
 		DefaultPort: 123, Transport: "UDP", Run: probeNTP,
 	})
+	scan.RegisterDeepProbe(scan.DeepProbe{
+		ID: "wireguard", Group: "Network", Name: "WireGuard [Handshake]",
+		ServiceName: "WireGuard VPN",
+		DefaultPort: 51820, Transport: "UDP", Run: probeWireGuard,
+	})
 }
 
 // probeSNMPDeep sends a minimal SNMP v1 GetRequest for sysDescr (1.3.6.1.2.1.1.1.0)
@@ -286,6 +291,58 @@ func probeNTP(_ context.Context, ip string, port int, dial scan.DialFunc, emit f
 		refIP := fmt.Sprintf("%d.%d.%d.%d", refID[0], refID[1], refID[2], refID[3])
 		emit("Upstream:     " + refIP)
 		result = append(result, obs("probe", "ntp_upstream", refIP))
+	}
+	return result, nil
+}
+
+// probeWireGuard sends a minimal WireGuard handshake-initiation packet (type=1,
+// 148 bytes) to UDP port 51820 and checks for a handshake-response (type=2,
+// 92 bytes).  WireGuard is intentionally silent — it will not respond to
+// cryptographically invalid initiations — so a timeout here does not rule out
+// a WireGuard endpoint; only a valid type=2 response is conclusive.
+func probeWireGuard(_ context.Context, ip string, port int, _ scan.DialFunc, emit func(string)) ([]scan.Observation, error) {
+	emit(fmt.Sprintf("Sending WireGuard handshake-initiation to %s (UDP)…", joinHost(ip, port)))
+
+	conn, err := dialUDP(ip, port, 3*time.Second)
+	if err != nil {
+		emit("Failed to open UDP socket: " + err.Error())
+		return nil, nil
+	}
+	defer conn.Close()
+
+	// 148-byte handshake initiation: type=1 (LE uint32), sender_index (4 bytes),
+	// unencrypted ephemeral key (32 bytes), encrypted static (48 bytes),
+	// encrypted timestamp (28 bytes), mac1 (16 bytes), mac2 (16 bytes).
+	// All fields beyond the type are zero — the handshake is cryptographically
+	// invalid, but the packet length and type field are well-formed.
+	pkt := make([]byte, 148)
+	pkt[0] = 0x01 // message_type = 1 (initiation), reserved bytes 1-3 = 0
+
+	if _, err := conn.Write(pkt); err != nil {
+		emit("Send failed: " + err.Error())
+		return nil, nil
+	}
+
+	conn.SetDeadline(time.Now().Add(3 * time.Second)) //nolint:errcheck
+	resp := make([]byte, 256)
+	n, err := conn.Read(resp)
+	if err != nil {
+		// Timeout is the normal outcome: WireGuard drops invalid initiations silently.
+		emit("No response received — WireGuard endpoints are intentionally silent to unauthenticated probes")
+		emit("Note: silence on UDP 51820 does not rule out a WireGuard endpoint")
+		return nil, nil
+	}
+
+	var result []scan.Observation
+	// A genuine handshake response is type=2, exactly 92 bytes.
+	if n >= 4 && resp[0] == 0x02 && resp[1] == 0x00 && resp[2] == 0x00 && resp[3] == 0x00 {
+		emit("Received WireGuard handshake response (type=2) — endpoint confirmed!")
+		result = append(result, obs("probe", "wireguard", "confirmed"))
+		if n == 92 {
+			emit("Response length matches WireGuard spec (92 bytes) ✓")
+		}
+	} else {
+		emit(fmt.Sprintf("Received %d-byte UDP response; type byte=0x%02X — not a WireGuard handshake response", n, resp[0]))
 	}
 	return result, nil
 }
