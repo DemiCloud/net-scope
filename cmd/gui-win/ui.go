@@ -254,6 +254,11 @@ var (
 	pendingIfSnap   []netinfo.InterfaceEntry
 	pendingIfSnapMu sync.Mutex
 
+	// pendingEvtLogSnap carries Windows Event Log entries from the sensor
+	// service to the Network Event Log dialog via WM_EVT_SNAP_ENTRY.
+	pendingEvtLogSnap   []netinfo.EventLogEntry
+	pendingEvtLogSnapMu sync.Mutex
+
 	// pendingWolResults carries Wake-on-LAN send results from the sensor
 	// service to the WoL dialog via WM_WOL_RESULT.
 	pendingWolResults []scan.WolResult
@@ -903,6 +908,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showHostsDialog(HWND(hwnd))
 		case IDM_TOOLS_INTERFACES:
 			showInterfacesDialog(HWND(hwnd))
+		case IDM_TOOLS_EVENT_LOG:
+			showEvtLogDialog(HWND(hwnd))
 		case IDM_TOOLS_PROBE:
 			showProbeDialog(HWND(hwnd), "", false)
 		case IDM_TOOLS_WOL:
@@ -1406,6 +1413,20 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_IF_SNAP_DONE:
 		interfacesDialogLoadingDone()
+		return 0
+
+	case WM_EVT_SNAP_ENTRY:
+		pendingEvtLogSnapMu.Lock()
+		var entry netinfo.EventLogEntry
+		if int(wParam) < len(pendingEvtLogSnap) {
+			entry = pendingEvtLogSnap[int(wParam)]
+		}
+		pendingEvtLogSnapMu.Unlock()
+		evtLogDialogAddRow(entry)
+		return 0
+
+	case WM_EVT_SNAP_DONE:
+		evtLogDialogLoadingDone()
 		return 0
 
 	case WM_WOL_RESULT:

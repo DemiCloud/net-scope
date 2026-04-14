@@ -88,7 +88,7 @@
 
 ## Event Log
 
-- [ ] **Network event log viewer** — `Diagnostics > Network Events…` or a dedicated tab; on-demand query of Windows Event Log for network-relevant entries:
+- [x] **Network event log viewer** — `Diagnostics > Network Events…` or a dedicated tab; on-demand query of Windows Event Log for network-relevant entries:
   - DHCP client lease failures (System log, source `Microsoft-Windows-Dhcp-Client`, Event IDs 1001/1002/1003)
   - DNS client failures (`Microsoft-Windows-DNS-Client`)
   - NIC reset / removal (System, NDIS source, Event IDs 10317/10319 or adapter-specific)
