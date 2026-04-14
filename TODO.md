@@ -1,12 +1,10 @@
 # NetScope — Backlog
 
-## Query Host (redesign)
+## Query Host
 
-- [ ] **Query Host full redesign** — replace the simple picker with a self-contained probe+scan dialog:
-  - IP / hostname field (pre-populated from combo, editable)
-  - **Port scan section**: mode selector (Default ports / Specific ports / All ports — all 65 535); port list edit field (enabled for Specific mode); results list
-  - **Custom query section**: query-type selector (TCP, SSH, HTTP, HTTPS, FTP, SMTP, Telnet, RDP, …) with port field that auto-fills the well-known port for the selected type; Run button; result pane
-  - Essentially merges the old picker with the host detail probe panel into one standalone dialog that requires no prior scan
+- [x] **Probes button opens the probe dialog** — `Probes` in the host detail action strip opens `showProbeDialog` with the IP pre-populated and locked; the probe dialog is the canonical interactive probe interface
+- [x] **Scanning runs banner probes on open ports** — `grabPortServices` probes every confirmed-open port using the same banner/TLS/SSH/HTTP functions as the on-demand probe path; `BannerGrab` is enabled by default
+- [ ] **Port scan section in probe dialog** — add a port scan mode selector (Default ports / Specific ports / All 65 535); port list edit field (enabled for Specific mode); results list embedded in `showProbeDialog`; requires the worker-pool port scanner below to avoid goroutine explosion at full range
 
 ## Scanner / Performance
 
