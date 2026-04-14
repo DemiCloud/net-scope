@@ -91,6 +91,11 @@ type ScanConfig struct {
 	// "polite" caps concurrency, rate-limits probes, adds jitter, and avoids
 	// raw-socket operations — suitable for environments with IDS/firewalls.
 	ThrottlePreset string `toml:"throttle_preset"`
+
+	// AllPorts overrides the Ports list and scans all TCP ports 1–65535.
+	// Enabling this significantly increases scan time; use with Balanced or Polite
+	// throttle preset to avoid fd exhaustion.
+	AllPorts bool `toml:"all_ports"`
 }
 
 // Default returns the built-in defaults. Used when no config file exists
@@ -159,6 +164,7 @@ func (c Config) ToScanConfig() scan.Config {
 		NetBIOS:         c.Scan.NetBIOS,
 		SOCKSProxy:      c.Scan.SOCKSProxy,
 		ThrottlePreset:  c.Scan.ThrottlePreset,
+		AllPorts:        c.Scan.AllPorts,
 	}
 }
 

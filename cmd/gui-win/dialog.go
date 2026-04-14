@@ -31,6 +31,7 @@ const (
 	idSettDefaultTarget = 506
 	idSettProtoHandlers = 507
 	idSettSOCKSProxy    = 508
+	idSettAllPorts      = 509
 )
 
 var (
@@ -47,6 +48,7 @@ var (
 	hwndSettDefaultTarget HWND
 	hwndSettSOCKS         HWND
 	hwndSettSvcConf       HWND // service confidence threshold
+	hwndSettAllPorts      HWND // all-ports scan checkbox
 )
 
 var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -66,6 +68,10 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			closeModal(HWND(hwnd))
 		case idSettProtoHandlers:
 			showProtocolHandlersDialog(HWND(hwnd))
+		case idSettAllPorts:
+			// Toggle the Ports field: disable it when all-ports is checked.
+			allPorts := sendMessage(hwndSettAllPorts, BM_GETCHECK, 0, 0) == BST_CHECKED
+			enableWindow(hwndSettPorts, !allPorts)
 		}
 		return 0
 	case WM_CLOSE:
@@ -78,7 +84,7 @@ var settingsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 func showSettingsDialog(parent HWND) {
 	_, cfgPath, _ := config.Load()
 
-	dlg := createDialogForClient("NetScopeSettings", "Settings", 560, 460, settingsWndProc, parent)
+	dlg := createDialogForClient("NetScopeSettings", "Settings", 560, 500, settingsWndProc, parent)
 	if dlg == 0 {
 		return
 	}
@@ -105,6 +111,10 @@ func showSettingsDialog(parent HWND) {
 	}
 	if appConfig.Scan.NetBIOS {
 		sendMessage(hwndSettNetBIOS, BM_SETCHECK, BST_CHECKED, 0)
+	}
+	if appConfig.Scan.AllPorts {
+		sendMessage(hwndSettAllPorts, BM_SETCHECK, BST_CHECKED, 0)
+		enableWindow(hwndSettPorts, false)
 	}
 
 	// Status line at the bottom of the dialog.
@@ -164,10 +174,14 @@ func createSettingsControls(hwnd HWND) {
 		"NetBIOS Queries  (Windows computer names via UDP 137)",
 		idSettNetBIOS, lx, checkY+56, lw+ew, 22)
 
+	hwndSettAllPorts = makeCheckBox(hwnd,
+		"All Ports  (scan all 65\u202f535 TCP ports — slow; use Balanced or Polite throttle)",
+		idSettAllPorts, lx, checkY+84, lw+ew, 22)
+
 	// Config file path (informational) — allow 3 lines for long paths
 	hwndSettPath, _ = createWindowEx(0, "STATIC", "",
 		WS_CHILD|WS_VISIBLE,
-		lx, checkY+84, lw+ew, 40, hwnd, 0, inst)
+		lx, checkY+112, lw+ew, 40, hwnd, 0, inst)
 
 	// Protocol Handlers button + OK / Cancel — anchored to client bottom.
 	cr := getClientRect(hwnd)
@@ -192,6 +206,7 @@ func applySettings(hwnd HWND) bool {
 	defaultTarget := strings.TrimSpace(getWindowText(hwndSettDefaultTarget))
 	socksProxy := strings.TrimSpace(getWindowText(hwndSettSOCKS))
 	svcConfStr := strings.TrimSpace(getWindowText(hwndSettSvcConf))
+	allPorts := sendMessage(hwndSettAllPorts, BM_GETCHECK, 0, 0) == BST_CHECKED
 	pingFirst := sendMessage(hwndSettPingFirst, BM_GETCHECK, 0, 0) == BST_CHECKED
 	bannerGrab := sendMessage(hwndSettBanner, BM_GETCHECK, 0, 0) == BST_CHECKED
 	netBIOS := sendMessage(hwndSettNetBIOS, BM_GETCHECK, 0, 0) == BST_CHECKED
@@ -260,6 +275,8 @@ func applySettings(hwnd HWND) bool {
 			SOCKSProxy:            socksProxy,
 			ServiceMinConfidence:  svcConf,
 			ProtocolHandlers:      appConfig.Scan.ProtocolHandlers, // edited separately
+			ThrottlePreset:        appConfig.Scan.ThrottlePreset,   // set via toolbar dropdown
+			AllPorts:              allPorts,
 		},
 	}
 
