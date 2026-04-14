@@ -2996,6 +2996,8 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 	appendCopyAsSubmenu(menu) // copies all selected rows in chosen format
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 	menuItem(menu, IDM_CTX_VIEW_DETAILS, "View details\u2026", true)
+	appendMenu(menu, MF_SEPARATOR, 0, "")
+	menuItem(menu, IDM_CTX_ARP_FLUSH, "Flush ARP entry\u2026", r.IP != nil)
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
 	rows := listViewGetSelectedRows(hwndList)
@@ -3027,6 +3029,14 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 		copyToClipboard(parent, ip)
 	case IDM_CTX_VIEW_DETAILS:
 		showHostDetailDialog(parent, ip)
+	case IDM_CTX_ARP_FLUSH:
+		if !serviceElevated {
+			showInfo(parent,
+				"Flushing an ARP entry requires an elevated sensor.\n\nUse the \u201cElevate Sensor\u201d button in the toolbar.",
+				"ARP")
+			return
+		}
+		requestARPDelete(ip)
 	}
 }
 
