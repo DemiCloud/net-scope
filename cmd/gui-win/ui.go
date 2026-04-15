@@ -273,6 +273,15 @@ var (
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
+
+	// macLastIP tracks the most recent IP observed for each MAC address across
+	// completed scans, used to detect MAC flapping.
+	// Written and read only on the UI thread.
+	macLastIP map[string]macSighting
+
+	// macFlaps accumulates observed MAC flapping events for the session.
+	// Written and read only on the UI thread.
+	macFlaps []macFlapEvent
 )
 
 // ensureHostEntry returns the hostEntry for ip, creating it if needed.
@@ -330,6 +339,22 @@ type hostEntry struct {
 	// ProbeResults accumulates on-demand probe results for the session.
 	// Persists across host-detail dialog close/reopen until the host is forgotten.
 	ProbeResults []scan.ProbeResult
+}
+
+// macSighting records the most recent MAC→IP association from a completed scan.
+type macSighting struct {
+	IP   string
+	When time.Time
+}
+
+// macFlapEvent records a single observation of a MAC address appearing at a
+// different IP than it was last seen at, across successive scans.
+type macFlapEvent struct {
+	MAC   string
+	OldIP string
+	NewIP string
+	Gap   time.Duration // elapsed time between the two sightings
+	When  time.Time     // time the new sighting was recorded
 }
 
 type bcastEntry struct {
@@ -943,6 +968,18 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 				mac = listViewGetCellText(hwndList, rows[0], colMAC)
 			}
 			showWoLDialog(HWND(hwnd), mac, "")
+		case IDM_TOOLS_ARP_PING:
+			target := getWindowText(hwndTarget)
+			if target == "" {
+				showInfo(HWND(hwnd), "Enter a target IP or CIDR in the scan bar first.", "Warm ARP Cache")
+				return 0
+			}
+			if !serviceRunning() {
+				showInfo(HWND(hwnd), "Sensor is not running.\nStart the sensor and try again.", "Warm ARP Cache")
+				return 0
+			}
+			sendARPPingViaService(target)
+			setWindowText(hwndScanStatus, "Pinging hosts to warm ARP cache\u2026")
 		case IDM_HELP_FAQ:
 			showFAQDialog(HWND(hwnd))
 		case IDM_HELP_CONN_HANDLERS:
@@ -2613,6 +2650,19 @@ func relativeTime(t time.Time) string {
 	}
 }
 
+// macGapStr formats a duration between MAC sightings for the ARP integrity
+// section of the Scan Report (e.g. "45s", "12m", "3h20m").
+func macGapStr(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
 // updateNetworkTab refreshes the Network tab header with live broadcast stats.
 // Called on the UI thread whenever a broadcast entry arrives or service state changes.
 func updateNetworkTab() {
@@ -2694,7 +2744,8 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "ARP anomalies")
 	}
 	// Cross-reference the live ARP table for IP conflicts (one IP → multiple MACs).
-	arpConflicts := netinfo.FindARPConflicts(netinfo.ReadARPTableFull())
+	arpAll := netinfo.ReadARPTableFull()
+	arpConflicts := netinfo.FindARPConflicts(arpAll)
 	if len(arpConflicts) > 0 {
 		fmt.Fprintf(&b, "  %-28s  %5d  ← investigate — possible conflict or spoofing\r\n",
 			"Duplicate IPs (ARP table)", len(arpConflicts))
@@ -2703,6 +2754,85 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 		}
 	} else {
 		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "Duplicate IPs (ARP table)")
+	}
+	fmt.Fprintf(&b, "\r\n")
+
+	// ── ARP Integrity ─────────────────────────────────────────────────────
+	fmt.Fprintf(&b, "  ── ARP Integrity\r\n")
+	fmt.Fprintf(&b, thin)
+
+	// --- MAC flapping: compare current scan MACs against prior history ---
+	scanTime := time.Now()
+	if macLastIP == nil {
+		macLastIP = make(map[string]macSighting)
+	}
+	// Prune entries older than 72 h to avoid false positives from device replacement.
+	for mac, s := range macLastIP {
+		if scanTime.Sub(s.When) > 72*time.Hour {
+			delete(macLastIP, mac)
+		}
+	}
+	for ipStr, r := range allScanResults {
+		if !r.Alive || r.MAC == nil {
+			continue
+		}
+		mac := r.MAC.String()
+		if prev, had := macLastIP[mac]; had && prev.IP != ipStr {
+			macFlaps = append(macFlaps, macFlapEvent{
+				MAC:   mac,
+				OldIP: prev.IP,
+				NewIP: ipStr,
+				Gap:   scanTime.Sub(prev.When),
+				When:  scanTime,
+			})
+		}
+		macLastIP[mac] = macSighting{IP: ipStr, When: scanTime}
+	}
+	if len(macFlaps) > 0 {
+		fmt.Fprintf(&b, "  %-28s  %5d  ← MAC seen at different IP across scans\r\n",
+			"MAC flapping events", len(macFlaps))
+		start := 0
+		if len(macFlaps) > 20 {
+			start = len(macFlaps) - 20
+		}
+		for _, f := range macFlaps[start:] {
+			label := ""
+			if f.Gap < 30*time.Minute {
+				label = "  \u26a0 rapid change — investigate"
+			}
+			fmt.Fprintf(&b, "    \u2192 %-17s  %s \u2192 %s  (gap: %s)%s\r\n",
+				f.MAC, f.OldIP, f.NewIP, macGapStr(f.Gap), label)
+		}
+	} else {
+		fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "MAC flapping")
+	}
+
+	// --- Stale ARP: dynamic entries in the ARP table for IPs that did not ---
+	// --- respond in the current scan (ghost hosts, stale DHCP leases).     ---
+	if len(allScanResults) > 0 {
+		aliveIPs := make(map[string]bool, len(allScanResults))
+		for ipStr, r := range allScanResults {
+			if r.Alive {
+				aliveIPs[ipStr] = true
+			}
+		}
+		var staleEntries []netinfo.ARPResult
+		for _, e := range arpAll {
+			if e.Type == "dynamic" {
+				if _, wasScanned := allScanResults[e.IP]; wasScanned && !aliveIPs[e.IP] {
+					staleEntries = append(staleEntries, e)
+				}
+			}
+		}
+		if len(staleEntries) > 0 {
+			fmt.Fprintf(&b, "  %-28s  %5d  ← in ARP table but did not respond\r\n",
+				"Stale ARP entries", len(staleEntries))
+			for _, e := range staleEntries {
+				fmt.Fprintf(&b, "    \u2192 %-18s  %s\r\n", e.IP, e.MAC)
+			}
+		} else {
+			fmt.Fprintf(&b, "  %-28s  None detected.\r\n", "Stale ARP entries")
+		}
 	}
 	fmt.Fprintf(&b, "\r\n")
 
@@ -3070,6 +3200,8 @@ func handleCacheOpResult(hwnd HWND, op scan.CacheOpResult) {
 	switch op.Op {
 	case "arp-delete", "arp-clear":
 		arpCacheDialogRefresh()
+	case "arp-ping":
+		setWindowText(hwndScanStatus, "ARP cache warmed \u2014 ready to scan")
 	case "dns-delete", "dns-clear":
 		dnsCacheDialogRefresh()
 	case "route-delete":

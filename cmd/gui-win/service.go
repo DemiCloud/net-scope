@@ -649,6 +649,13 @@ func stopARPPollViaService() {
 	serviceCmd(scan.ServiceCmd{Cmd: "arp-stop"}) //nolint:errcheck
 }
 
+// sendARPPingViaService tells the service to ping every host in the target
+// range to warm the OS ARP cache.  Completion arrives as WM_CACHE_OP with
+// Op="arp-ping".  Returns false if no service is running.
+func sendARPPingViaService(target string) bool {
+	return serviceCmd(scan.ServiceCmd{Cmd: "arp-ping", Target: target})
+}
+
 // sendNetBIOSViaService asks the service to query the NetBIOS name for ip.
 // If found, it streams back a Netbios enrichment event.
 func sendNetBIOSViaService(ip string) {

@@ -172,6 +172,7 @@ func Run(v, target string) {
 	// Cache submenu (ephemeral OS caches: ARP + DNS)
 	hCache := createPopupMenu()
 	appendMenu(hCache, MF_STRING, IDM_TOOLS_ARP_CACHE, "&ARP Cache\u2026")
+	appendMenu(hCache, MF_STRING, IDM_TOOLS_ARP_PING, "&Warm ARP Cache\u2026")
 	appendMenu(hCache, MF_STRING, IDM_TOOLS_DNS_CACHE, "&DNS Cache\u2026")
 	appendMenu(hHosts, MF_POPUP, uintptr(hCache), "Cache")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
