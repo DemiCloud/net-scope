@@ -166,6 +166,10 @@ const (
 	IDM_COPY_AS_CSV  = 3211 // RFC 4180 CSV with header row
 	IDM_COPY_AS_JSON = 3212 // JSON array of objects
 
+	// Tab strip right-click: reorder tabs.
+	IDM_TAB_MOVE_LEFT  = 3300
+	IDM_TAB_MOVE_RIGHT = 3301
+
 	// Status bar part indices (2 parts: Listener | Service)
 	statusPartListener = 0 // passive broadcast listener state
 	statusPartService  = 1 // service / elevation state (rightmost, fixed width)
@@ -213,6 +217,48 @@ func init() {
 	for i, v := range tabIndexToView {
 		viewToTabIndex[v] = int32(i)
 	}
+}
+
+// viewTabLabel maps each stable view identifier to its tab strip display label.
+// Labels are display-only; always refer to views by their stable key elsewhere.
+var viewTabLabel = map[string]string{
+	ViewHosts:    "Scanner",
+	ViewServices: "Services",
+	ViewMDNS:     "mDNS",
+	ViewSSDP:     "SSDP",
+	ViewWSD:      "WSD",
+	ViewDHCP:     "DHCP",
+	ViewNetwork:  "Network",
+	ViewHealth:   "Scan Report",
+	ViewIssues:   "Issues",
+}
+
+// rebuildViewToTabIndex rebuilds viewToTabIndex from the current tabIndexToView
+// slice. Must be called after any tab reorder.
+func rebuildViewToTabIndex() {
+	viewToTabIndex = make(map[string]int32, len(tabIndexToView))
+	for i, v := range tabIndexToView {
+		viewToTabIndex[v] = int32(i)
+	}
+}
+
+// validTabOrder reports whether order contains exactly the same view keys as
+// the default tabIndexToView, with no duplicates or unknowns.
+func validTabOrder(order []string) bool {
+	if len(order) != len(tabIndexToView) {
+		return false
+	}
+	seen := make(map[string]bool, len(order))
+	for _, v := range order {
+		if _, ok := viewTabLabel[v]; !ok {
+			return false
+		}
+		if seen[v] {
+			return false
+		}
+		seen[v] = true
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
