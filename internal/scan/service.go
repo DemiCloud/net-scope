@@ -56,7 +56,7 @@ type ServiceCmd struct {
 	// Cmd is one of: "scan", "stop", "probe", "port-scan", "port-scan-stop",
 	// "dhcp-start", "dhcp-stop",
 	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
-	// "arp-snapshot", "arp-delete", "arp-clear",
+	// "arp-snapshot", "arp-delete", "arp-clear", "arp-ping",
 	// "dns-snapshot", "dns-delete", "dns-clear",
 	// "route-snapshot", "route-delete",
 	// "socket-snapshot",
@@ -1000,6 +1000,24 @@ func RunServiceConn(conn net.Conn) error {
 
 		case "arp-clear":
 			asyncCacheOp("arp-clear", func() error { return netinfo.FlushARPCache(0) })
+
+		case "arp-ping":
+			// Send ICMP echo requests to every host in the target range to warm
+			// the OS ARP cache before a scan. Runs in a goroutine; completion is
+			// signalled via WorkerStatus (done) and CacheOpResult (arp-ping OK).
+			if cmd.Target == "" {
+				_ = safeSend(ServiceMsg{Err: "arp-ping: missing target"})
+				continue
+			}
+			target := cmd.Target
+			_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "ARP Ping", Running: true}})
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				PingSweep(ctx, target, time.Second)
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "ARP Ping", Running: false}})
+				_ = safeSend(ServiceMsg{CacheOp: &CacheOpResult{Op: "arp-ping", OK: true}})
+			}()
 
 		case "dns-snapshot":
 			// One-shot: stream the full DNS resolver cache and signal completion.

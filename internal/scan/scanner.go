@@ -176,6 +176,34 @@ func NewScanner(cfg Config) *Scanner {
 	return &Scanner{Config: cfg}
 }
 
+// PingSweep sends ICMP echo requests to every host in the target range and
+// returns when all pings have completed or the context is cancelled.
+// Its sole purpose is to warm the OS ARP cache before a full scan; it does
+// not return per-host results. Concurrency is capped at 256 in-flight pings.
+func PingSweep(ctx context.Context, target string, timeout time.Duration) {
+	hosts, err := expandTarget(target)
+	if err != nil || len(hosts) == 0 {
+		return
+	}
+	const maxConcurrent = 256
+	limit := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for _, ip := range hosts {
+		if ctx.Err() != nil {
+			break
+		}
+		ip := ip
+		wg.Add(1)
+		limit <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-limit }()
+			ping(ctx, ip, timeout)
+		}()
+	}
+	wg.Wait()
+}
+
 // Scan runs discovery over the provided CIDR or single IP, streaming Result
 // values to the returned channel. The channel is closed when the scan
 // completes or the context is cancelled.
