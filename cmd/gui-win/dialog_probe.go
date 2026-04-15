@@ -47,6 +47,8 @@ const (
 // ---------------------------------------------------------------------------
 
 var (
+	hwndProbeDlg HWND // UI-thread tracking var for the modeless dialog
+
 	hwndProbeIP        HWND
 	hwndProbePort      HWND
 	hwndProbeTransport HWND
@@ -99,8 +101,7 @@ var probeDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			if probeDlgRunning {
 				probeDlgStop()
 			}
-			atomic.StoreUintptr(&hwndProbeDlgAtomic, 0)
-			closeModal(HWND(hwnd))
+			closeProbeDlg()
 		}
 		return 0
 
@@ -153,8 +154,7 @@ var probeDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		if probeDlgRunning {
 			probeDlgStop()
 		}
-		atomic.StoreUintptr(&hwndProbeDlgAtomic, 0)
-		closeModal(HWND(hwnd))
+		closeProbeDlg()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
@@ -405,11 +405,33 @@ func probeDlgCopyOutput() {
 // Public entry point
 // ---------------------------------------------------------------------------
 
+// closeProbeDlg destroys the modeless Probe dialog.
+func closeProbeDlg() {
+	if hwndProbeDlg == 0 {
+		return
+	}
+	atomic.StoreUintptr(&hwndProbeDlgAtomic, 0)
+	h := hwndProbeDlg
+	hwndProbeDlg = 0
+	hwndProbeIP = 0
+	hwndProbePort = 0
+	hwndProbeTransport = 0
+	hwndProbeSelect = 0
+	hwndProbeRun = 0
+	hwndProbeOutput = 0
+	destroyWindow(h)
+}
+
 // showProbeDialog opens the deep probe dialog.
 //   - parent: the owner window (main window or host detail dialog).
 //   - ip: pre-filled IP address; may be empty.
 //   - ipLocked: when true the IP field is read-only (opened from a host dialog).
 func showProbeDialog(parent HWND, ip string, ipLocked bool) {
+	if hwndProbeDlg != 0 {
+		setForegroundWindow(hwndProbeDlg)
+		return
+	}
+
 	probeDlgIPLocked = ipLocked
 	probeDlgSelectedProbe = nil
 	probeDlgRunID = ""
@@ -431,7 +453,8 @@ func showProbeDialog(parent HWND, ip string, ipLocked bool) {
 	}
 	setFontAllChildren(dlg, appFont)
 
+	hwndProbeDlg = dlg
 	atomic.StoreUintptr(&hwndProbeDlgAtomic, uintptr(dlg))
-	runModal(dlg, parent)
-	// On close, hwndProbeDlgAtomic is already cleared by WM_CLOSE / idProbeClose.
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }

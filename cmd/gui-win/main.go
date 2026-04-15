@@ -234,7 +234,44 @@ func Run(v, target string) {
 			postMessage(hwndMain, WM_COMMAND, IDC_SCAN, 0)
 			continue
 		}
+		// Route keyboard/tab events to any open modeless dialog.
+		if isModelessDialogMsg(&msg) {
+			continue
+		}
 		translateMessage(&msg)
 		dispatchMessage(&msg)
 	}
+}
+
+// isModelessDialogMsg routes the message through IsDialogMessage for every
+// currently-open modeless dialog, enabling Tab/Shift-Tab keyboard navigation
+// and Enter/Escape handling inside those windows.
+// Returns true if the message was consumed and should not be dispatched.
+func isModelessDialogMsg(msg *MSG) bool {
+	hwnds := [...]HWND{
+		// Existing modeless dialogs.
+		hwndWorkerQueueDlg,
+		hwndConnDlg,
+		hwndARPCacheDlg,
+		hwndDNSCacheDlg,
+		hwndEvtLogDlg,
+		hwndRouteTableDlg,
+		hwndIfDlg,
+		// Newly converted modeless dialogs.
+		hwndPortScanDlg,
+		hwndProbeDlg,
+		hwndMACLookupDlg,
+		hwndSvcDetailDlg,
+		hwndAllSvcsDlg,
+		hwndHostDetailDlg,
+		hwndDiagnosticsDlg,
+		hwndAllHostsDlg,
+		hwndPickDialog,
+	}
+	for _, h := range hwnds {
+		if h != 0 && isDialogMessage(h, msg) {
+			return true
+		}
+	}
+	return false
 }
