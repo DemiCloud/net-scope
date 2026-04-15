@@ -153,29 +153,21 @@ Do **not** push automatically; only commit locally unless the user explicitly as
 
 **Before committing, check `TODO.md`** — if the change being committed completes or fixes something on the list, mark the relevant item(s) `[x]` and include `TODO.md` in the same commit.
 
-**Never commit compiled binaries.** Only source files, generated Go resources
-(`.syso`, embedded byte slices), and checked-in data files (e.g. `oui.json`) belong
-in the repository. Compiled binaries must live in gitignored directories (`build/`,
-`dist/`) produced by `make`. Before every commit, verify the staged file list does
-not contain any ELF/PE/Mach-O executables:
+**Never compile into the repo root.** Always use `make` (which outputs to `build/`) or
+explicitly target `build/` with `-o`:
 
 ```bash
-# Review staged files and spot-check any suspiciously large or binary-named entries:
-git diff --cached --name-only
-# Confirm no binary is staged (should exit 0 with no output):
-git diff --cached --name-only | xargs -r file | grep -i "ELF\|PE32\|Mach-O" && echo "ERROR: binary staged" || true
+# Correct
+make linux
+go build -o build/net-scope_linux_amd64 ./cmd/net-scope/
+
+# Wrong — drops binary in the working directory
+go build ./cmd/net-scope/
 ```
 
-If a binary is accidentally staged, remove it before committing:
-
-```bash
-git rm --cached <binary-file>
-```
-
-Binaries compiled at the **repo root** are also covered by `.gitignore` patterns
-(`/net-scope`, `/net-scope_*`). **Never run `go build` without an explicit `-o`
-flag that targets `build/` or `dist/`** — a bare `go build ./cmd/net-scope/`
-drops the binary in the working directory where it can be accidentally staged.
+Compiled binaries belong only in `build/` or `dist/`, both of which are gitignored.
+Only source files, generated Go resources (`.syso`, embedded byte slices), and
+checked-in data files (e.g. `oui.json`) belong in the repository.
 
 **Keep the wiki up to date.** The wiki lives in `.wiki/` (a separate git repo, cloned locally). When a change affects user-visible behaviour documented there, update the relevant `.wiki/*.md` file in the same working session. If `.wiki/` is missing or empty, notify the operator — the wiki repo needs to be cloned first: `git clone https://github.com/demicloud/net-scope.wiki.git .wiki`
 
