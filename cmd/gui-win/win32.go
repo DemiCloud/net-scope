@@ -93,6 +93,7 @@ const (
 	IDC_SEARCH_CLOSE  = 120 // Ctrl+F find bar — "×" dismiss button
 	IDC_LIST_SERVICES = 121 // Services tab listview
 	IDC_THROTTLE      = 123 // scan throttle preset dropdown in scan bar
+	IDC_LIST_ISSUES   = 124 // Issues tab listview
 )
 
 // ---------------------------------------------------------------------------
@@ -186,6 +187,7 @@ const (
 	ViewNetwork  = "network"
 	ViewHealth   = "health"
 	ViewServices = "services"
+	ViewIssues   = "issues"
 )
 
 // tabIndexToView maps a tab control index to its stable view identifier.
@@ -199,6 +201,7 @@ var tabIndexToView = []string{
 	ViewDHCP,     // 5
 	ViewNetwork,  // 6
 	ViewHealth,   // 7
+	ViewIssues,   // 8
 }
 
 // viewToTabIndex is the reverse map, built once at init time.

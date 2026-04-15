@@ -1272,6 +1272,10 @@ var (
 	dhcpColTitles = []string{"Time", "Type", "Client MAC", "Hostname", "Client IP", "Requested IP", "Offered IP", "Server IP"}
 	dhcpDefWidths = []int32{75, 90, 140, 160, 120, 120, 120, 120}
 	dhcpColVis    = []bool{true, true, true, true, true, true, true, true}
+
+	issuesColTitles = []string{"Severity", "Category", "Description", "Address", "Detail", "Time"}
+	issuesDefWidths = []int32{80, 90, 280, 130, 260, 100}
+	issuesColVis    = []bool{true, true, true, true, true, true}
 )
 
 // ---------------------------------------------------------------------------
@@ -1341,6 +1345,20 @@ func applyDHCPSort(_ HWND, col int32, asc bool) {
 	lvTextSort(hwndListDHCP, int32(len(dhcpColTitles)), col, asc)
 }
 
+// applyIssuesSort sorts the Issues listview. Rows have no deduplication maps.
+func applyIssuesSort(_ HWND, col int32, asc bool) {
+	if col < 0 {
+		return
+	}
+	lvTextSort(hwndListIssues, int32(len(issuesColTitles)), col, asc)
+}
+
+// listViewAddIssueRow appends one issue row to the Issues listview.
+// Columns: Severity | Category | Description | Address | Detail | Time.
+func listViewAddIssueRow(hwnd HWND, r issueRow) {
+	listViewAppendRow(hwnd, []string{r.Severity, r.Category, r.Description, r.Address, r.Detail, r.Time})
+}
+
 // applySvcTabSort sorts the Services listview and rebuilds svcTabIDToRow and
 // svcTabRowEntry so that upsert and double-click remain correct after a sort.
 func applySvcTabSort(_ HWND, col int32, asc bool) {
@@ -1395,6 +1413,7 @@ var mdnsColKeys = []string{"ip", "name", "service", "device_model", "capabilitie
 var ssdpColKeys = []string{"ip", "server", "type", "services", "location", "last_seen"}
 var wsdColKeys  = []string{"ip", "types", "transport_urls", "scopes", "endpoint_uuid", "last_seen"}
 var dhcpColKeys = []string{"time", "type", "client_mac", "hostname", "client_ip", "requested_ip", "offered_ip", "server_ip"}
+var issuesColKeys = []string{"severity", "category", "description", "address", "detail", "time"}
 
 // snapshotColState builds a TabColumnState for one listview using named column
 // keys. Any column key in keys[] becomes a Cols entry. Only called on the UI thread.
@@ -1465,6 +1484,7 @@ func snapshotAllColumnStates() map[string]config.TabColumnState {
 		ViewWSD:      snapshotColState(hwndListWSD, wsdColVis, wsdColKeys),
 		ViewDHCP:     snapshotColState(hwndListDHCP, dhcpColVis, dhcpColKeys),
 		ViewServices: snapshotColState(hwndListServices, svcTabColVis, svcTabColKeys),
+		ViewIssues:   snapshotColState(hwndListIssues, issuesColVis, issuesColKeys),
 	}
 }
 
@@ -1488,6 +1508,9 @@ func restoreAllColumnStates(m map[string]config.TabColumnState) {
 	}
 	if st, ok := m[ViewServices]; ok {
 		applyColState(hwndListServices, svcTabColVis, svcTabColKeys, svcTabColTitles, st)
+	}
+	if st, ok := m[ViewIssues]; ok {
+		applyColState(hwndListIssues, issuesColVis, issuesColKeys, issuesColTitles, st)
 	}
 }
 
