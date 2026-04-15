@@ -21,6 +21,8 @@ const (
 )
 
 var (
+	hwndMACLookupDlg HWND // UI-thread tracking var for the modeless dialog
+
 	hwndMACEdit      HWND
 	hwndMACResult    HWND
 	macEditOrigProc  uintptr
@@ -29,7 +31,7 @@ var (
 // macEditSubclassCb intercepts VK_ESCAPE so pressing Escape closes the dialog.
 var macEditSubclassCb = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) uintptr {
 	if uint32(msg) == WM_KEYDOWN && wParam == VK_ESCAPE {
-		closeModal(getParent(HWND(hwnd)))
+		closeMACLookupDialog()
 		return 0
 	}
 	return callWindowProc(macEditOrigProc, HWND(hwnd), uint32(msg), wParam, lParam)
@@ -55,7 +57,7 @@ var macLookupWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		return 0
 
 	case WM_CLOSE:
-		closeModal(HWND(hwnd))
+		closeMACLookupDialog()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
@@ -147,8 +149,24 @@ func doMACLookup(hwnd HWND) {
 	_ = hwnd
 }
 
+// closeMACLookupDialog destroys the modeless MAC Vendor Lookup dialog.
+func closeMACLookupDialog() {
+	if hwndMACLookupDlg == 0 {
+		return
+	}
+	h := hwndMACLookupDlg
+	hwndMACLookupDlg = 0
+	hwndMACEdit = 0
+	hwndMACResult = 0
+	destroyWindow(h)
+}
+
 // showMACLookupDialog opens the MAC Vendor Lookup tool dialog.
 func showMACLookupDialog(parent HWND) {
+	if hwndMACLookupDlg != 0 {
+		setForegroundWindow(hwndMACLookupDlg)
+		return
+	}
 	const (
 		clientW int32 = 380
 		clientH int32 = 132
@@ -160,5 +178,7 @@ func showMACLookupDialog(parent HWND) {
 	}
 	setFontAllChildren(dlg, appFont)
 	setFocus(hwndMACEdit)
-	runModal(dlg, parent)
+	hwndMACLookupDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }

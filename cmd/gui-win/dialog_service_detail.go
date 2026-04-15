@@ -46,6 +46,9 @@ const (
 
 // Dialog-local handles.
 var (
+	hwndSvcDetailDlg HWND // UI-thread tracking var for the modeless dialog
+	hwndAllSvcsDlg   HWND // UI-thread tracking var for the All Services dialog
+
 	hwndSvcSummary HWND // identity body EDIT
 	hwndSvcObsList HWND // observations listview
 	hwndSvcObsHint HWND // "No observations" overlay
@@ -74,14 +77,14 @@ var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idSvcDetailClose:
-			closeModal(HWND(hwnd))
+			closeSvcDetailDialog()
 		case idSvcDetailCopy:
 			if !shouldSuppressDropdown(HWND(lParam)) {
 				showSvcCopyMenu(HWND(hwnd))
 			}
 		case idSvcDetailViewHost:
 			ip := currentSvcDetail.IP
-			closeModal(HWND(hwnd))
+			closeSvcDetailDialog()
 			if ip != "" {
 				showHostDetailDialog(hwndMain, ip)
 			}
@@ -89,14 +92,32 @@ var svcDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintpt
 		return 0
 
 	case WM_CLOSE:
-		closeModal(HWND(hwnd))
+		closeSvcDetailDialog()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-// showServiceDetailDialog opens the modal service detail dialog for s.
+// closeSvcDetailDialog destroys the modeless Service Detail dialog.
+func closeSvcDetailDialog() {
+	if hwndSvcDetailDlg == 0 {
+		return
+	}
+	h := hwndSvcDetailDlg
+	hwndSvcDetailDlg = 0
+	hwndSvcSummary = 0
+	hwndSvcObsList = 0
+	hwndSvcObsHint = 0
+	hwndSvcCopyBtn = 0
+	destroyWindow(h)
+}
+
+// showServiceDetailDialog opens the modeless service detail dialog for s.
 func showServiceDetailDialog(parent HWND, s scan.Service) {
+	if hwndSvcDetailDlg != 0 {
+		setForegroundWindow(hwndSvcDetailDlg)
+		return
+	}
 	currentSvcDetail = s
 
 	name := svcEntryDisplayName(s)
@@ -115,7 +136,9 @@ func showServiceDetailDialog(parent HWND, s scan.Service) {
 	setFontAllChildren(dlg, appFont)
 	sendMessage(hwndSvcSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
 
-	runModal(dlg, parent)
+	hwndSvcDetailDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
 
 // createSvcDetailControls builds all child controls for the service detail dialog.
@@ -386,7 +409,7 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 	case WM_COMMAND:
 		switch loword(wParam) {
 		case idAllSvcsDlgClose:
-			closeModal(HWND(hwnd))
+			closeAllSvcsDlg()
 		case idAllSvcsDlgFilter:
 			if hiword(wParam) == EN_CHANGE {
 				f := strings.ToLower(getWindowText(hwndAllSvcsDlgFilter))
@@ -401,18 +424,18 @@ var allSvcsDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 			return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 		}
 		if hdr.Code == NM_DBLCLK {
-			openAllSvcsSelectedRow(HWND(hwnd))
+			openAllSvcsSelectedRow()
 		}
 		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 
 	case WM_KEYDOWN:
 		if wParam == VK_RETURN {
-			openAllSvcsSelectedRow(HWND(hwnd))
+			openAllSvcsSelectedRow()
 		}
 		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 
 	case WM_CLOSE:
-		closeModal(HWND(hwnd))
+		closeAllSvcsDlg()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
@@ -462,7 +485,7 @@ func allSvcsDlgInsertRow(sv HWND, s scan.Service) int32 {
 	})
 }
 
-func openAllSvcsSelectedRow(parent HWND) {
+func openAllSvcsSelectedRow() {
 	row := int32(sendMessage(hwndAllSvcsDlgList, LVM_GETNEXTITEM, ^uintptr(0), LVNI_SELECTED))
 	if row < 0 {
 		return
@@ -471,8 +494,20 @@ func openAllSvcsSelectedRow(parent HWND) {
 	if !ok {
 		return
 	}
-	closeModal(parent)
+	closeAllSvcsDlg()
 	showServiceDetailDialog(hwndMain, s)
+}
+
+// closeAllSvcsDlg destroys the modeless All Services dialog.
+func closeAllSvcsDlg() {
+	if hwndAllSvcsDlg == 0 {
+		return
+	}
+	h := hwndAllSvcsDlg
+	hwndAllSvcsDlg = 0
+	hwndAllSvcsDlgList = 0
+	hwndAllSvcsDlgFilter = 0
+	destroyWindow(h)
 }
 
 // showAllServicesDialog opens the unified View All Services dialog.
@@ -485,6 +520,10 @@ func showAllServicesDialog(parent HWND) {
 			"All Services")
 		return
 	}
+	if hwndAllSvcsDlg != 0 {
+		setForegroundWindow(hwndAllSvcsDlg)
+		return
+	}
 
 	registerDialogClass("NetScopeAllSvcsDlg", allSvcsDlgWndProc)
 	dlg := createDialogForClient("NetScopeAllSvcsDlg", "All Services",
@@ -493,7 +532,9 @@ func showAllServicesDialog(parent HWND) {
 		return
 	}
 	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
+	hwndAllSvcsDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
 
 // ---------------------------------------------------------------------------

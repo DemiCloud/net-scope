@@ -41,6 +41,8 @@ const (
 // ---------------------------------------------------------------------------
 
 var (
+	hwndPortScanDlg HWND // UI-thread tracking var for the modeless dialog
+
 	hwndPScanIP     HWND
 	hwndPScanMode   HWND
 	hwndPScanPorts  HWND
@@ -91,8 +93,7 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 			if pScanRunning {
 				portScanDlgStop()
 			}
-			atomic.StoreUintptr(&hwndPortScanDlgAtomic, 0)
-			closeModal(HWND(hwnd))
+			closePortScanDialog()
 		}
 		return 0
 
@@ -143,8 +144,7 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 		if pScanRunning {
 			portScanDlgStop()
 		}
-		atomic.StoreUintptr(&hwndPortScanDlgAtomic, 0)
-		closeModal(HWND(hwnd))
+		closePortScanDialog()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
@@ -464,11 +464,33 @@ func portScanServiceName(port int) string {
 // Public entry point
 // ---------------------------------------------------------------------------
 
+// closePortScanDialog destroys the modeless Port Scan dialog.
+func closePortScanDialog() {
+	if hwndPortScanDlg == 0 {
+		return
+	}
+	atomic.StoreUintptr(&hwndPortScanDlgAtomic, 0)
+	h := hwndPortScanDlg
+	hwndPortScanDlg = 0
+	hwndPScanIP = 0
+	hwndPScanMode = 0
+	hwndPScanPorts = 0
+	hwndPScanList = 0
+	hwndPScanScan = 0
+	hwndPScanStatus = 0
+	destroyWindow(h)
+}
+
 // showPortScanDialog opens the Port Scan dialog.
 //   - parent: the owner window.
 //   - ip: pre-filled IP address; may be empty.
 //   - ipLocked: when true the IP field is read-only (opened from a host row).
 func showPortScanDialog(parent HWND, ip string, ipLocked bool) {
+	if hwndPortScanDlg != 0 {
+		setForegroundWindow(hwndPortScanDlg)
+		return
+	}
+
 	pScanIPLocked = ipLocked
 	pScanRunID = ""
 	pScanRunning = false
@@ -491,7 +513,8 @@ func showPortScanDialog(parent HWND, ip string, ipLocked bool) {
 	}
 	setFontAllChildren(dlg, appFont)
 
+	hwndPortScanDlg = dlg
 	atomic.StoreUintptr(&hwndPortScanDlgAtomic, uintptr(dlg))
-	runModal(dlg, parent)
-	// On close, hwndPortScanDlgAtomic is already cleared by WM_CLOSE / idPScanClose.
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }

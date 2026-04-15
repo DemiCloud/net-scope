@@ -84,6 +84,7 @@ const (
 // Dialog-local handles (valid while dialog is open).
 var (
 	// Host detail dialog controls.
+	hwndHostDetailDlg    HWND // UI-thread tracking var for the modeless dialog
 	hwndHostStatus       HWND // one-line status: sources + freshness + completeness
 	hwndHostSummary      HWND
 	hwndHostProbeList    HWND // observations listview
@@ -98,7 +99,6 @@ var (
 
 	// currentDetailIP is the IP shown in the dialog right now.
 	currentDetailIP string
-
 )
 
 // hostDetailWndProc is the window procedure for the host detail dialog.
@@ -156,7 +156,30 @@ var hostDetailWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintp
 })
 
 func hostDetailClose(hwnd HWND) {
-	closeModal(hwnd)
+	_ = hwnd
+	closeHostDetailDialog()
+}
+
+// closeHostDetailDialog destroys the modeless Host Detail dialog.
+func closeHostDetailDialog() {
+	if hwndHostDetailDlg == 0 {
+		return
+	}
+	closeDiagnosticsDialog() // close dependent sub-dialog first
+	h := hwndHostDetailDlg
+	hwndHostDetailDlg = 0
+	hwndHostStatus = 0
+	hwndHostSummary = 0
+	hwndHostProbeList = 0
+	hwndHostObsHint = 0
+	hwndHostCopyBtn = 0
+	hwndHostCloseBtn = 0
+	hwndHostForgetBtn = 0
+	hwndHostConnect = 0
+	hwndHostProbesBtn = 0
+	hwndHostScanBtn = 0
+	hwndHostDiagBtn = 0
+	destroyWindow(h)
 }
 
 // buildStatusLine returns a compact one-liner for the status STATIC control
@@ -348,8 +371,12 @@ func hostDetailForget(hwnd HWND) {
 	hostDetailClose(hwnd)
 }
 
-// showHostDetailDialog opens the host detail modal for the given IP.
+// showHostDetailDialog opens the host detail dialog for the given IP.
 func showHostDetailDialog(parent HWND, ip string) {
+	if hwndHostDetailDlg != 0 {
+		setForegroundWindow(hwndHostDetailDlg)
+		return
+	}
 	currentDetailIP = ip
 
 	dlg := createDialogForClient("NetScopeHostDetail", "Host \u2014 "+ip,
@@ -374,7 +401,9 @@ func showHostDetailDialog(parent HWND, ip string) {
 	// Override the summary pane with a monospace font so padded labels align.
 	sendMessage(hwndHostSummary, WM_SETFONT, uintptr(getMonoFont()), 1)
 
-	runModal(dlg, parent)
+	hwndHostDetailDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
 
 // createHostDetailControls builds all child controls for the dialog.
@@ -938,7 +967,7 @@ var diagWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr) ui
 		return 0
 
 	case WM_CLOSE:
-		closeModal(HWND(hwnd))
+		closeDiagnosticsDialog()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
@@ -960,15 +989,31 @@ func createDiagnosticsControls(hwnd HWND) {
 	_ = y // all buttons on one row
 }
 
+// closeDiagnosticsDialog destroys the modeless Diagnostics dialog.
+func closeDiagnosticsDialog() {
+	if hwndDiagnosticsDlg == 0 {
+		return
+	}
+	h := hwndDiagnosticsDlg
+	hwndDiagnosticsDlg = 0
+	destroyWindow(h)
+}
+
 // showDiagnosticsDialog opens the Diagnostics sub-dialog for the current host.
 func showDiagnosticsDialog(parent HWND) {
+	if hwndDiagnosticsDlg != 0 {
+		setForegroundWindow(hwndDiagnosticsDlg)
+		return
+	}
 	dlg := createDialogForClient("NetScopeDiagnostics", "Diagnostics \u2014 "+currentDetailIP,
 		430, 46, diagWndProc, parent)
 	if dlg == 0 {
 		return
 	}
 	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
+	hwndDiagnosticsDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,7 +1049,9 @@ const (
 )
 
 var (
-	hwndAllHostsList HWND
+	hwndDiagnosticsDlg HWND // UI-thread tracking var for the modeless Diagnostics dialog
+	hwndAllHostsDlg    HWND // UI-thread tracking var for the modeless All Hosts dialog
+	hwndAllHostsList   HWND
 )
 
 // allHostsSelectedIP returns the IP of the currently selected All-Hosts row, or "".
@@ -1045,7 +1092,7 @@ func hostsListViewRepopulate(hwnd HWND, filter string) {
 func allHostsDoAction(dlg HWND, ip string, action int32) {
 	switch action {
 	case idAllHostsCtxDetails:
-		closeModal(dlg)
+		closeAllHostsDlg()
 		showHostDetailDialog(hwndMain, ip)
 	case idAllHostsCtxCopy:
 		copyToClipboard(dlg, buildHostJSON([]string{ip}))
@@ -1100,14 +1147,14 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 	case WM_COMMAND:
 		if loword(wParam) == idAllHostsClose {
-			closeModal(HWND(hwnd))
+			closeAllHostsDlg()
 		}
 		return 0
 
 	case WM_KEYDOWN:
 		if wParam == VK_RETURN {
 			if ip := allHostsSelectedIP(); ip != "" {
-				closeModal(HWND(hwnd))
+				closeAllHostsDlg()
 				showHostDetailDialog(hwndMain, ip)
 			}
 		}
@@ -1121,7 +1168,7 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		switch hdr.Code {
 		case NM_DBLCLK:
 			if ip := allHostsSelectedIP(); ip != "" {
-				closeModal(HWND(hwnd))
+				closeAllHostsDlg()
 				showHostDetailDialog(hwndMain, ip)
 			}
 		case NM_RCLICK:
@@ -1151,16 +1198,31 @@ var allHostsWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 
 	case WM_CLOSE:
-		closeModal(HWND(hwnd))
+		closeAllHostsDlg()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
-// showAllHostsDialog opens the "View All Hosts" modal.
+// closeAllHostsDlg destroys the modeless All Hosts dialog.
+func closeAllHostsDlg() {
+	if hwndAllHostsDlg == 0 {
+		return
+	}
+	h := hwndAllHostsDlg
+	hwndAllHostsDlg = 0
+	hwndAllHostsList = 0
+	destroyWindow(h)
+}
+
+// showAllHostsDialog opens the "View All Hosts" dialog.
 func showAllHostsDialog(parent HWND) {
 	if len(hostRegistry) == 0 {
 		showInfo(parent, "No hosts have been discovered in this session yet.", "All Hosts")
+		return
+	}
+	if hwndAllHostsDlg != 0 {
+		setForegroundWindow(hwndAllHostsDlg)
 		return
 	}
 
@@ -1170,7 +1232,9 @@ func showAllHostsDialog(parent HWND) {
 		return
 	}
 	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
+	hwndAllHostsDlg = dlg
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,7 +1281,7 @@ var pickEditSubclassProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam ui
 			pickHostConfirm(hwndPickDialog)
 			return 0
 		case VK_ESCAPE:
-			closeModal(hwndPickDialog)
+			closePickHostDialog()
 			return 0
 		}
 	}
@@ -1409,8 +1473,7 @@ func pickHostConfirm(hwnd HWND) {
 	}
 	// Literal IP — open the detail dialog immediately.
 	if isIPString(ip) {
-		atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
-		closeModal(hwnd)
+		closePickHostDialog()
 		showHostDetailDialog(hwndMain, ip)
 		return
 	}
@@ -1527,7 +1590,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case NM_DBLCLK:
 			// Double-click only opens detail for a single selection.
 			if sel := pickHostSelectedIPs(); len(sel) == 1 {
-				closeModal(HWND(hwnd))
+				closePickHostDialog()
 				showHostDetailDialog(hwndMain, sel[0])
 			}
 		case LVN_KEYDOWN:
@@ -1564,7 +1627,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			switch cmd {
 			case idPickHostCtxView:
 				if len(selected) == 1 {
-					closeModal(HWND(hwnd))
+					closePickHostDialog()
 					showHostDetailDialog(hwndMain, selected[0])
 				}
 			case idPickHostCtxCopy:
@@ -1632,8 +1695,7 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 
 		if len(res.ips) == 1 {
 			// Single result: close and open the detail dialog.
-			atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
-			closeModal(HWND(hwnd))
+			closePickHostDialog()
 			showHostDetailDialog(hwndMain, res.ips[0])
 			return 0
 		}
@@ -1661,21 +1723,43 @@ var pickHostWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		return 0
 
 	case WM_CLOSE:
-		atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
-		closeModal(HWND(hwnd))
+		closePickHostDialog()
 		return 0
 	}
 	return defWindowProc(HWND(hwnd), uint32(msg), wParam, lParam)
 })
 
+// closePickHostDialog destroys the modeless Hosts (Pick Host) dialog.
+func closePickHostDialog() {
+	if hwndPickDialog == 0 {
+		return
+	}
+	atomic.StoreUintptr(&hwndPickDialogAtomic, 0)
+	h := hwndPickDialog
+	hwndPickDialog = 0
+	hwndPickEdit = 0
+	hwndPickList = 0
+	hwndPickHint = 0
+	hwndPickHostPlaceholder = 0
+	pickResolvedIPSet = nil
+	pickResolving = false
+	destroyWindow(h)
+}
+
 // showPickHostDialog opens the Query Host dialog.
 // Works without any prior scan — the user can type any IP or hostname.
 func showPickHostDialog(parent HWND) {
+	if hwndPickDialog != 0 {
+		setForegroundWindow(hwndPickDialog)
+		return
+	}
 	dlg := createDialogForClient("NetScopePickHost", "Hosts",
 		460, 360, pickHostWndProc, parent)
 	if dlg == 0 {
 		return
 	}
 	setFontAllChildren(dlg, appFont)
-	runModal(dlg, parent)
+	// hwndPickDialog is set inside pickHostWndProc WM_CREATE (fires synchronously).
+	showWindow(dlg, SW_SHOW)
+	updateWindow(dlg)
 }
