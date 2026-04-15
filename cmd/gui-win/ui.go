@@ -81,6 +81,7 @@ var (
 	healthView infoView // Scan Report tab — stats header only
 	hwndListServices       HWND // Services tab
 	hwndServicesPlaceholder HWND // empty-state overlay for Services tab
+	hwndListIssues HWND // Issues tab
 	scanEverCompleted     bool // true once the first scan has completed
 	hwndTabCtrl      HWND
 	hwndScanStatus   HWND // inline scan status label on the scan bar
@@ -127,8 +128,8 @@ var (
 	activeOnlyFilter bool
 
 	// tabSearchFilter stores the Ctrl+F search string for each tab (indexed
-	// by tab number 0–7).  An empty string means no filter is active.
-	tabSearchFilter [8]string
+	// by tab number 0–8).  An empty string means no filter is active.
+	tabSearchFilter [9]string
 
 	// dhcpAllEvents is the backing store for DHCP filter repopulation.
 	// Every DHCP event is appended here when received, before being rendered.
@@ -282,6 +283,15 @@ var (
 	// macFlaps accumulates observed MAC flapping events for the session.
 	// Written and read only on the UI thread.
 	macFlaps []macFlapEvent
+
+	// issueRows is the backing store for the Issues tab.
+	// Rows with persistent=false are rebuilt at each scan completion;
+	// rows with persistent=true accumulate for the session (event log, worker failures).
+	// Written and read only on the UI thread.
+	issueRows []issueRow
+	// macFlapsAdded tracks how many macFlap events have already been
+	// added to issueRows as persistent rows, to avoid duplicates.
+	macFlapsAdded int
 )
 
 // ensureHostEntry returns the hostEntry for ip, creating it if needed.
@@ -355,6 +365,18 @@ type macFlapEvent struct {
 	NewIP string
 	Gap   time.Duration // elapsed time between the two sightings
 	When  time.Time     // time the new sighting was recorded
+}
+
+// issueRow is one entry in the Issues tab backing store.
+// Columns: Severity | Category | Description | Address | Detail | Time.
+type issueRow struct {
+	Severity    string // "Error", "Warning", or "Info"
+	Category    string // e.g. "ARP", "Security", "Event Log", "System"
+	Description string
+	Address     string // IP, MAC, or empty
+	Detail      string
+	Time        string // formatted "15:04:05"
+	persistent  bool   // if true, survives scan-completion rebuild
 }
 
 type bcastEntry struct {
@@ -522,6 +544,14 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingListenerMsgsMu.Unlock()
 		if errMsg != "" {
 			setStatusPart(statusPartListener, "Not listening — bind error: "+errMsg)
+			addIssueRow(issueRow{
+				Severity:    "Warning",
+				Category:    "System",
+				Description: "Multicast listener failed to bind",
+				Detail:      errMsg,
+				Time:        time.Now().Format("15:04:05"),
+				persistent:  true,
+			})
 		} else {
 			setStatusPart(statusPartListener, "Listening (mDNS · SSDP · WSD)")
 		}
@@ -1365,6 +1395,16 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		pendingWorkerStatusesMu.Unlock()
 		if ws.Name != "" {
 			workerStatusUpsert(ws)
+			if !ws.Running && ws.Detail != "" {
+				addIssueRow(issueRow{
+					Severity:    "Error",
+					Category:    "System",
+					Description: "Background worker failed: " + ws.Name,
+					Detail:      ws.Detail,
+					Time:        time.Now().Format("15:04:05"),
+					persistent:  true,
+				})
+			}
 		}
 		return 0
 
@@ -1484,6 +1524,22 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		}
 		pendingEvtLogSnapMu.Unlock()
 		evtLogDialogAddRow(entry)
+		// Also surface actionable entries in the Issues tab.
+		switch entry.Level {
+		case "Critical", "Error", "Warning":
+			ts := entry.Time
+			if len(ts) > 19 {
+				ts = ts[:19]
+			}
+			addIssueRow(issueRow{
+				Severity:    entry.Level,
+				Category:    "Event Log",
+				Description: entry.Summary,
+				Detail:      fmt.Sprintf("%s  EID %d", entry.Source, entry.EventID),
+				Time:        ts,
+				persistent:  true,
+			})
+		}
 		return 0
 
 	case WM_EVT_SNAP_DONE:
@@ -1579,6 +1635,7 @@ func activateTab(hwnd HWND, tab int32) {
 	hideInfoView(healthView)
 	showWindow(hwndListServices, SW_HIDE)
 	showWindow(hwndServicesPlaceholder, SW_HIDE)
+	showWindow(hwndListIssues, SW_HIDE)
 	// Show/hide scan bar and reposition Hosts listview accordingly.
 	// On Hosts tab the scan bar is visible and the list sits below it;
 	// on all other tabs the list fills from just below the tab strip.
@@ -1647,13 +1704,15 @@ func activateTab(hwnd HWND, tab int32) {
 			if !scanEverCompleted && healthView.hwndPlaceholder != 0 {
 				showWindow(healthView.hwndPlaceholder, SW_SHOW)
 			}
+		case 8:
+			showWindow(hwndListIssues, SW_SHOW)
 		}
 	}
 	// Update find bar for the new tab: reposition, reload its text,
 	// or hide it if the new tab doesn't support filtering.
-	// Tabs 6 (Network) and 7 (Scan Report) are text areas; no filtering.
+	// Tabs 6+ (Network, Scan Report, Issues, …) are not filterable.
 	if isWindowVisible(hwndSearchEdit) {
-		if tab == 6 || tab == 7 {
+		if tab >= 6 {
 			showWindow(hwndSearchEdit, SW_HIDE)
 			showWindow(hwndSearchClose, SW_HIDE)
 		} else {
@@ -1701,6 +1760,7 @@ func createControls(hwnd HWND) {
 	insertTab(hwndTabCtrl, 5, "DHCP")
 	insertTab(hwndTabCtrl, 6, "Network")
 	insertTab(hwndTabCtrl, 7, "Scan Report")
+	insertTab(hwndTabCtrl, 8, "Issues")
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
@@ -1863,6 +1923,17 @@ func createControls(hwnd HWND) {
 		fmt.Sprintf("Run a scan with Banner Grab enabled to populate this tab  (>%d%% confidence threshold)", appConfig.Scan.ServiceMinConfidence),
 		0, otherTop+200, 1160, scale(20))
 
+	// ---- Issues listview (hidden initially) ----
+	hwndListIssues, _ = createWindowEx(0, WC_LISTVIEW, "",
+		WS_CHILD|WS_CLIPSIBLINGS|WS_VSCROLL|LVS_REPORT|LVS_SHOWSELALWAYS,
+		0, otherTop, 1160, 600, hwnd, IDC_LIST_ISSUES, inst)
+	sendMessage(hwndListIssues, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+		LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_HEADERDRAGDROP|LVS_EX_MARQUEESELECT)
+	subclassListViewManaged(hwndListIssues, issuesColTitles, issuesColVis, issuesDefWidths, applyIssuesSort, nil)
+	for i, title := range issuesColTitles {
+		listViewAddColumn(hwndListIssues, int32(i), title, scale(issuesDefWidths[i]))
+	}
+
 	// ---- status bar — 2 parts: Listener state | Service state ----
 	hwndStatus = createStatusWindow(hwnd, IDC_STATUS, "")
 	setStatusParts(scale(900)) // will be recalculated on first WM_SIZE
@@ -1981,6 +2052,8 @@ func activeContentPane() HWND {
 		return netView.hwndHeader
 	case 7:
 		return healthView.hwndHeader
+	case 8:
+		return hwndListIssues
 	}
 	return 0
 }
@@ -2809,6 +2882,7 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 
 	// --- Stale ARP: dynamic entries in the ARP table for IPs that did not ---
 	// --- respond in the current scan (ghost hosts, stale DHCP leases).     ---
+	var staleEntries []netinfo.ARPResult
 	if len(allScanResults) > 0 {
 		aliveIPs := make(map[string]bool, len(allScanResults))
 		for ipStr, r := range allScanResults {
@@ -2816,7 +2890,6 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 				aliveIPs[ipStr] = true
 			}
 		}
-		var staleEntries []netinfo.ARPResult
 		for _, e := range arpAll {
 			if e.Type == "dynamic" {
 				if _, wasScanned := allScanResults[e.IP]; wasScanned && !aliveIPs[e.IP] {
@@ -2959,6 +3032,137 @@ func updateHealthTab(stats scan.ScanStats, duration time.Duration) {
 	fmt.Fprintf(&b, "  Hosts without PTR: no reverse DNS is normal on many networks.\r\n")
 
 	setInfoHeader(healthView, b.String())
+	rebuildScanIssues(arpConflicts, staleEntries, stats)
+}
+
+// ---------------------------------------------------------------------------
+// Issues tab helpers
+// ---------------------------------------------------------------------------
+
+// addIssueRow appends one persistent issue row to the backing store and the listview.
+// Call this from WM_ handlers for issues that accumulate throughout the session
+// (event log entries, worker failures, listener errors).
+func addIssueRow(r issueRow) {
+	issueRows = append(issueRows, r)
+	listViewAddIssueRow(hwndListIssues, r)
+}
+
+// rebuildScanIssues rebuilds the scan-derived portion of the Issues tab.
+// It removes all non-persistent rows, appends any new MAC flap events as
+// persistent rows, then adds fresh ARP, security, and DNS issues from the
+// completed scan. Called at the end of updateHealthTab on the UI thread.
+func rebuildScanIssues(conflicts []netinfo.ARPConflict, staleEntries []netinfo.ARPResult, stats scan.ScanStats) {
+	// Keep only persistent rows.
+	kept := issueRows[:0]
+	for _, r := range issueRows {
+		if r.persistent {
+			kept = append(kept, r)
+		}
+	}
+	issueRows = kept
+
+	now := time.Now().Format("15:04:05")
+
+	// Append any new MAC flap events (persistent — accumulate across scans).
+	for i := macFlapsAdded; i < len(macFlaps); i++ {
+		f := macFlaps[i]
+		sev := "Warning"
+		detail := fmt.Sprintf("%s → %s  (gap: %s)", f.OldIP, f.NewIP, macGapStr(f.Gap))
+		if f.Gap < 30*time.Minute {
+			sev = "Error"
+			detail += "  ⚠ rapid"
+		}
+		issueRows = append(issueRows, issueRow{
+			Severity:    sev,
+			Category:    "ARP",
+			Description: "MAC address IP change",
+			Address:     f.MAC,
+			Detail:      detail,
+			Time:        f.When.Format("15:04:05"),
+			persistent:  true,
+		})
+	}
+	macFlapsAdded = len(macFlaps)
+
+	// ARP anomaly count (scan-derived).
+	if stats.ARPAnomalies > 0 {
+		issueRows = append(issueRows, issueRow{
+			Severity:    "Warning",
+			Category:    "ARP",
+			Description: fmt.Sprintf("ARP anomaly — same IP, different MACs during scan (%d observed)", stats.ARPAnomalies),
+			Time:        now,
+		})
+	}
+
+	// Duplicate IP conflicts from the ARP table (scan-derived).
+	for _, c := range conflicts {
+		issueRows = append(issueRows, issueRow{
+			Severity:    "Warning",
+			Category:    "ARP",
+			Description: "Duplicate IP address in ARP table",
+			Address:     c.IP,
+			Detail:      strings.Join(c.MACs, " / "),
+			Time:        now,
+		})
+	}
+
+	// Stale ARP entries (scan-derived).
+	for _, e := range staleEntries {
+		issueRows = append(issueRows, issueRow{
+			Severity:    "Info",
+			Category:    "ARP",
+			Description: "Stale ARP entry — host did not respond",
+			Address:     e.IP,
+			Detail:      e.MAC,
+			Time:        now,
+		})
+	}
+
+	// Security issues from scan results (scan-derived).
+	for _, r := range allScanResults {
+		if !r.Alive {
+			continue
+		}
+		ip := r.IP.String()
+		for _, ps := range r.PortServices {
+			if ps.Details["smb1"] == "true" {
+				issueRows = append(issueRows, issueRow{
+					Severity:    "Warning",
+					Category:    "Security",
+					Description: "SMBv1 enabled — legacy insecure protocol",
+					Address:     ip,
+					Detail:      fmt.Sprintf("port %d", ps.Port),
+					Time:        now,
+				})
+			}
+			if ps.Details["mqtt_anon"] == "allowed" {
+				issueRows = append(issueRows, issueRow{
+					Severity:    "Warning",
+					Category:    "Security",
+					Description: "MQTT broker accepts anonymous connections",
+					Address:     ip,
+					Detail:      fmt.Sprintf("port %d", ps.Port),
+					Time:        now,
+				})
+			}
+			if ps.Details["dns_recursion"] == "true" {
+				issueRows = append(issueRows, issueRow{
+					Severity:    "Info",
+					Category:    "Security",
+					Description: "Open recursive DNS resolver",
+					Address:     ip,
+					Detail:      fmt.Sprintf("port %d", ps.Port),
+					Time:        now,
+				})
+			}
+		}
+	}
+
+	// Rebuild the listview from the updated backing store.
+	sendMessage(hwndListIssues, LVM_DELETEALLITEMS, 0, 0)
+	for _, row := range issueRows {
+		listViewAddIssueRow(hwndListIssues, row)
+	}
 }
 
 // portLabel returns a short service name for a port number (e.g. 80 → "HTTP").
