@@ -28,9 +28,33 @@ import (
 // Wire types — GUI ↔ service (newline-delimited JSON over TLS localhost)
 // ---------------------------------------------------------------------------
 
+// PortScanSpec describes a targeted single-host port scan issued via "port-scan".
+type PortScanSpec struct {
+	// Mode is one of "default" (DefaultConfig().Ports), "specific" (the Ports
+	// list below), or "all" (all TCP ports 1–65535).
+	Mode  string `json:"mode"`
+	// Ports is the explicit port list for "specific" mode.
+	Ports []int  `json:"ports,omitempty"`
+	// RunID is a client-assigned token echoed in every PortScanEntry so the
+	// dialog can discard stale results from a superseded run.
+	RunID string `json:"run_id"`
+}
+
+// PortScanEntry carries the result of a single open port from a "port-scan"
+// stream. The final message has Total set and no Port value.
+type PortScanEntry struct {
+	RunID string `json:"run_id"`
+	Port  int    `json:"port,omitempty"`
+	Open  bool   `json:"open,omitempty"`
+	// Total is the total number of ports that were checked; set only on the
+	// final (done) message bundled with PortScanDone=true.
+	Total int    `json:"total,omitempty"`
+}
+
 // ServiceCmd is sent by the GUI to the service.
 type ServiceCmd struct {
-	// Cmd is one of: "scan", "stop", "probe", "dhcp-start", "dhcp-stop",
+	// Cmd is one of: "scan", "stop", "probe", "port-scan", "port-scan-stop",
+	// "dhcp-start", "dhcp-stop",
 	// "bcast-start", "bcast-stop", "arp-start", "arp-stop",
 	// "arp-snapshot", "arp-delete", "arp-clear",
 	// "dns-snapshot", "dns-delete", "dns-clear",
@@ -49,6 +73,8 @@ type ServiceCmd struct {
 	ScanID     uint64     `json:"scan_id,omitempty"`
 	// Probe is set for the "probe" command.
 	Probe      *ProbeSpec `json:"probe,omitempty"`
+	// PortScan is set for the "port-scan" command.
+	PortScan   *PortScanSpec `json:"port_scan,omitempty"`
 	// SOCKSProxy is the SOCKS5 address to use for the probe (empty = direct).
 	// Also used for "proxy-test".
 	SOCKSProxy string     `json:"socks_proxy,omitempty"`
@@ -160,6 +186,12 @@ type ServiceMsg struct {
 	WorkerStatus *WorkerStatus `json:"worker_status,omitempty"`
 	// WolResult carries the outcome of a "wake" command.
 	WolResult *WolResult `json:"wol_result,omitempty"`
+	// PortScanEntry carries one open-port result from a "port-scan" stream.
+	// The final message has PortScanDone=true and Total populated.
+	PortScanEntry *PortScanEntry `json:"port_scan_entry,omitempty"`
+	// PortScanDone signals the end of a "port-scan" stream; always bundled
+	// with a PortScanEntry carrying the total port count.
+	PortScanDone bool `json:"port_scan_done,omitempty"`
 }
 
 // CacheOpResult carries the result of a cache-manipulation command:
@@ -381,6 +413,7 @@ func RunServiceConn(conn net.Conn) error {
 	var dhcpCancel context.CancelFunc
 	var bcastCancel context.CancelFunc
 	var arpCancel context.CancelFunc
+	var portScanCancel context.CancelFunc
 
 	// ---------------------------------------------------------------------------
 	// Per-connection service registry — unified Service objects that accumulate
@@ -654,6 +687,63 @@ func RunServiceConn(conn net.Conn) error {
 			if scanCancel != nil {
 				scanCancel()
 				scanCancel = nil
+			}
+
+		case "port-scan":
+			if cmd.PortScan == nil || cmd.Target == "" {
+				_ = safeSend(ServiceMsg{Err: "port-scan: missing target or spec"})
+				continue
+			}
+			// Cancel any in-progress port scan first.
+			if portScanCancel != nil {
+				portScanCancel()
+				portScanCancel = nil
+			}
+			ip := net.ParseIP(normalizeIP(cmd.Target))
+			if ip == nil {
+				_ = safeSend(ServiceMsg{Err: "port-scan: invalid IP: " + cmd.Target})
+				continue
+			}
+			spec := *cmd.PortScan
+			var ports []int
+			switch spec.Mode {
+			case "specific":
+				ports = spec.Ports
+			case "all":
+				ports = allPortsRange()
+			default: // "default"
+				ports = DefaultConfig().Ports
+			}
+			if len(ports) == 0 {
+				_ = safeSend(ServiceMsg{Err: "port-scan: no ports to scan"})
+				continue
+			}
+			ctx, cancel := context.WithCancel(connCtx)
+			portScanCancel = cancel
+			runID := spec.RunID
+			total := len(ports)
+			go func() {
+				defer cancel()
+				ScanPortsStreaming(ctx, ip, ports, DefaultConfig().Timeout, nil, 500, func(port int, open bool) {
+					if !open {
+						return // only stream open ports
+					}
+					_ = safeSend(ServiceMsg{PortScanEntry: &PortScanEntry{
+						RunID: runID,
+						Port:  port,
+						Open:  true,
+					}})
+				})
+				_ = safeSend(ServiceMsg{
+					PortScanDone:  true,
+					PortScanEntry: &PortScanEntry{RunID: runID, Total: total},
+				})
+			}()
+
+		case "port-scan-stop":
+			if portScanCancel != nil {
+				portScanCancel()
+				portScanCancel = nil
 			}
 
 		case "probe":
