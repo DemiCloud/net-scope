@@ -90,6 +90,10 @@ var (
 	// dialog, or 0 if none is open.
 	hwndProbeDlgAtomic uintptr
 
+	// hwndPortScanDlgAtomic holds the HWND of the currently-open Port Scan
+	// dialog, or 0 if none is open.
+	hwndPortScanDlgAtomic uintptr
+
 	// svcGeneration is incremented each time spawnService is called. Each
 	// spawned goroutine captures its generation at creation and only posts
 	// WM_SERVICE_DOWN when its generation still matches the current value.
@@ -433,6 +437,18 @@ func spawnService(hwnd HWND, elevated bool) {
 						postMessage(HWND(h), WM_PROBE_DONE, uintptr(idx), 0)
 					} else {
 						postMessage(HWND(h), WM_PROBE_EVENT, uintptr(idx), 0)
+					}
+				}
+			} else if m.PortScanEntry != nil {
+				pendingPortScanEntriesMu.Lock()
+				idx := len(pendingPortScanEntries)
+				pendingPortScanEntries = append(pendingPortScanEntries, *m.PortScanEntry)
+				pendingPortScanEntriesMu.Unlock()
+				if h := atomic.LoadUintptr(&hwndPortScanDlgAtomic); h != 0 {
+					if m.PortScanDone {
+						postMessage(HWND(h), WM_PORT_SCAN_DONE, uintptr(idx), 0)
+					} else {
+						postMessage(HWND(h), WM_PORT_SCAN_ENTRY, uintptr(idx), 0)
 					}
 				}
 			} else if m.Netbios != nil {

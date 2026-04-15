@@ -182,6 +182,7 @@ func Run(v, target string) {
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_EVENT_LOG, "Network &Event Log\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_PROBE, "&Probe\u2026")
+	appendMenu(hHosts, MF_STRING, IDM_TOOLS_PORT_SCAN, "Port &Scan\u2026")
 	appendMenu(hHosts, MF_SEPARATOR, 0, "")
 	appendMenu(hHosts, MF_STRING, IDM_TOOLS_WORKER_QUEUE, "&Background Workers\u2026")
 	appendMenu(hMenu, MF_POPUP, uintptr(hHosts), "&Tools")

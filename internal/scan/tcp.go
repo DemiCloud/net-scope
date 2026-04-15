@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -80,4 +81,42 @@ func scanPorts(ctx context.Context, ip net.IP, ports []int, timeout time.Duratio
 	}
 	sort.Ints(open)
 	return open
+}
+
+// ScanPortsStreaming dials ports concurrently and calls emit(port, open) for
+// each port result as soon as it is known. The function returns after all ports
+// have been checked or ctx is cancelled.
+//
+// dialTimeout is the per-dial deadline applied independently to each connection
+// attempt. maxConcurrency limits in-flight TCP dials; pass 0 for unlimited
+// (dangerous for large port lists — use a reasonable cap for all-ports mode).
+func ScanPortsStreaming(ctx context.Context, ip net.IP, ports []int, dialTimeout time.Duration, dial DialFunc, maxConcurrency int, emit func(port int, open bool)) {
+	if len(ports) == 0 {
+		return
+	}
+	if maxConcurrency <= 0 || maxConcurrency >= len(ports) {
+		maxConcurrency = len(ports)
+	}
+
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for _, port := range ports {
+		p := port
+		sem <- struct{}{} // blocks while maxConcurrency dials are in-flight
+		wg.Add(1)
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			ctx2, cancel := context.WithTimeout(ctx, dialTimeout)
+			defer cancel()
+			conn, err := dialOrDirect(dial)(ctx2, "tcp", fmt.Sprintf("%s:%d", ip, p))
+			if err == nil {
+				conn.Close()
+				emit(p, true)
+			} else {
+				emit(p, false)
+			}
+		}()
+	}
+	wg.Wait()
 }

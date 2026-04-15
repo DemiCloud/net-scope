@@ -265,6 +265,11 @@ var (
 	pendingWolResults []scan.WolResult
 	pendingWolMu      sync.Mutex
 
+	// pendingPortScanEntries carries port scan results from the sensor service
+	// to the Port Scan dialog via WM_PORT_SCAN_ENTRY / WM_PORT_SCAN_DONE.
+	pendingPortScanEntries   []scan.PortScanEntry
+	pendingPortScanEntriesMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry
@@ -925,6 +930,12 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			showEvtLogDialog(HWND(hwnd))
 		case IDM_TOOLS_PROBE:
 			showProbeDialog(HWND(hwnd), "", false)
+		case IDM_TOOLS_PORT_SCAN:
+			ip := ""
+			if rows := listViewGetSelectedRows(hwndList); len(rows) > 0 {
+				ip = listViewGetCellText(hwndList, rows[0], colIP)
+			}
+			showPortScanDialog(HWND(hwnd), ip, false)
 		case IDM_TOOLS_WOL:
 			// Pre-populate MAC from the selected Scanner row if available.
 			mac := ""
@@ -2997,6 +3008,8 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 	menuItem(menu, IDM_CTX_VIEW_DETAILS, "View details\u2026", true)
 	appendMenu(menu, MF_SEPARATOR, 0, "")
+	menuItem(menu, IDM_CTX_PORT_SCAN, "Port Scan\u2026", r.IP != nil)
+	appendMenu(menu, MF_SEPARATOR, 0, "")
 	menuItem(menu, IDM_CTX_ARP_FLUSH, "Flush ARP entry\u2026", r.IP != nil)
 
 	cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, parent)
@@ -3029,6 +3042,8 @@ func showHostContextMenu(parent HWND, r scan.Result, x, y int32) {
 		copyToClipboard(parent, ip)
 	case IDM_CTX_VIEW_DETAILS:
 		showHostDetailDialog(parent, ip)
+	case IDM_CTX_PORT_SCAN:
+		showPortScanDialog(parent, ip, true)
 	case IDM_CTX_ARP_FLUSH:
 		if !serviceElevated {
 			showInfo(parent,

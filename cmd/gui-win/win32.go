@@ -55,6 +55,8 @@ const (
 	WM_WOL_RESULT        = WM_APP + 43 // sensor service: Wake-on-LAN send result
 	WM_EVT_SNAP_ENTRY    = WM_APP + 44 // sensor service: one event-log entry arrived
 	WM_EVT_SNAP_DONE     = WM_APP + 45 // sensor service: event-log snapshot stream complete
+	WM_PORT_SCAN_ENTRY   = WM_APP + 46 // port scan dialog: one open port found
+	WM_PORT_SCAN_DONE    = WM_APP + 47 // port scan dialog: scan complete
 )
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,7 @@ const (
 	IDM_TOOLS_PROBE           = 224 // Tools > Probe…
 	IDM_TOOLS_WOL             = 225 // Tools > Wake on LAN…
 	IDM_TOOLS_EVENT_LOG       = 226 // Tools > Network Event Log…
+	IDM_TOOLS_PORT_SCAN       = 227 // Tools > Port Scan…
 )
 
 // ---------------------------------------------------------------------------
@@ -150,6 +153,7 @@ const (
 	IDM_CTX_VIEW_DETAILS = 3040
 	IDM_CTX_ARP_FLUSH    = 3051 // flush ARP entry for the selected host
 	IDM_CTX_COPY_ICON    = 3052 // right-click icon in About dialog
+	IDM_CTX_PORT_SCAN    = 3053 // right-click: open Port Scan dialog for host
 
 	// Base for the detect-subnet popup (up to 16 interfaces supported).
 	IDM_DETECT_BASE = 3100
