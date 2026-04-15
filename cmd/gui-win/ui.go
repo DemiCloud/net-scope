@@ -127,9 +127,10 @@ var (
 	// activeOnlyFilter reflects the state of the "Active only" checkbox.
 	activeOnlyFilter bool
 
-	// tabSearchFilter stores the Ctrl+F search string for each tab (indexed
-	// by tab number 0–8).  An empty string means no filter is active.
-	tabSearchFilter [9]string
+	// tabSearchFilter stores the Ctrl+F search string for each tab, keyed by
+	// stable view identifier (e.g. ViewHosts, ViewMDNS). Using view keys rather
+	// than tab indices means filters survive tab reordering.
+	tabSearchFilter = map[string]string{}
 
 	// dhcpAllEvents is the backing store for DHCP filter repopulation.
 	// Every DHCP event is appended here when received, before being rendered.
@@ -578,7 +579,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		// Persist every DHCP event so repopulateDHCP can replay them with a filter.
 		dhcpAllEvents = append(dhcpAllEvents, evt)
 		// Respect any active search filter: skip rendering if the event doesn't match.
-		if f := strings.ToLower(tabSearchFilter[5]); f == "" || dhcpEventMatchesFilter(evt, f) {
+		if f := strings.ToLower(tabSearchFilter[ViewDHCP]); f == "" || dhcpEventMatchesFilter(evt, f) {
 			listViewAddDHCPRow(hwndListDHCP, evt)
 		}
 		if bcastDHCP == 0 {
@@ -663,6 +664,33 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 			activeTab = int(tab)
 			activateTab(HWND(hwnd), tab)
+		}
+		// Right-click on the tab strip → show Move Left / Move Right context menu.
+		if hdr.IdFrom == IDC_TABS && hdr.Code == NM_RCLICK {
+			pt := getCursorPos()
+			idx := tabHitTest(hwndTabCtrl, pt)
+			if idx >= 0 {
+				leftFlags := uint32(MF_STRING)
+				rightFlags := uint32(MF_STRING)
+				if idx == 0 {
+					leftFlags |= MF_GRAYED
+				}
+				if idx >= int32(len(tabIndexToView))-1 {
+					rightFlags |= MF_GRAYED
+				}
+				menu := createPopupMenu()
+				appendMenu(menu, leftFlags, IDM_TAB_MOVE_LEFT, "Move Tab Left")
+				appendMenu(menu, rightFlags, IDM_TAB_MOVE_RIGHT, "Move Tab Right")
+				cmd := trackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD|TPM_RIGHTBUTTON, pt.X, pt.Y, HWND(hwnd))
+				destroyMenu(menu)
+				switch uintptr(cmd) {
+				case IDM_TAB_MOVE_LEFT:
+					moveTab(HWND(hwnd), idx, idx-1)
+				case IDM_TAB_MOVE_RIGHT:
+					moveTab(HWND(hwnd), idx, idx+1)
+				}
+			}
+			return 0
 		}
 		// Double-click on host list → host detail dialog.
 		if hdr.IdFrom == IDC_LIST && hdr.Code == NM_DBLCLK {
@@ -946,8 +974,8 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 		case IDC_SEARCH_EDIT:
 			if hiword(wParam) == EN_CHANGE {
 				tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-				if tab >= 0 && tab < int32(len(tabSearchFilter)) {
-					tabSearchFilter[tab] = getWindowText(hwndSearchEdit)
+				if tab >= 0 && tab < int32(len(tabIndexToView)) {
+					tabSearchFilter[tabIndexToView[tab]] = getWindowText(hwndSearchEdit)
 					applyTabFilter()
 				}
 			}
@@ -1598,6 +1626,7 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 			config.SaveState(stateDirPath, config.State{
 				Window:     ws,
 				ActiveView: activeView,
+				TabOrder:   append([]string(nil), tabIndexToView...),
 				Columns:    snapshotAllColumnStates(),
 			})
 		}
@@ -1625,6 +1654,10 @@ var wndProcCallback = syscall.NewCallback(func(hwnd, msg, wParam, lParam uintptr
 // Call this whenever the active tab changes — both from the TCN_SELCHANGE
 // notification and when restoring a saved tab on startup.
 func activateTab(hwnd HWND, tab int32) {
+	view := ""
+	if tab >= 0 && tab < int32(len(tabIndexToView)) {
+		view = tabIndexToView[tab]
+	}
 	// Hide all panes first.
 	showWindow(hwndList, SW_HIDE)
 	showWindow(hwndListPlaceholder, SW_HIDE)
@@ -1644,7 +1677,7 @@ func activateTab(hwnd HWND, tab int32) {
 	// Show/hide scan bar and reposition Hosts listview accordingly.
 	// On Hosts tab the scan bar is visible and the list sits below it;
 	// on all other tabs the list fills from just below the tab strip.
-	if tab == 0 {
+	if view == ViewHosts {
 		showWindow(hwndTargetLabel, SW_SHOW)
 		showWindow(hwndTarget, SW_SHOW)
 		showWindow(hwndDetect, SW_SHOW)
@@ -1676,53 +1709,82 @@ func activateTab(hwnd HWND, tab int32) {
 		showWindow(hwndActiveOnly, SW_HIDE)
 		showWindow(hwndThrottle, SW_HIDE)
 		showWindow(hwndScanStatus, SW_HIDE)
-		switch tab {
-		case 1:
+		switch view {
+		case ViewServices:
 			showWindow(hwndListServices, SW_SHOW)
 			if len(svcTabData) == 0 {
 				showWindow(hwndServicesPlaceholder, SW_SHOW)
 			}
-		case 2:
+		case ViewMDNS:
 			showWindow(hwndListMDNS, SW_SHOW)
 			if bcastMDNS == 0 || proxyEnabled {
 				showWindow(hwndMDNSPlaceholder, SW_SHOW)
 			}
-		case 3:
+		case ViewSSDP:
 			showWindow(hwndListSSDP, SW_SHOW)
 			if bcastSSDP == 0 || proxyEnabled {
 				showWindow(hwndSSDPPlaceholder, SW_SHOW)
 			}
-		case 4:
+		case ViewWSD:
 			showWindow(hwndListWSD, SW_SHOW)
 			if bcastWSD == 0 || proxyEnabled {
 				showWindow(hwndWSDPlaceholder, SW_SHOW)
 			}
-		case 5:
+		case ViewDHCP:
 			showWindow(hwndListDHCP, SW_SHOW)
 			if bcastDHCP == 0 || proxyEnabled {
 				showWindow(hwndDHCPPlaceholder, SW_SHOW)
 			}
-		case 6:
+		case ViewNetwork:
 			showInfoView(netView)
-		case 7:
+		case ViewHealth:
 			showInfoView(healthView)
 			if !scanEverCompleted && healthView.hwndPlaceholder != 0 {
 				showWindow(healthView.hwndPlaceholder, SW_SHOW)
 			}
-		case 8:
+		case ViewIssues:
 			showWindow(hwndListIssues, SW_SHOW)
 		}
 	}
 	// Update find bar for the new tab: reposition, reload its text,
 	// or hide it if the new tab doesn't support filtering.
-	// Tabs 6+ (Network, Scan Report, Issues, …) are not filterable.
 	if isWindowVisible(hwndSearchEdit) {
-		if tab >= 6 {
+		if !tabIsFilterable(tab) {
 			showWindow(hwndSearchEdit, SW_HIDE)
 			showWindow(hwndSearchClose, SW_HIDE)
 		} else {
 			positionFindBar(hwnd)
-			setWindowText(hwndSearchEdit, tabSearchFilter[tab])
+			setWindowText(hwndSearchEdit, tabSearchFilter[view])
+		}
+	}
+}
+
+// moveTab swaps the tab at position src with the tab at position dst in both
+// the Win32 tab control and the tabIndexToView slice. The previously active
+// view remains selected after the move. src and dst must differ by exactly 1.
+func moveTab(hwnd HWND, src, dst int32) {
+	if src == dst || src < 0 || dst < 0 ||
+		int(src) >= len(tabIndexToView) || int(dst) >= len(tabIndexToView) {
+		return
+	}
+	// Remember which view is currently active so we can restore the selection.
+	currentView := ""
+	if activeTab >= 0 && activeTab < len(tabIndexToView) {
+		currentView = tabIndexToView[activeTab]
+	}
+	// Move the tab in the Win32 control: delete at src, reinsert at dst.
+	label := viewTabLabel[tabIndexToView[src]]
+	deleteTab(hwndTabCtrl, src)
+	insertTab(hwndTabCtrl, dst, label)
+	// Swap the two entries in tabIndexToView.
+	tabIndexToView[src], tabIndexToView[dst] = tabIndexToView[dst], tabIndexToView[src]
+	rebuildViewToTabIndex()
+	// Restore selection to the previously active view (its index may have changed).
+	if currentView != "" {
+		if newIdx, ok := viewToTabIndex[currentView]; ok {
+			sendMessage(hwndTabCtrl, TCM_SETCURSEL, uintptr(newIdx), 0)
+			activeTab = int(newIdx)
+			activateTab(hwnd, newIdx)
 		}
 	}
 }
@@ -1757,15 +1819,16 @@ func createControls(hwnd HWND) {
 	hwndTabCtrl, _ = createWindowEx(0, WC_TABCONTROL, "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|TCS_FLATBUTTONS,
 		0, scale(elevBarH), scale(1160), scale(tabCtrlH), hwnd, IDC_TABS, inst)
-	insertTab(hwndTabCtrl, 0, "Scanner")
-	insertTab(hwndTabCtrl, 1, "Services")
-	insertTab(hwndTabCtrl, 2, "mDNS")
-	insertTab(hwndTabCtrl, 3, "SSDP")
-	insertTab(hwndTabCtrl, 4, "WSD")
-	insertTab(hwndTabCtrl, 5, "DHCP")
-	insertTab(hwndTabCtrl, 6, "Network")
-	insertTab(hwndTabCtrl, 7, "Scan Report")
-	insertTab(hwndTabCtrl, 8, "Issues")
+	// Apply saved tab order if it is valid; otherwise keep the default order
+	// already set in tabIndexToView at package init time.
+	if validTabOrder(appState.TabOrder) {
+		tabIndexToView = make([]string, len(appState.TabOrder))
+		copy(tabIndexToView, appState.TabOrder)
+		rebuildViewToTabIndex()
+	}
+	for i, view := range tabIndexToView {
+		insertTab(hwndTabCtrl, int32(i), viewTabLabel[view])
+	}
 
 	// Scan bar sits below the tab strip; only visible when Hosts tab is active.
 	// Layout (right-anchored): [Target label][Target input …][⟲][Scan status][Active only][Scan/Stop]
@@ -2001,11 +2064,11 @@ func createFindBar(parent HWND) {
 // visible — just re-focuses.
 func showFindBar(parent HWND) {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	if tab >= 6 {
-		return // Network and Scan Report tabs are text areas — no filter
+	if !tabIsFilterable(tab) {
+		return // Network, Scan Report, and Issues tabs are not filterable
 	}
 	positionFindBar(parent)
-	setWindowText(hwndSearchEdit, tabSearchFilter[tab])
+	setWindowText(hwndSearchEdit, tabSearchFilter[tabIndexToView[tab]])
 	sendMessage(hwndSearchEdit, EM_SETSEL, 0, ^uintptr(0)) // select all
 	showWindow(hwndSearchEdit, SW_SHOW)
 	showWindow(hwndSearchClose, SW_SHOW)
@@ -2026,9 +2089,12 @@ func hideFindBar() {
 		invalidateRect(pane, nil, false)
 	}
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	if tab >= 0 && tab < 6 && tabSearchFilter[tab] != "" {
-		tabSearchFilter[tab] = ""
-		applyTabFilter()
+	if tab >= 0 && tab < int32(len(tabIndexToView)) {
+		view := tabIndexToView[tab]
+		if tabSearchFilter[view] != "" {
+			tabSearchFilter[view] = ""
+			applyTabFilter()
+		}
 	}
 }
 
@@ -2036,28 +2102,31 @@ func hideFindBar() {
 // currently active based on the selected tab.
 func activeContentPane() HWND {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	switch tab {
-	case 0:
+	if tab < 0 || tab >= int32(len(tabIndexToView)) {
+		return 0
+	}
+	switch tabIndexToView[tab] {
+	case ViewHosts:
 		return hwndList
-	case 1:
+	case ViewServices:
 		return hwndListServices
-	case 2:
+	case ViewMDNS:
 		return hwndListMDNS
-	case 3:
+	case ViewSSDP:
 		return hwndListSSDP
-	case 4:
+	case ViewWSD:
 		return hwndListWSD
-	case 5:
+	case ViewDHCP:
 		return hwndListDHCP
-	case 6:
+	case ViewNetwork:
 		// Prefer the event-log list; fall back to the header.
 		if netView.hwndList != 0 {
 			return netView.hwndList
 		}
 		return netView.hwndHeader
-	case 7:
+	case ViewHealth:
 		return healthView.hwndHeader
-	case 8:
+	case ViewIssues:
 		return hwndListIssues
 	}
 	return 0
@@ -2072,7 +2141,7 @@ func positionFindBar(parent HWND) {
 	gap := scale(4)
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
 	var paneTop int32
-	if tab == 0 {
+	if tab >= 0 && tab < int32(len(tabIndexToView)) && tabIndexToView[tab] == ViewHosts {
 		paneTop = scale(elevBarH + tabCtrlH + scanBarH)
 	} else {
 		paneTop = scale(elevBarH + tabCtrlH)
@@ -2083,22 +2152,40 @@ func positionFindBar(parent HWND) {
 	moveWindow(hwndSearchClose, x+editW+gap, y, btnW, scale(24))
 }
 
+// tabIsFilterable reports whether the tab at index tab supports Ctrl+F filtering.
+// Network, Scan Report, and Issues tabs display read-only information and do
+// not have a searchable listview backed by a replayable data store.
+func tabIsFilterable(tab int32) bool {
+	if tab < 0 || tab >= int32(len(tabIndexToView)) {
+		return false
+	}
+	switch tabIndexToView[tab] {
+	case ViewNetwork, ViewHealth, ViewIssues:
+		return false
+	default:
+		return true
+	}
+}
+
 // applyTabFilter re-filters the active tab's listview using tabSearchFilter.
 func applyTabFilter() {
 	tab := int32(sendMessage(hwndTabCtrl, TCM_GETCURSEL, 0, 0))
-	switch tab {
-	case 0:
+	if tab < 0 || tab >= int32(len(tabIndexToView)) {
+		return
+	}
+	switch tabIndexToView[tab] {
+	case ViewHosts:
 		applyActiveFilter()
-	case 1:
-		repopulateServicesTab(tabSearchFilter[1])
-	case 2:
-		repopulateMDNS(hwndListMDNS, tabSearchFilter[2])
-	case 3:
-		repopulateSSDP(hwndListSSDP, tabSearchFilter[3])
-	case 4:
-		repopulateWSD(hwndListWSD, tabSearchFilter[4])
-	case 5:
-		repopulateDHCP(hwndListDHCP, tabSearchFilter[5])
+	case ViewServices:
+		repopulateServicesTab(tabSearchFilter[ViewServices])
+	case ViewMDNS:
+		repopulateMDNS(hwndListMDNS, tabSearchFilter[ViewMDNS])
+	case ViewSSDP:
+		repopulateSSDP(hwndListSSDP, tabSearchFilter[ViewSSDP])
+	case ViewWSD:
+		repopulateWSD(hwndListWSD, tabSearchFilter[ViewWSD])
+	case ViewDHCP:
+		repopulateDHCP(hwndListDHCP, tabSearchFilter[ViewDHCP])
 	}
 }
 
@@ -2254,7 +2341,7 @@ func listViewDeleteRowAndFixMaps(row int32) {
 // "Active only" checkbox filter and the Ctrl+F text search filter.
 // Pending IPs (pre-populated but not yet scanned) are also text-filtered.
 func applyActiveFilter() {
-	hostFilter := strings.ToLower(tabSearchFilter[0])
+	hostFilter := strings.ToLower(tabSearchFilter[ViewHosts])
 	results := make([]scan.Result, 0, len(allScanResults))
 	for _, r := range allScanResults {
 		if !activeOnlyFilter || r.Alive {

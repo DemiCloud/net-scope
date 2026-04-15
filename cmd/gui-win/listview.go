@@ -305,7 +305,7 @@ func listViewAddMDNSRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		mdnsBackup = append(mdnsBackup, mdnsBackupEntry{ip, svc})
 		// Respect the active search filter: skip the listview insert if this
 		// entry doesn't match.  It stays in mdnsBackup for later repopulation.
-		if f := strings.ToLower(tabSearchFilter[2]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
+		if f := strings.ToLower(tabSearchFilter[ViewMDNS]); f != "" && !mdnsEntryMatchesFilter(ip, svc, f) {
 			return
 		}
 	}
@@ -568,7 +568,7 @@ func listViewAddSSDPRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		ssdpKnownIPs[ip] = true
 		ssdpOrderedIPs = append(ssdpOrderedIPs, ip)
 		// Respect the active search filter for newly arriving devices.
-		if f := strings.ToLower(tabSearchFilter[3]); f != "" && !ssdpIPMatchesFilter(ip, f) {
+		if f := strings.ToLower(tabSearchFilter[ViewSSDP]); f != "" && !ssdpIPMatchesFilter(ip, f) {
 			ssdpBestST[ip] = svc.Type // track best type even when filtered out
 			return
 		}
@@ -749,7 +749,7 @@ func listViewAddWSDRow(hwnd HWND, ip string, svc scan.ServiceInfo) {
 		wsdKnownIPs[ip] = true
 		wsdOrderedIPs = append(wsdOrderedIPs, ip)
 		// Respect the active search filter for newly arriving devices.
-		if f := strings.ToLower(tabSearchFilter[4]); f != "" && !wsdIPMatchesFilter(ip, f) {
+		if f := strings.ToLower(tabSearchFilter[ViewWSD]); f != "" && !wsdIPMatchesFilter(ip, f) {
 			return
 		}
 	}

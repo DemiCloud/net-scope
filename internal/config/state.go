@@ -27,6 +27,7 @@ type State struct {
 	Version    int                       `json:"version"`
 	Window     WindowState               `json:"window,omitempty"`
 	ActiveView string                    `json:"active_view,omitempty"`
+	TabOrder   []string                  `json:"tab_order,omitempty"`
 	Columns    map[string]TabColumnState `json:"columns,omitempty"`
 }
 

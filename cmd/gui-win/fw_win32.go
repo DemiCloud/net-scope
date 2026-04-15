@@ -311,6 +311,8 @@ const (
 	TCS_FLATBUTTONS = 0x0008
 	TCM_FIRST       = 0x1300
 	TCM_INSERTITEM  = TCM_FIRST + 62
+	TCM_DELETEITEM  = TCM_FIRST + 8
+	TCM_HITTEST     = TCM_FIRST + 13
 	TCM_GETCURSEL   = TCM_FIRST + 11
 	TCM_SETCURSEL   = TCM_FIRST + 12
 	TCM_ADJUSTRECT  = TCM_FIRST + 40
@@ -424,6 +426,12 @@ type TCITEM struct {
 	CchTextMax  int32
 	IImage      int32
 	LParam      uintptr
+}
+
+// TCHITTESTINFO is used with TCM_HITTEST to find which tab contains a point.
+type TCHITTESTINFO struct {
+	Pt    POINT
+	Flags uint32
 }
 
 type RECT struct {
@@ -1196,6 +1204,18 @@ func insertTab(hwnd HWND, idx int32, text string) {
 	}
 	sendMessage(hwnd, TCM_INSERTITEM, uintptr(idx), uintptr(unsafe.Pointer(&item)))
 	_ = textPtr
+}
+
+// deleteTab removes the tab at position idx from a SysTabControl32.
+func deleteTab(hwnd HWND, idx int32) {
+	sendMessage(hwnd, TCM_DELETEITEM, uintptr(idx), 0)
+}
+
+// tabHitTest returns the index of the tab containing screenPt, or -1 if none.
+func tabHitTest(hwnd HWND, screenPt POINT) int32 {
+	ht := TCHITTESTINFO{Pt: screenToClient(hwnd, screenPt)}
+	idx := sendMessage(hwnd, TCM_HITTEST, 0, uintptr(unsafe.Pointer(&ht)))
+	return int32(idx)
 }
 
 func createSolidBrush(color uint32) HBRUSH {
