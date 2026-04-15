@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/demicloud/net-scope/internal/netinfo"
@@ -38,6 +39,16 @@ type PortScanSpec struct {
 	// RunID is a client-assigned token echoed in every PortScanEntry so the
 	// dialog can discard stale results from a superseded run.
 	RunID string `json:"run_id"`
+	// ThrottlePreset controls scan aggressiveness for the port scan.
+	// One of ThrottleAggressive, ThrottleBalanced (default), or ThrottlePolite.
+	ThrottlePreset string `json:"throttle_preset,omitempty"`
+}
+
+// PortScanProgress carries a periodic progress snapshot from a "port-scan" stream.
+type PortScanProgress struct {
+	RunID   string `json:"run_id"`
+	Scanned int    `json:"scanned"`
+	Total   int    `json:"total"`
 }
 
 // PortScanEntry carries the result of a single open port from a "port-scan"
@@ -192,6 +203,8 @@ type ServiceMsg struct {
 	// PortScanDone signals the end of a "port-scan" stream; always bundled
 	// with a PortScanEntry carrying the total port count.
 	PortScanDone bool `json:"port_scan_done,omitempty"`
+	// PortScanProgress carries a periodic progress snapshot during a port scan.
+	PortScanProgress *PortScanProgress `json:"port_scan_progress,omitempty"`
 }
 
 // CacheOpResult carries the result of a cache-manipulation command:
@@ -722,9 +735,32 @@ func RunServiceConn(conn net.Conn) error {
 			portScanCancel = cancel
 			runID := spec.RunID
 			total := len(ports)
+			throttle := resolveThrottle(spec.ThrottlePreset)
 			go func() {
 				defer cancel()
-				ScanPortsStreaming(ctx, ip, ports, DefaultConfig().Timeout, nil, 500, func(port int, open bool) {
+				var scanned int64
+				// Periodic progress ticker — fires every 250 ms.
+				done := make(chan struct{})
+				defer close(done)
+				tick := time.NewTicker(250 * time.Millisecond)
+				defer tick.Stop()
+				go func() {
+					for {
+						select {
+						case <-tick.C:
+							n := atomic.LoadInt64(&scanned)
+							_ = safeSend(ServiceMsg{PortScanProgress: &PortScanProgress{
+								RunID:   runID,
+								Scanned: int(n),
+								Total:   total,
+							}})
+						case <-done:
+							return
+						}
+					}
+				}()
+				ScanPortsStreaming(ctx, ip, ports, DefaultConfig().Timeout, nil, throttle.MaxPortConcurrency, func(port int, open bool) {
+					atomic.AddInt64(&scanned, 1)
 					if !open {
 						return // only stream open ports
 					}
