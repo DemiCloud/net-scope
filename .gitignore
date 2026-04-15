@@ -2,6 +2,12 @@
 /build/
 /bin/
 
+# Root-level compiled binaries (must live in /build/ or /dist/)
+/net-scope
+/net-scope_*
+/net-sweep
+/net-sweep_*
+
 # Downloaded data files (fetched at build time, not tracked)
 internal/sweep/oui.json
 
