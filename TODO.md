@@ -4,7 +4,7 @@
 
 - [x] **Probes button opens the probe dialog** — `Probes` in the host detail action strip opens `showProbeDialog` with the IP pre-populated and locked; the probe dialog is the canonical interactive probe interface
 - [x] **Scanning runs banner probes on open ports** — `grabPortServices` probes every confirmed-open port using the same banner/TLS/SSH/HTTP functions as the on-demand probe path; `BannerGrab` is enabled by default
-- [ ] **Port scan section in probe dialog** — add a port scan mode selector (Default ports / Specific ports / All 65 535); port list edit field (enabled for Specific mode); results list embedded in `showProbeDialog`; requires the worker-pool port scanner below to avoid goroutine explosion at full range
+- [x] **Port scan section in probe dialog** — standalone Port Scan dialog (Tools > Port Scan… + host right-click); mode selector (Default ports / Specific ports / All 65 535); port list edit (enabled for Specific mode); open-port results list streams in real-time; well-known service name shown alongside each port; Scan/Stop/Copy/Close; IP pre-populated and locked when opened from context menu
 
 ## Scanner / Performance
 
