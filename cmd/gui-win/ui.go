@@ -271,6 +271,11 @@ var (
 	pendingPortScanEntries   []scan.PortScanEntry
 	pendingPortScanEntriesMu sync.Mutex
 
+	// pendingPortScanProgress carries periodic progress snapshots from the sensor
+	// service to the Port Scan dialog via WM_PORT_SCAN_PROGRESS.
+	pendingPortScanProgress   []scan.PortScanProgress
+	pendingPortScanProgressMu sync.Mutex
+
 	// hostRegistry accumulates data about every host seen across all scans
 	// and broadcast events. Written and read only on the UI thread.
 	hostRegistry map[string]*hostEntry

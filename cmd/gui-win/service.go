@@ -451,6 +451,14 @@ func spawnService(hwnd HWND, elevated bool) {
 						postMessage(HWND(h), WM_PORT_SCAN_ENTRY, uintptr(idx), 0)
 					}
 				}
+			} else if m.PortScanProgress != nil {
+				if h := atomic.LoadUintptr(&hwndPortScanDlgAtomic); h != 0 {
+					pendingPortScanProgressMu.Lock()
+					idx := len(pendingPortScanProgress)
+					pendingPortScanProgress = append(pendingPortScanProgress, *m.PortScanProgress)
+					pendingPortScanProgressMu.Unlock()
+					postMessage(HWND(h), WM_PORT_SCAN_PROGRESS, uintptr(idx), 0)
+				}
 			} else if m.Netbios != nil {
 				if m.Netbios.Name != "" {
 					pendingEnrichMu.Lock()

@@ -21,14 +21,15 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	idPScanIP     = 2100
-	idPScanMode   = 2101 // combobox: Default / Specific / All
-	idPScanPorts  = 2102 // edit: port list for Specific mode
-	idPScanList   = 2103 // ListView: open ports
-	idPScanScan   = 2104 // Scan / Stop button
-	idPScanCopy   = 2105 // Copy Results button
-	idPScanClose  = 2106 // Close button
-	idPScanStatus = 2107 // static status label
+	idPScanIP       = 2100
+	idPScanMode     = 2101 // combobox: Default / Specific / All
+	idPScanPorts    = 2102 // edit: port list for Specific mode
+	idPScanList     = 2103 // ListView: open ports
+	idPScanScan     = 2104 // Scan / Stop button
+	idPScanCopy     = 2105 // Copy Results button
+	idPScanClose    = 2106 // Close button
+	idPScanStatus   = 2107 // static status label
+	idPScanThrottle = 2108 // combobox: Aggressive / Balanced / Polite
 
 	// Combobox item indices for the Mode selector.
 	pScanModeDefault  = 0
@@ -43,19 +44,24 @@ const (
 var (
 	hwndPortScanDlg HWND // UI-thread tracking var for the modeless dialog
 
-	hwndPScanIP     HWND
-	hwndPScanMode   HWND
-	hwndPScanPorts  HWND
-	hwndPScanList   HWND
-	hwndPScanScan   HWND
-	hwndPScanStatus HWND
+	hwndPScanIP       HWND
+	hwndPScanMode     HWND
+	hwndPScanPorts    HWND
+	hwndPScanThrottle HWND
+	hwndPScanList     HWND
+	hwndPScanScan     HWND
+	hwndPScanStatus   HWND
 
-	pScanIPLocked bool
-	pScanRunID    string
-	pScanRunning  bool
-	pScanFound    int // open ports found in the current run
-	pScanTotal    int // total ports scanned (set on completion)
-	pScanMode     int // current combobox selection (pScanModeDefault etc.)
+	pScanIPLocked   bool
+	pScanRunID      string
+	pScanRunning    bool
+	pScanFound      int       // open ports found in the current run
+	pScanTotal      int       // total ports scanned (final count from service)
+	pScanScanned    int       // ports scanned so far (live progress counter)
+	pScanTotalPorts int       // total ports to scan (known at start)
+	pScanMode       int       // current combobox selection (pScanModeDefault etc.)
+	pScanThrottle   string    // current throttle preset
+	pScanStartTime  time.Time // when the current scan started
 )
 
 // ---------------------------------------------------------------------------
@@ -81,6 +87,13 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 				pScanMode = int(sendMessage(hwndPScanMode, CB_GETCURSEL, 0, 0))
 				enableWindow(hwndPScanPorts, pScanMode == pScanModeSpecific)
 			}
+		case idPScanThrottle:
+			if hiword(wParam) == CBN_SELCHANGE {
+				presets := []string{scan.ThrottleAggressive, scan.ThrottleBalanced, scan.ThrottlePolite}
+				if idx := int(sendMessage(hwndPScanThrottle, CB_GETCURSEL, 0, 0)); idx >= 0 && idx < len(presets) {
+					pScanThrottle = presets[idx]
+				}
+			}
 		case idPScanScan:
 			if pScanRunning {
 				portScanDlgStop()
@@ -94,6 +107,25 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 				portScanDlgStop()
 			}
 			closePortScanDialog()
+		}
+		return 0
+
+	case WM_PORT_SCAN_PROGRESS:
+		pendingPortScanProgressMu.Lock()
+		var prog scan.PortScanProgress
+		if int(wParam) < len(pendingPortScanProgress) {
+			prog = pendingPortScanProgress[int(wParam)]
+		}
+		pendingPortScanProgressMu.Unlock()
+		if prog.RunID != pScanRunID {
+			return 0 // stale
+		}
+		pScanScanned = prog.Scanned
+		if pScanTotalPorts == 0 {
+			pScanTotalPorts = prog.Total
+		}
+		if pScanRunning {
+			portScanUpdateStatus()
 		}
 		return 0
 
@@ -112,7 +144,9 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 			fmt.Sprintf("%d", entry.Port),
 			portScanServiceName(entry.Port),
 		})
-		setWindowText(hwndPScanStatus, fmt.Sprintf("Scanning\u2026 %d open port(s) found", pScanFound))
+		if pScanRunning {
+			portScanUpdateStatus()
+		}
 		return 0
 
 	case WM_PORT_SCAN_DONE:
@@ -130,13 +164,14 @@ var portScanDlgWndProc = syscall.NewCallback(func(hwnd, msg, wParam, lParam uint
 		if entry.Total > 0 {
 			pScanTotal = entry.Total
 		}
+		elapsed := portScanFormatElapsed(time.Since(pScanStartTime))
 		switch pScanFound {
 		case 0:
-			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 no open ports found (%d scanned)", pScanTotal))
+			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 no open ports \u00b7 %d scanned \u00b7 %s", pScanTotal, elapsed))
 		case 1:
-			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 1 open port of %d scanned", pScanTotal))
+			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 1 open port \u00b7 %d/%d scanned \u00b7 %s", pScanTotal, pScanTotal, elapsed))
 		default:
-			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 %d open ports of %d scanned", pScanFound, pScanTotal))
+			setWindowText(hwndPScanStatus, fmt.Sprintf("Scan complete \u2014 %d open ports \u00b7 %d/%d scanned \u00b7 %s", pScanFound, pScanTotal, pScanTotal, elapsed))
 		}
 		return 0
 
@@ -164,7 +199,7 @@ func createPortScanDialogControls(hwnd HWND) {
 		btnH int32 = 26
 	)
 
-	// ── Row 1: IP field · Mode combobox · Scan button ────────────────────
+	// ── Row 1: IP field · Mode combobox · Speed combobox · Scan button ──────
 	createCtrl("STATIC", "IP:", WS_CHILD|WS_VISIBLE, pad, 14, 18, 16, hwnd, 0, inst)
 	hwndPScanIP, _ = createWindowEx(WS_EX_CLIENTEDGE, "EDIT", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
@@ -176,11 +211,28 @@ func createPortScanDialogControls(hwnd HWND) {
 	createCtrl("STATIC", "Mode:", WS_CHILD|WS_VISIBLE, 172, 14, 36, 16, hwnd, 0, inst)
 	hwndPScanMode, _ = createWindowEx(0, "COMBOBOX", "",
 		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL,
-		212, 11, 160, 120, hwnd, HMENU(idPScanMode), inst)
+		212, 11, 116, 120, hwnd, HMENU(idPScanMode), inst)
 	sendMessage(hwndPScanMode, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("Default ports"))))
 	sendMessage(hwndPScanMode, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("Specific ports"))))
-	sendMessage(hwndPScanMode, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("All 65\u202F535 ports"))))
+	sendMessage(hwndPScanMode, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("All ports"))))
 	sendMessage(hwndPScanMode, CB_SETCURSEL, 0, 0)
+
+	createCtrl("STATIC", "Speed:", WS_CHILD|WS_VISIBLE, 334, 14, 40, 16, hwnd, 0, inst)
+	hwndPScanThrottle, _ = createWindowEx(0, "COMBOBOX", "",
+		WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL,
+		378, 11, 90, 120, hwnd, HMENU(idPScanThrottle), inst)
+	sendMessage(hwndPScanThrottle, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("Aggressive"))))
+	sendMessage(hwndPScanThrottle, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("Balanced"))))
+	sendMessage(hwndPScanThrottle, CB_ADDSTRING, 0, uintptr(unsafe.Pointer(utf16("Polite"))))
+	// Select the initial preset from global config.
+	switch pScanThrottle {
+	case scan.ThrottleAggressive:
+		sendMessage(hwndPScanThrottle, CB_SETCURSEL, 0, 0)
+	case scan.ThrottlePolite:
+		sendMessage(hwndPScanThrottle, CB_SETCURSEL, 2, 0)
+	default: // balanced
+		sendMessage(hwndPScanThrottle, CB_SETCURSEL, 1, 0)
+	}
 
 	scanBtnW := int32(55)
 	hwndPScanScan = createCtrl("BUTTON", "Scan",
@@ -265,6 +317,19 @@ func portScanDlgStart(dlg HWND) {
 	pScanRunning = true
 	pScanFound = 0
 	pScanTotal = 0
+	pScanScanned = 0
+	pScanTotalPorts = 0
+	pScanStartTime = time.Now()
+	// Pre-compute the total port count for the chosen mode so we can display
+	// "x/y scanned" immediately before the first progress message arrives.
+	switch pScanMode {
+	case pScanModeAll:
+		pScanTotalPorts = 65535
+	case pScanModeSpecific:
+		pScanTotalPorts = len(specificPorts)
+	default: // "default" — read from scanner defaults
+		pScanTotalPorts = len(scan.DefaultConfig().Ports)
+	}
 
 	// Clear previous results.
 	sendMessage(hwndPScanList, LVM_DELETEALLITEMS, 0, 0)
@@ -275,9 +340,10 @@ func portScanDlgStart(dlg HWND) {
 		Cmd:    "port-scan",
 		Target: ip,
 		PortScan: &scan.PortScanSpec{
-			Mode:  modes[pScanMode],
-			Ports: specificPorts,
-			RunID: runID,
+			Mode:           modes[pScanMode],
+			Ports:          specificPorts,
+			RunID:          runID,
+			ThrottlePreset: pScanThrottle,
 		},
 	}
 	serviceEncMu.Lock()
@@ -294,10 +360,11 @@ func portScanDlgStart(dlg HWND) {
 func portScanDlgStop() {
 	pScanRunning = false
 	setWindowText(hwndPScanScan, "Scan")
+	elapsed := portScanFormatElapsed(time.Since(pScanStartTime))
 	if pScanFound > 0 {
-		setWindowText(hwndPScanStatus, fmt.Sprintf("Stopped \u2014 %d open port(s) found", pScanFound))
+		setWindowText(hwndPScanStatus, fmt.Sprintf("Stopped \u2014 %d open port(s) found \u00b7 %s", pScanFound, elapsed))
 	} else {
-		setWindowText(hwndPScanStatus, "Stopped")
+		setWindowText(hwndPScanStatus, fmt.Sprintf("Stopped \u00b7 %s", elapsed))
 	}
 
 	serviceMu.Lock()
@@ -308,6 +375,39 @@ func portScanDlgStop() {
 		_ = enc.Encode(scan.ServiceCmd{Cmd: "port-scan-stop"})
 		serviceEncMu.Unlock()
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Status helpers
+// ---------------------------------------------------------------------------
+
+// portScanUpdateStatus refreshes the status label with the current progress.
+// Must be called on the UI thread while pScanRunning is true.
+func portScanUpdateStatus() {
+	elapsed := portScanFormatElapsed(time.Since(pScanStartTime))
+	var msg string
+	if pScanTotalPorts > 0 {
+		msg = fmt.Sprintf("Scanning\u2026 %d/%d scanned \u00b7 %d open \u00b7 %s",
+			pScanScanned, pScanTotalPorts, pScanFound, elapsed)
+	} else {
+		msg = fmt.Sprintf("Scanning\u2026 %d scanned \u00b7 %d open \u00b7 %s",
+			pScanScanned, pScanFound, elapsed)
+	}
+	setWindowText(hwndPScanStatus, msg)
+}
+
+// portScanFormatElapsed formats a duration as "Xs" or "Xm Ys".
+func portScanFormatElapsed(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	m := int(d.Minutes())
+	s := int(d.Seconds()) - m*60
+	if s == 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dm %ds", m, s)
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +575,7 @@ func closePortScanDialog() {
 	hwndPScanIP = 0
 	hwndPScanMode = 0
 	hwndPScanPorts = 0
+	hwndPScanThrottle = 0
 	hwndPScanList = 0
 	hwndPScanScan = 0
 	hwndPScanStatus = 0
@@ -496,7 +597,13 @@ func showPortScanDialog(parent HWND, ip string, ipLocked bool) {
 	pScanRunning = false
 	pScanFound = 0
 	pScanTotal = 0
+	pScanScanned = 0
+	pScanTotalPorts = 0
 	pScanMode = pScanModeDefault
+	pScanThrottle = appConfig.Scan.ThrottlePreset
+	if pScanThrottle == "" {
+		pScanThrottle = scan.ThrottleBalanced
+	}
 
 	title := "Port Scan"
 	if ip != "" {

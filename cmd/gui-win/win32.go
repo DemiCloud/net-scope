@@ -55,8 +55,9 @@ const (
 	WM_WOL_RESULT        = WM_APP + 43 // sensor service: Wake-on-LAN send result
 	WM_EVT_SNAP_ENTRY    = WM_APP + 44 // sensor service: one event-log entry arrived
 	WM_EVT_SNAP_DONE     = WM_APP + 45 // sensor service: event-log snapshot stream complete
-	WM_PORT_SCAN_ENTRY   = WM_APP + 46 // port scan dialog: one open port found
-	WM_PORT_SCAN_DONE    = WM_APP + 47 // port scan dialog: scan complete
+	WM_PORT_SCAN_ENTRY    = WM_APP + 46 // port scan dialog: one open port found
+	WM_PORT_SCAN_DONE     = WM_APP + 47 // port scan dialog: scan complete
+	WM_PORT_SCAN_PROGRESS = WM_APP + 48 // port scan dialog: periodic progress snapshot
 )
 
 // ---------------------------------------------------------------------------
