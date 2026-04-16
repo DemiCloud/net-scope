@@ -738,6 +738,11 @@ func RunServiceConn(conn net.Conn) error {
 			throttle := resolveThrottle(spec.ThrottlePreset)
 			go func() {
 				defer cancel()
+				// Signal to the worker-queue dialog that the port scanner is active.
+				_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Port Scanner", Running: true, Detail: ip.String()}})
+				defer func() {
+					_ = safeSend(ServiceMsg{WorkerStatus: &WorkerStatus{Name: "Port Scanner", Running: false}})
+				}()
 				var scanned int64
 				// Periodic progress ticker — fires every 250 ms.
 				done := make(chan struct{})
@@ -759,10 +764,28 @@ func RunServiceConn(conn net.Conn) error {
 						}
 					}
 				}()
+				ipStr := ip.String()
+				var probeHostOnce int32 // 0 = not yet emitted; 1 = emitted
 				ScanPortsStreaming(ctx, ip, ports, DefaultConfig().Timeout, nil, throttle.MaxPortConcurrency, func(port int, open bool) {
 					atomic.AddInt64(&scanned, 1)
 					if !open {
 						return // only stream open ports
+					}
+					// Register the open port in the session service registry so the
+					// Services tab reflects all ports found by the port scanner.
+					upsertPortSvc(ipStr, PortService{
+						Port:       port,
+						Name:       WellKnownPortName(port),
+						Confidence: 30, // port-open only; no banner grabbed
+					})
+					// On the first open port, announce the host to the Hosts tab
+					// and queue the IP for background PTR resolution.
+					if atomic.CompareAndSwapInt32(&probeHostOnce, 0, 1) {
+						_ = safeSend(ServiceMsg{ProbeHost: &ProbeHostResult{IP: ipStr}})
+						select {
+						case ptrQueue <- ipStr:
+						default: // queue full; skip rather than block
+						}
 					}
 					_ = safeSend(ServiceMsg{PortScanEntry: &PortScanEntry{
 						RunID: runID,

@@ -160,3 +160,104 @@ func cleanDNSLabel(s string) string {
 	}
 	return b.String()
 }
+
+// WellKnownPortName returns the common service name for a TCP port number, or
+// an empty string when no well-known name is associated with the port.
+// Used by the sensor service to label open ports discovered during a port scan.
+func WellKnownPortName(port int) string {
+	switch port {
+	case 20:
+		return "FTP Data"
+	case 21:
+		return "FTP"
+	case 22:
+		return "SSH"
+	case 23:
+		return "Telnet"
+	case 25:
+		return "SMTP"
+	case 53:
+		return "DNS"
+	case 80:
+		return "HTTP"
+	case 88:
+		return "Kerberos"
+	case 110:
+		return "POP3"
+	case 111:
+		return "RPC"
+	case 119:
+		return "NNTP"
+	case 123:
+		return "NTP"
+	case 135:
+		return "MSRPC"
+	case 137, 138:
+		return "NetBIOS-NS"
+	case 139:
+		return "NetBIOS-SSN"
+	case 143:
+		return "IMAP"
+	case 161, 162:
+		return "SNMP"
+	case 389:
+		return "LDAP"
+	case 443:
+		return "HTTPS"
+	case 445:
+		return "SMB"
+	case 465:
+		return "SMTPS"
+	case 514:
+		return "Syslog"
+	case 515:
+		return "LPD"
+	case 587:
+		return "SMTP/TLS"
+	case 636:
+		return "LDAPS"
+	case 993:
+		return "IMAPS"
+	case 995:
+		return "POP3S"
+	case 1194:
+		return "OpenVPN"
+	case 1433:
+		return "MSSQL"
+	case 1521:
+		return "Oracle"
+	case 1883:
+		return "MQTT"
+	case 2049:
+		return "NFS"
+	case 3268:
+		return "LDAP-GC"
+	case 3306:
+		return "MySQL"
+	case 3389:
+		return "RDP"
+	case 5432:
+		return "PostgreSQL"
+	case 5900:
+		return "VNC"
+	case 5985:
+		return "WinRM-HTTP"
+	case 5986:
+		return "WinRM-HTTPS"
+	case 6379:
+		return "Redis"
+	case 8080:
+		return "HTTP-Alt"
+	case 8443:
+		return "HTTPS-Alt"
+	case 8888:
+		return "HTTP-Alt"
+	case 9200:
+		return "Elasticsearch"
+	case 27017:
+		return "MongoDB"
+	case 51820:
+		return "WireGuard"
+	}
+	return ""
+}
