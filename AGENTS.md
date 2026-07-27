@@ -127,7 +127,7 @@ CGo is required for the Linux GUI build only.
 **Before committing, run the test suite and confirm it passes:**
 
 ```bash
-wsl -d Fedora -- bash -c "cd /home/user/dev/net-scope && go test ./..."
+wsl -d Fedora -- bash -c "cd ~/dev/net-scope && go test ./..."
 ```
 
 Do not commit if any test fails. If a change intentionally removes functionality, update
@@ -137,7 +137,7 @@ tests before committing.
 Commit commands (run inside the Fedora WSL environment):
 
 ```bash
-wsl -d Fedora -- bash -c "cd /home/user/dev/net-scope && git add <files> && git commit -m '<message>'"
+wsl -d Fedora -- bash -c "cd ~/dev/net-scope && git add <files> && git commit -m '<message>'"
 ```
 
 Follow the conventional-commits style already used in the repo:
