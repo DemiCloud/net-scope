@@ -33,6 +33,23 @@ When run with **no subcommand**, the platform default is used unless
 The old `cmd/cli/` and `cmd/tui/` entry points still exist and are buildable
 in isolation, but **the canonical entry point is `cmd/net-scope/`**.
 
+---
+
+## Privacy in Documentation & Examples
+
+Never use a real name, username, or email in examples, docs, comments, or test
+fixtures — use invented/placeholder values instead:
+
+- Project/application names in paths are fine (e.g. `/opt/<app>`), but any path
+  that includes a personal username must use a placeholder or variable instead
+  of a real one, e.g. `/home/${user}/.config/<app>/config.toml`.
+- Sample hosts/IPs in docs, screenshots, or test fixtures must use
+  documentation-only values — `example.com`, `host01.example.com`, and IPs from
+  the reserved documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`,
+  `203.0.113.0/24`).
+- People: use invented names (`alice`, `Jane Doe`) for any sample device owner
+  or contact field.
+
 `cmd/gui-win/` is the **primary Windows GUI** — native Win32 controls, no CGo,
 no framework dependencies. This is the active development path.
 
